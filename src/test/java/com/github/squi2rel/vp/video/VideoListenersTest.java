@@ -18,6 +18,53 @@ class VideoListenersTest {
         assertTrue(VideoListeners.requiresNativeStreamListener(unknownDurationStream));
     }
 
+    @Test
+    void youtubeLiveUsesClientResolutionListenerWithoutNativeBackend() {
+        VideoInfo live = new VideoInfo("player", "live", "https://video.example/live",
+                "https://www.youtube.com/watch?v=live", -1, false, new String[0], 0);
+
+        assertFalse(VideoListeners.requiresNativeStreamListener(live));
+        assertFalse(VideoListeners.awaitsClientPlaybackResolution(live));
+        assertTrue(VideoListeners.from(live) instanceof ClientResolutionStreamListener);
+    }
+
+    @Test
+    void youtubeClientFallbackWithUnknownDurationAwaitsLocalResolution() {
+        VideoInfo fallback = new VideoInfo("player", "video", "",
+                "https://www.youtube.com/watch?v=fallback", -1, true, new String[0], 0);
+
+        assertFalse(VideoListeners.requiresNativeStreamListener(fallback));
+        assertTrue(VideoListeners.awaitsClientPlaybackResolution(fallback));
+        assertTrue(VideoListeners.from(fallback) instanceof ClientResolutionStreamListener);
+    }
+
+    @Test
+    void bilibiliWithResolvedPathUsesNativeListenerWhenDurationUnknown() {
+        VideoInfo resolved = new VideoInfo(
+                "player",
+                "bili",
+                "https://upos.example/video.m4s",
+                "https://www.bilibili.com/video/BV1xx411c7mD",
+                -1,
+                true,
+                new String[0],
+                0
+        );
+        VideoInfo clientOnly = new VideoInfo(
+                "player",
+                "bili",
+                "",
+                "https://www.bilibili.com/video/BV1xx411c7mD",
+                -1,
+                true,
+                new String[0],
+                0
+        );
+
+        assertTrue(VideoListeners.requiresNativeStreamListener(resolved));
+        assertFalse(VideoListeners.requiresNativeStreamListener(clientOnly));
+    }
+
     private static VideoInfo info(String path, String rawPath, long duration) {
         return new VideoInfo("player", "video", path, rawPath, -1, false, new String[0], duration);
     }

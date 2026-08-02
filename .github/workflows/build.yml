@@ -23,8 +23,18 @@ jobs:
         run: chmod +x ./gradlew
       - name: build
         run: ./gradlew build
-      - name: capture build artifacts
+      - name: capture Fabric artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Artifacts
-          path: build/libs/
+          name: VideoPlayer-Fabric
+          path: |
+            build/libs/VideoPlayer-*.jar
+            !build/libs/*-sources.jar
+            !build/libs/*-dev-shadow.jar
+      - name: capture Paper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Paper
+          path: |
+            paper-plugin/build/libs/VideoPlayer-Paper-*.jar
+            !paper-plugin/build/libs/*-plain.jar

@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.network;
 
 import com.github.squi2rel.vp.DataHolder;
+import com.github.squi2rel.vp.ClientVersionTracker;
 import com.github.squi2rel.vp.PaperNativeRuntime;
 import com.github.squi2rel.vp.VideoPlayerMain;
 import com.github.squi2rel.vp.i18n.TranslatableIllegalArgumentException;
@@ -9,16 +10,17 @@ import com.github.squi2rel.vp.i18n.VpTranslations;
 import com.github.squi2rel.vp.provider.PlayerProviderSource;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
+import com.github.squi2rel.vp.provider.VideoUrlNormalizer;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
 import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.permission.VideoPermissionAction;
 import com.github.squi2rel.vp.permission.VideoPermissionContext;
 import com.github.squi2rel.vp.permission.VideoPermissionPlayer;
 import com.github.squi2rel.vp.permission.VideoPermissions;
-import com.github.squi2rel.vp.permission.ResidencePermissionBridge;
 import com.github.squi2rel.vp.video.IVideoListener;
 import com.github.squi2rel.vp.video.MetaType;
 import com.github.squi2rel.vp.video.MetaValue;
+import com.github.squi2rel.vp.video.NativeDependencyDiagnostics;
 import com.github.squi2rel.vp.video.OrderedPlayAdmissions;
 import com.github.squi2rel.vp.video.ScreenGeometry;
 import com.github.squi2rel.vp.video.ScreenMetadata;
@@ -34,6 +36,7 @@ import org.joml.Vector3f;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
@@ -62,73 +65,82 @@ public class ServerPacketHandler {
                 && !DataHolder.protocolActive(player.getUniqueId())) {
             return;
         }
-        if (type != VideoPacketType.CONFIG) LOGGER.info("server type: {}", type);
+        if (type != VideoPacketType.CONFIG) LOGGER.debug("server type: {}", type);
         switch (type) {
             case CONFIG -> {
                 String remoteToken = ByteBufUtils.readString(buf, 16);
+                ClientVersionTracker.clientDetected(player, remoteToken);
                 if (!VideoProtocol.compatible(VideoPlayerMain.version, remoteToken)) {
                     if (DataHolder.rejectHandshake(player.getUniqueId())) {
                         sendTo(player, VideoPackets.protocolReject(VideoPlayerMain.version));
                         reject(player, VpTranslation.of(
                                 "error.videoplayer.protocol_mismatch",
-                                "VideoPlayer client and server must use the same 2.0.1 build. Client: %s, server: %s",
+                                "VideoPlayer client and server must use the same release version. Client: %s, server: %s",
                                 VideoProtocol.displayVersion(remoteToken), VideoPlayerMain.version
                         ));
                     }
                     return;
                 }
+                DataHolder.recordHandshakeToken(player.getUniqueId(), remoteToken);
+                String responseToken = DataHolder.handshakeToken(player.getUniqueId());
                 VideoHandshakeState previous = DataHolder.handshakeState(player.getUniqueId());
                 if (previous == VideoHandshakeState.NEEDS_RESET) {
                     DataHolder.acceptHandshake(player.getUniqueId());
                     long nonce = DataHolder.issueHandshakeNonce(player.getUniqueId());
-                    sendTo(player, VideoPackets.resetClient(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config, nonce));
+                    sendTo(player, VideoPackets.resetClient(responseToken, DataHolder.config, nonce));
                 } else if (previous == VideoHandshakeState.RESET_SENT) {
                     long nonce = DataHolder.handshakeNonce(player.getUniqueId());
                     if (nonce == 0L) nonce = DataHolder.issueHandshakeNonce(player.getUniqueId());
-                    sendTo(player, VideoPackets.resetClient(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config, nonce));
+                    sendTo(player, VideoPackets.resetClient(responseToken, DataHolder.config, nonce));
                 } else if (previous == VideoHandshakeState.ACTIVE) {
-                    sendTo(player, VideoPackets.config(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config));
+                    sendTo(player, VideoPackets.config(responseToken, DataHolder.config));
                     sendGlobalPermissions(player);
                     Throwable backendError = PaperNativeRuntime.currentError();
                     if (backendError != null) {
-                        message(player, VpTranslation.of(
-                                "message.videoplayer.backend_load_failed_short",
-                                "VideoPlayer error: video backend failed to load: %s",
-                                backendError
-                        ));
+                        message(player, nativeBackendUnavailableMessage(backendError));
                     }
                 }
             }
             case HANDSHAKE_ACK -> {
                 long nonce = buf.readLong();
                 if (DataHolder.acceptHandshakeAck(player.getUniqueId(), nonce)) {
-                    sendTo(player, VideoPackets.config(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config));
+                    sendTo(player, VideoPackets.config(DataHolder.handshakeToken(player.getUniqueId()), DataHolder.config));
                     sendGlobalPermissions(player);
                     Throwable backendError = PaperNativeRuntime.currentError();
                     if (backendError != null) {
-                        message(player, VpTranslation.of(
-                                "message.videoplayer.backend_load_failed_short",
-                                "VideoPlayer error: video backend failed to load: %s",
-                                backendError
-                        ));
+                        message(player, nativeBackendUnavailableMessage(backendError));
+                    }
+                }
+            }
+            case CLIENT_PLAYBACK_RESOLVED -> {
+                ClientPlaybackResolutionRequest request = readClientPlaybackResolutionRequest(buf);
+                if (request.resolution() != null) {
+                    VideoArea area = getArea(player, request.areaName());
+                    VideoScreen screen = area == null ? null : area.getScreen(request.screenName());
+                    if (screen != null) {
+                        screen.acceptClientPlaybackResolution(player.getUniqueId(), request.generation(),
+                                request.reporterToken(), request.resolution(), request.durationMs());
                     }
                 }
             }
             case REQUEST -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                String url = VideoUrlNormalizer.normalizeSubmittedUrl(ByteBufUtils.readString(buf, VideoScreen.MAX_PLAY_URL_LENGTH));
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(screenName);
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.PLAY, VideoPermissionContext.screen(screen))) return;
-                String url = ByteBufUtils.readString(buf, VideoScreen.MAX_PLAY_URL_LENGTH);
-                if (!PaperNativeRuntime.isReady()) {
-                    reply.error(VpTranslation.of("error.videoplayer.native_backend_initializing", "VideoPlayer server playback backend is still initializing; try again later"));
+                if (!VideoScreen.validPlayUrl(url)) {
+                    reply.error(VpTranslation.of("error.videoplayer.play_url_invalid_length", "Video URL is invalid"));
                     return;
                 }
                 OrderedPlayAdmissions.Reservation reservation = screen.reservePlayAdmission(result -> {
@@ -137,8 +149,8 @@ public class ServerPacketHandler {
                     } else {
                         PaperNativeRuntime.State state = nativeRuntimeFailure(result.error());
                         if (state != null) {
-                            reply.error(state == PaperNativeRuntime.State.UNAVAILABLE
-                                 ? VpTranslation.of("error.videoplayer.native_backend_unavailable", "VideoPlayer server playback backend is unavailable")
+                            reply.error(state == PaperNativeRuntime.State.UNAVAILABLE || state == PaperNativeRuntime.State.STOPPED
+                                 ? nativeBackendUnavailableMessage(PaperNativeRuntime.currentError())
                                  : VpTranslation.of("error.videoplayer.native_backend_initializing", "VideoPlayer server playback backend is still initializing; try again later"));
                         } else {
                             reply.error(VpTranslation.of("message.videoplayer.source_unresolved", "Unable to resolve video source"));
@@ -166,18 +178,19 @@ public class ServerPacketHandler {
                 }
             });
             case SYNC -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                ScreenGenerationRequest request = readScreenGenerationRequest(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, request.areaName());
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(request.screenName());
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
-                long generation = buf.readLong();
-                if (generation != screen.currentPlaybackGeneration()) {
+                if (request.generation() != screen.currentPlaybackGeneration()) {
                     reply.error(VpTranslation.of("error.videoplayer.playback_stale", "Playback control request is stale"));
                     return;
                 }
@@ -190,19 +203,20 @@ public class ServerPacketHandler {
                 reply.ok();
             });
             case SEEK -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                ScreenGenerationValueRequest request = readScreenGenerationValueRequest(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, request.areaName());
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(request.screenName());
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.SEEK, VideoPermissionContext.screen(screen))) return;
-                long generation = buf.readLong();
-                if (generation != screen.currentPlaybackGeneration()) {
+                if (request.generation() != screen.currentPlaybackGeneration()) {
                     reply.error(VpTranslation.of("error.videoplayer.playback_stale", "Playback control request is stale"));
                     return;
                 }
@@ -211,7 +225,7 @@ public class ServerPacketHandler {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_seekable", "Screen is not playing seekable media"));
                     return;
                 }
-                long progress = Math.max(0, buf.readLong());
+                long progress = Math.max(0, request.value());
                 IVideoListener listener = screen.getListener();
                 if (listener == null) {
                     reply.error(VpTranslation.of("error.videoplayer.listener_unavailable", "Playback listener is unavailable"));
@@ -221,7 +235,7 @@ public class ServerPacketHandler {
                 long syncedProgress = listener.getProgress();
                 if (syncedProgress < 0) syncedProgress = progress;
                 if (area.hasPlayer()) {
-                    sendToPlayers(DataHolder.players(area.playerSnapshot()), VideoPackets.sync(screen, syncedProgress));
+                    sendToPlayers(area.playerSnapshot(), VideoPackets.sync(screen, syncedProgress));
                 }
                 reply.ok();
             });
@@ -229,19 +243,26 @@ public class ServerPacketHandler {
                 Vector3f p1 = ByteBufUtils.readVec3(buf);
                 Vector3f p2 = ByteBufUtils.readVec3(buf);
                 String name = VideoPackets.readName(buf);
+                reply.decoded();
+                DataHolder.ensureWorldLoaded(player.getWorld());
                 String dim = DataHolder.worldKey(player.getWorld());
                 if (!DataHolder.worldConfigValid(dim)) {
                     reply.error(VpTranslation.of("error.videoplayer.world_config_invalid", "The VideoPlayer configuration for this world is invalid and must be repaired before it can be modified"));
                     return;
                 }
-                if (!requirePermission(player, reply, VideoPermissionAction.CREATE_AREA, VideoPermissionContext.global(dim))) return;
-                if (!validAreaBounds(reply, p1, p2)) return;
-                if (!ResidencePermissionBridge.allowedBounds(player, VideoPermissionAction.CREATE_AREA, p1, p2)) {
-                    reply.denied(VpTranslation.of("error.videoplayer.residence_permission_denied", "Residence permission denied, or the area intersects different protected claims"));
+                if (!DataHolder.isWorldTrackingReady(dim)) {
+                    reply.error(VpTranslation.of("error.videoplayer.world_not_ready", "VideoPlayer has not finished loading this world"));
                     return;
                 }
+                if (!validAreaBounds(reply, p1, p2)) return;
                 if (!validName(reply, name, "Area")) return;
-                HashMap<String, VideoArea> map = DataHolder.areas.computeIfAbsent(dim, k -> new HashMap<>());
+                VideoPermissionContext context = VideoPermissionContext.bounds(dim, name, p1, p2);
+                if (!requireCandidatePermission(player, reply, VideoPermissionAction.CREATE_AREA, context)) return;
+                HashMap<String, VideoArea> map = DataHolder.areas.get(dim);
+                if (map == null) {
+                    reply.error(VpTranslation.of("error.videoplayer.world_not_ready", "VideoPlayer has not finished loading this world"));
+                    return;
+                }
                 if (map.containsKey(name)) {
                     reply.error(VpTranslation.of("error.videoplayer.area_exists", "A video area named %s already exists", name));
                     return;
@@ -254,19 +275,22 @@ public class ServerPacketHandler {
                 area.initServer();
                 map.put(area.name, area);
                 DataHolder.invalidateWorldTracking(dim);
-                DataHolder.saveWorld(dim);
-                message(player, VpTranslation.of("message.videoplayer.area_created", "Created video area %s in world %s", area.name, dim));
+                DataHolder.queueWorldSave(dim);
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.area_created", "Created video area %s in world %s", area.name, dim);
+                message(player, confirmation);
                 sendAreaPermissions(player, area);
-                reply.ok();
+                reply.ok(confirmation);
             });
             case REMOVE_AREA -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.REMOVE_AREA, VideoPermissionContext.area(area))) return;
-                List<Player> receivers = List.of();
+                List<UUID> receivers = List.of();
                 byte[] data = null;
                 HashMap<String, VideoArea> map = DataHolder.areas.get(area.dim);
                 VideoArea removed = map == null ? null : map.remove(area.name);
@@ -276,50 +300,52 @@ public class ServerPacketHandler {
                 }
                 if (removed.hasPlayer()) {
                     data = VideoPackets.removeArea(removed);
-                    receivers = DataHolder.players(removed.playerSnapshot());
+                    receivers = removed.playerSnapshot();
                 }
                 DataHolder.invalidateWorldTracking(area.dim);
-                try {
-                    DataHolder.saveWorld(area.dim);
-                } catch (RuntimeException error) {
-                    removed.remove();
-                    throw error;
-                }
+                DataHolder.queueWorldSave(area.dim);
                 removed.remove();
                 sendToPlayers(receivers, data);
-                message(player, VpTranslation.of("message.videoplayer.area_removed", "Removed video area %s from world %s", area.name, area.dim));
-                reply.ok();
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.area_removed", "Removed video area %s from world %s", area.name, area.dim);
+                message(player, confirmation);
+                reply.ok(confirmation);
             });
             case CREATE_SCREEN -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                VideoScreen screen = VideoScreen.read(buf, null);
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                if (!requirePermission(player, reply, VideoPermissionAction.CREATE_SCREEN, VideoPermissionContext.area(area))) return;
-                VideoScreen screen = VideoScreen.read(buf, area);
+                screen.area = area;
                 if (!validScreen(reply, area, screen)) return;
+                if (!requireCandidatePermission(player, reply, VideoPermissionAction.CREATE_SCREEN, VideoPermissionContext.screen(screen))) return;
                 screen.initServer();
-                List<Player> receivers = List.of();
+                List<UUID> receivers = List.of();
                 byte[] data = null;
                 area.addScreen(screen);
                 if (area.hasPlayer()) {
                     data = VideoPackets.createScreen(List.of(screen));
-                    receivers = DataHolder.players(area.playerSnapshot());
+                    receivers = area.playerSnapshot();
                 }
-                DataHolder.saveWorld(area.dim);
+                DataHolder.queueWorldSave(area.dim);
                 sendToPlayers(receivers, data);
-                message(player, VpTranslation.of("message.videoplayer.screen_created", "Created screen %s in video area %s", screen.name, area.name));
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.screen_created", "Created screen %s in video area %s", screen.name, area.name);
+                message(player, confirmation);
                 refreshPermissions(area);
-                reply.ok();
+                reply.ok(confirmation);
             });
             case REMOVE_SCREEN -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                String screenName = VideoPackets.readName(buf);
                 VideoScreen existing = area.getScreen(screenName);
                 if (existing == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
@@ -330,47 +356,46 @@ public class ServerPacketHandler {
                     reply.error(VpTranslation.of("error.videoplayer.source_screen_in_use", "Screen is still used as a source by another screen"));
                     return;
                 }
-                List<Player> receivers = List.of();
+                List<UUID> receivers = List.of();
                 byte[] data = null;
                 area.screens.remove(existing);
                 VideoScreen screen = existing;
                 if (screen != null && area.hasPlayer()) {
                     data = VideoPackets.removeScreen(screen);
-                    receivers = DataHolder.players(area.playerSnapshot());
+                    receivers = area.playerSnapshot();
                 }
-                try {
-                    DataHolder.saveWorld(area.dim);
-                } catch (RuntimeException error) {
-                    screen.remove();
-                    throw error;
-                }
+                DataHolder.queueWorldSave(area.dim);
                 screen.remove();
                 sendToPlayers(receivers, data);
                 if (screen != null) {
-                    message(player, VpTranslation.of("message.videoplayer.screen_removed", "Removed screen %s from video area %s", screen.name, area.name));
+                    VpTranslation confirmation = VpTranslation.of("message.videoplayer.screen_removed", "Removed screen %s from video area %s", screen.name, area.name);
+                    message(player, confirmation);
                     refreshPermissions(area);
-                    reply.ok();
+                    reply.ok(confirmation);
                 } else {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen no longer exists"));
                 }
             });
             case SKIP -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                long generation = buf.readLong();
+                boolean force = buf.readBoolean();
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(screenName);
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
-                long generation = buf.readLong();
                 if (generation != screen.currentPlaybackGeneration()) {
                     reply.error(VpTranslation.of("error.videoplayer.playback_stale", "Playback control request is stale"));
                     return;
                 }
-                boolean force = buf.readBoolean();
                 if (force) {
                     if (!requirePermission(player, reply, VideoPermissionAction.FORCE_SKIP, VideoPermissionContext.screen(screen))) return;
                     screen.skip();
@@ -385,71 +410,91 @@ public class ServerPacketHandler {
                         player.getName(), screen.name, screen.skipped() == 0 ? 0 : (int) (area.players() * screen.skipPercent - screen.skipped() + 1)
                 );
                 message(player, VpTranslation.of("message.videoplayer.skip_voted", "Voted to skip this video"));
-                for (Player target : DataHolder.players(area.playerSnapshot())) {
-                    message(target, text);
+                for (UUID target : area.playerSnapshot()) {
+                    DataHolder.message(target, text);
                 }
                 reply.ok();
             });
             case SKIP_PERCENT -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                float skipPercent = buf.readFloat();
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(screenName);
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.SET_SKIP_PERCENT, VideoPermissionContext.screen(screen))) return;
-                float skipPercent = buf.readFloat();
                 if (!Float.isFinite(skipPercent) || skipPercent < 0f || skipPercent > 1f) {
                     reply.error(VpTranslation.of("error.videoplayer.skip_percent_invalid", "Skip vote percent must be between 0 and 1"));
                     return;
                 }
                 screen.skipPercent = skipPercent;
-                DataHolder.saveWorld(area.dim);
+                DataHolder.queueWorldSave(area.dim);
                 screen.setSkipPercent(skipPercent);
                 message(player, VpTranslation.of("message.videoplayer.skip_percent_set", "Set skip vote ratio for screen %s to %s", screen.name, screen.skipPercent));
                 reply.ok();
             });
             case IDLE_PLAY -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                IdlePlayMutation mutation = VideoPackets.readIdlePlayMutation(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(screenName);
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.SET_IDLE_PLAY, VideoPermissionContext.screen(screen))) return;
-                VideoPackets.readIdlePlayConfig(buf, screen);
-                DataHolder.saveWorld(area.dim);
+                if (mutation.action() == IdlePlayAction.ADD) {
+                    mutation = IdlePlayMutation.add(VideoUrlNormalizer.normalizeSubmittedUrl(mutation.url()), mutation.priority());
+                    if (!VideoScreen.validIdlePlayUrl(mutation.url())) {
+                        reply.error(VpTranslation.of("error.videoplayer.idle_play_url_invalid", "IdlePlay URL is invalid"));
+                        return;
+                    }
+                }
+                if (!screen.applyIdlePlayMutation(mutation, player.getUniqueId(), player.getName())) {
+                    reply.error(VpTranslation.of("error.videoplayer.idle_play_mutation_failed", "Unable to update IdlePlay entry"));
+                    return;
+                }
+                DataHolder.queueWorldSave(area.dim);
                 screen.idlePlayConfigChanged();
                 if (area.hasPlayer()) {
-                    sendToPlayers(DataHolder.players(area.playerSnapshot()), VideoPackets.idlePlay(screen));
+                    sendToPlayers(area.playerSnapshot(), VideoPackets.idlePlay(screen));
                 }
                 message(player, VpTranslation.of("message.videoplayer.idle_play_updated", "Updated IdlePlay list for screen %s", screen.name));
                 reply.ok();
             });
             case SET_UV -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                float u1 = buf.readFloat();
+                float v1 = buf.readFloat();
+                float u2 = buf.readFloat();
+                float v2 = buf.readFloat();
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(screenName);
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.SET_UV, VideoPermissionContext.screen(screen))) return;
-                float u1 = buf.readFloat();
-                float v1 = buf.readFloat();
-                float u2 = buf.readFloat();
-                float v2 = buf.readFloat();
                 if (!finite(u1, v1, u2, v2)) {
                     reply.error(VpTranslation.of("error.videoplayer.uv_invalid", "UV values must be finite"));
                     return;
@@ -458,42 +503,68 @@ public class ServerPacketHandler {
                 screen.v1 = v1;
                 screen.u2 = u2;
                 screen.v2 = v2;
-                DataHolder.saveWorld(area.dim);
+                DataHolder.queueWorldSave(area.dim);
                 if (area.hasPlayer()) {
-                    sendToPlayers(DataHolder.players(area.playerSnapshot()), VideoPackets.setUv(screen, screen.u1, screen.v1, screen.u2, screen.v2));
+                    sendToPlayers(area.playerSnapshot(), VideoPackets.setUv(screen, screen.u1, screen.v1, screen.u2, screen.v2));
                 }
                 reply.ok();
             });
             case OPEN_MENU -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(screenName);
+                if (screen == null) {
+                    reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
+                    return;
+                }
+                refreshPermissions(player);
+                if (!requirePermission(player, reply, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
+                reply.ok();
+            });
+            case DIAGNOSTICS_REQUEST -> handleRequest(player, buf, reply -> {
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
+                if (area == null) {
+                    reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
+                    return;
+                }
+                VideoScreen screen = area.getScreen(screenName);
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
+                DataHolder.sendTo(player, VideoPackets.diagnostics(screen,
+                        screen.diagnostics(PaperNativeRuntime.currentState().name())));
                 reply.ok();
             });
             case SET_SCREEN_METADATA -> handleRequest(player, buf, reply -> handleMetadata(player, buf, reply));
             case SET_SCALE -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                boolean fill = buf.readBoolean();
+                float scaleX = buf.readFloat();
+                float scaleY = buf.readFloat();
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(screenName);
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.SET_SCALE, VideoPermissionContext.screen(screen))) return;
-                boolean fill = buf.readBoolean();
-                float scaleX = buf.readFloat();
-                float scaleY = buf.readFloat();
                 if (!Float.isFinite(scaleX) || !Float.isFinite(scaleY)
                         || scaleX < 0.0625f || scaleX > 16f || scaleY < 0.0625f || scaleY > 16f) {
                     reply.error(VpTranslation.of("error.videoplayer.scale_invalid", "Invalid scale value: %s %s", scaleX, scaleY));
@@ -502,26 +573,27 @@ public class ServerPacketHandler {
                 screen.fill = fill;
                 screen.scaleX = scaleX;
                 screen.scaleY = scaleY;
-                DataHolder.saveWorld(area.dim);
+                DataHolder.queueWorldSave(area.dim);
                 if (area.hasPlayer()) {
-                    sendToPlayers(DataHolder.players(area.playerSnapshot()), VideoPackets.setScale(screen, fill, scaleX, scaleY));
+                    sendToPlayers(area.playerSnapshot(), VideoPackets.setScale(screen, fill, scaleX, scaleY));
                 }
                 reply.ok();
             });
             case AUTO_SYNC -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
+                ScreenGenerationValueRequest request = readScreenGenerationValueRequest(buf);
+                reply.decoded();
+                VideoArea area = getArea(player, request.areaName());
                 if (area == null) {
                     reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
                     return;
                 }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
+                VideoScreen screen = area.getScreen(request.screenName());
                 if (screen == null) {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.AUTO_SYNC, VideoPermissionContext.screen(screen))) return;
-                long generation = buf.readLong();
-                if (generation != screen.currentPlaybackGeneration()) {
+                if (request.generation() != screen.currentPlaybackGeneration()) {
                     reply.error(VpTranslation.of("error.videoplayer.playback_stale", "Playback control request is stale"));
                     return;
                 }
@@ -530,7 +602,7 @@ public class ServerPacketHandler {
                     reply.error(VpTranslation.of("error.videoplayer.screen_not_seekable", "Screen is not playing seekable media"));
                     return;
                 }
-                long clientTime = buf.readLong();
+                long clientTime = request.value();
                 IVideoListener listener = screen.getListener();
                 if (listener == null) {
                     reply.error(VpTranslation.of("error.videoplayer.listener_unavailable", "Playback listener is unavailable"));
@@ -546,35 +618,42 @@ public class ServerPacketHandler {
                 reply.ok();
             });
             case UPDATE_SCREEN -> handleRequest(player, buf, reply -> {
-                VideoArea area = getArea(player, VideoPackets.readName(buf));
-                if (area == null) {
-                    reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
-                    return;
-                }
-                VideoScreen screen = area.getScreen(VideoPackets.readName(buf));
-                if (screen == null) {
-                    reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
-                    return;
-                }
-                if (!requirePermission(player, reply, VideoPermissionAction.UPDATE_SCREEN, VideoPermissionContext.screen(screen))) return;
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
                 short vertexCount = buf.readUnsignedByte();
                 ArrayList<Vector3f> vertices = new ArrayList<>(vertexCount);
                 for (int i = 0; i < vertexCount; i++) {
                     vertices.add(ByteBufUtils.readVec3(buf));
                 }
                 String source = VideoPackets.readName(buf);
-                VideoScreen displayConfig = new VideoScreen(area, screen.name, vertices, source);
+                VideoScreen displayConfig = new VideoScreen(null, screenName, vertices, source);
                 VideoScreen.readDisplayConfig(buf, displayConfig);
+                reply.decoded();
+                VideoArea area = getArea(player, areaName);
+                if (area == null) {
+                    reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
+                    return;
+                }
+                VideoScreen screen = area.getScreen(screenName);
+                if (screen == null) {
+                    reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
+                    return;
+                }
+                displayConfig.area = area;
                 if (!validScreenUpdate(reply, area, screen, vertices, source, displayConfig)) return;
+                if (!requirePermission(player, reply, VideoPermissionAction.UPDATE_SCREEN, VideoPermissionContext.screen(screen))) return;
+                if (!requireCandidatePermission(player, reply, VideoPermissionAction.UPDATE_SCREEN, VideoPermissionContext.screen(displayConfig))) return;
                 screen.setVertices(vertices);
                 screen.source = source == null ? "" : source;
                 screen.copyDisplayConfigFrom(displayConfig);
-                DataHolder.saveWorld(area.dim);
+                DataHolder.queueWorldSave(area.dim);
                 if (area.hasPlayer()) {
-                    sendToPlayers(DataHolder.players(area.playerSnapshot()), VideoPackets.updateScreen(screen, screen.vertices, screen.source));
+                    sendToPlayers(area.playerSnapshot(), VideoPackets.updateScreen(screen, screen.vertices, screen.source));
                 }
-                message(player, VpTranslation.of("message.videoplayer.screen_updated", "Updated screen %s", screen.name));
-                reply.ok();
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.screen_updated", "Updated screen %s", screen.name);
+                message(player, confirmation);
+                refreshPermissions(area);
+                reply.ok(confirmation);
             });
             default -> DataHolder.disconnect(player, "Unknown packet type: " + type);
         }
@@ -586,24 +665,10 @@ public class ServerPacketHandler {
     private static void handleMetadata(Player player, ByteBuf buf, RequestReply reply) {
         String areaName = VideoPackets.readName(buf);
         String screenName = VideoPackets.readName(buf);
-        String key;
-        boolean remove;
-        try {
-            key = ByteBufUtils.readString(buf, 64);
-            remove = buf.readBoolean();
-        } catch (IllegalStateException | IndexOutOfBoundsException e) {
-            reply.error(VpTranslation.of("error.videoplayer.meta.key_read_invalid", "Meta key is invalid: %s", errorMessage(e)));
-            return;
-        }
-        MetaValue value = null;
-        if (!remove) {
-            try {
-                value = VideoPackets.readMetaValue(buf);
-            } catch (IllegalArgumentException | IllegalStateException | IndexOutOfBoundsException e) {
-                reply.error(VpTranslations.from(e, "error.videoplayer.meta.data_invalid", "Meta data is invalid: %s", errorMessage(e)));
-                return;
-            }
-        }
+        String key = ByteBufUtils.readString(buf, 64);
+        boolean remove = buf.readBoolean();
+        MetaValue value = remove ? null : VideoPackets.readMetaValue(buf);
+        reply.decoded();
         VideoArea area = getArea(player, areaName);
         if (area == null) {
             reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
@@ -623,28 +688,64 @@ public class ServerPacketHandler {
                 reply.error(VpTranslations.from(e));
                 return;
             }
-            DataHolder.saveWorld(area.dim);
+            DataHolder.queueWorldSave(area.dim);
             if (area.hasPlayer()) {
-                sendToPlayers(DataHolder.players(area.playerSnapshot()), VideoPackets.removeMetadata(screen, key));
+                sendToPlayers(area.playerSnapshot(), VideoPackets.removeMetadata(screen, key));
             }
             reply.ok();
             return;
         }
         if (!validMetadata(reply, screen, key, value)) return;
         screen.metadata.set(key, value);
-        DataHolder.saveWorld(area.dim);
+        DataHolder.queueWorldSave(area.dim);
         if (area.hasPlayer()) {
-            sendToPlayers(DataHolder.players(area.playerSnapshot()), VideoPackets.setMetadata(screen, key, value));
+            sendToPlayers(area.playerSnapshot(), VideoPackets.setMetadata(screen, key, value));
         }
         reply.ok();
     }
 
     private static boolean requirePermission(Player player, RequestReply reply, VideoPermissionAction action, VideoPermissionContext context) {
+        return requirePermission(player, reply, action, context, true);
+    }
+
+    private static boolean requireCandidatePermission(Player player, RequestReply reply, VideoPermissionAction action, VideoPermissionContext context) {
+        return requirePermission(player, reply, action, context, false);
+    }
+
+    private static boolean requirePermission(Player player, RequestReply reply, VideoPermissionAction action, VideoPermissionContext context, boolean refreshCache) {
         VideoPermissionPlayer permissionPlayer = VideoPermissions.player(player);
         if (VideoPermissions.allowed(permissionPlayer, action, context)) return true;
-        sendPermissionCache(player, context);
+        if (refreshCache) sendPermissionCache(player, context);
         reply.denied(VpTranslation.of("error.videoplayer.permission_denied", "Permission denied"));
         return false;
+    }
+
+    static ScreenGenerationRequest readScreenGenerationRequest(ByteBuf buf) {
+        return new ScreenGenerationRequest(
+                VideoPackets.readName(buf),
+                VideoPackets.readName(buf),
+                buf.readLong()
+        );
+    }
+
+    static ScreenGenerationValueRequest readScreenGenerationValueRequest(ByteBuf buf) {
+        return new ScreenGenerationValueRequest(
+                VideoPackets.readName(buf),
+                VideoPackets.readName(buf),
+                buf.readLong(),
+                buf.readLong()
+        );
+    }
+
+    static ClientPlaybackResolutionRequest readClientPlaybackResolutionRequest(ByteBuf buf) {
+        return new ClientPlaybackResolutionRequest(
+                VideoPackets.readName(buf),
+                VideoPackets.readName(buf),
+                buf.readLong(),
+                buf.readLong(),
+                ClientPlaybackResolution.fromId(buf.readUnsignedByte()),
+                buf.readLong()
+        );
     }
 
     private static void handleRequest(Player player, ByteBuf buf, RequestHandler handler) {
@@ -654,9 +755,14 @@ public class ServerPacketHandler {
         try {
             handler.handle(reply);
         } catch (RuntimeException error) {
+            if (reply.decoding()) {
+                reply.abandon();
+                throw error;
+            }
             reply.error(VpTranslations.from(error, "error.videoplayer.request_failed", "Request failed: %s", errorMessage(error)));
             LOGGER.warn("VideoPlayer request failed for {}", player.getName(), error);
         } catch (Error error) {
+            if (reply.decoding()) reply.abandon();
             LOGGER.error("VideoPlayer request encountered an unrecoverable error for {}", player.getName(), error);
             throw error;
         } finally {
@@ -671,6 +777,13 @@ public class ServerPacketHandler {
             current = current.getCause();
         }
         return null;
+    }
+
+    private static VpTranslation nativeBackendUnavailableMessage(Throwable error) {
+        String detail = NativeDependencyDiagnostics.describe(error);
+        String suffix = detail.startsWith("missing native dependencies:") ? " (" + detail + ")" : "";
+        return VpTranslation.of("error.videoplayer.native_backend_unavailable_detail",
+                "The server cannot use MPV or VLC playback%s. Ask the server administrator to install or repair a native runtime.", suffix);
     }
 
     static CompletableFuture<VideoInfo> guardNativeRuntime(CompletableFuture<VideoInfo> upstream) {
@@ -735,19 +848,19 @@ public class ServerPacketHandler {
 
     public static void refreshPermissions(VideoArea area) {
         if (area == null) return;
-        List<Player> players;
+        List<UUID> players;
         ArrayList<VideoPermissionContext> contexts = new ArrayList<>();
         synchronized (DataHolder.LOCK) {
             if (!area.hasPlayer()) return;
-            players = DataHolder.players(area.playerSnapshot());
+            players = area.playerSnapshot();
             contexts.add(VideoPermissionContext.area(area));
             for (VideoScreen screen : area.screens) {
                 contexts.add(VideoPermissionContext.screen(screen));
             }
         }
         List<VideoPermissionContext> snapshot = List.copyOf(contexts);
-        for (Player player : players) {
-            DataHolder.runForPlayer(player, () -> sendPermissionContexts(player, snapshot));
+        for (UUID uuid : players) {
+            DataHolder.runForPlayer(uuid, player -> sendPermissionContexts(player, snapshot));
         }
     }
 
@@ -866,7 +979,7 @@ public class ServerPacketHandler {
         return switch (key) {
             case "mute", "interactable", "autoSync", ScreenMetadata.KEY_DANMAKU_ENABLED,
                     ScreenMetadata.KEY_DEFAULT_VOLUME, ScreenMetadata.KEY_BILIBILI_QUALITY,
-                    ScreenMetadata.KEY_YOUTUBE_QUALITY -> true;
+                    ScreenMetadata.KEY_YOUTUBE_QUALITY, ScreenMetadata.KEY_SHOW_IDLE_IMAGE -> true;
             default -> false;
         };
     }
@@ -877,7 +990,8 @@ public class ServerPacketHandler {
 
     private static void validateBuiltInMetadata(VideoScreen screen, String key, MetaValue value) {
         switch (key) {
-            case "mute", "interactable", "autoSync", "debug", ScreenMetadata.KEY_DANMAKU_ENABLED -> requireType(key, value, MetaType.BOOL);
+            case "mute", "interactable", "autoSync", "debug", ScreenMetadata.KEY_DANMAKU_ENABLED,
+                    ScreenMetadata.KEY_SHOW_IDLE_IMAGE -> requireType(key, value, MetaType.BOOL);
             case ScreenMetadata.KEY_DEFAULT_VOLUME -> {
                 requireType(key, value, MetaType.INT);
                 int volume = value.intValue(-1);
@@ -1026,10 +1140,10 @@ public class ServerPacketHandler {
         DataHolder.sendTo(player, bytes);
     }
 
-    private static void sendToPlayers(List<Player> players, byte[] bytes) {
+    private static void sendToPlayers(List<UUID> players, byte[] bytes) {
         if (bytes == null) return;
-        for (Player target : players) {
-            sendTo(target, bytes);
+        for (UUID uuid : players) {
+            DataHolder.sendTo(uuid, bytes);
         }
     }
 
@@ -1038,10 +1152,22 @@ public class ServerPacketHandler {
         void handle(RequestReply reply);
     }
 
+    record ScreenGenerationRequest(String areaName, String screenName, long generation) {
+    }
+
+    record ScreenGenerationValueRequest(String areaName, String screenName, long generation, long value) {
+    }
+
+    record ClientPlaybackResolutionRequest(String areaName, String screenName, long generation, long reporterToken,
+                                           ClientPlaybackResolution resolution, long durationMs) {
+    }
+
     static final class RequestReply {
         private final BiConsumer<RequestResultStatus, VpTranslation> sender;
         private boolean completed;
         private boolean deferred;
+        private boolean decoding = true;
+        private boolean abandoned;
 
         RequestReply(BiConsumer<RequestResultStatus, VpTranslation> sender) {
             this.sender = sender;
@@ -1049,6 +1175,10 @@ public class ServerPacketHandler {
 
         void ok() {
             complete(RequestResultStatus.OK, VpTranslation.EMPTY);
+        }
+
+        void ok(VpTranslation message) {
+            complete(RequestResultStatus.OK, message);
         }
 
         void denied(VpTranslation message) {
@@ -1063,8 +1193,20 @@ public class ServerPacketHandler {
             if (!completed) deferred = true;
         }
 
+        void decoded() {
+            decoding = false;
+        }
+
+        boolean decoding() {
+            return decoding;
+        }
+
+        void abandon() {
+            abandoned = true;
+        }
+
         void finish() {
-            if (!completed && !deferred) {
+            if (!completed && !deferred && !abandoned) {
                 error(VpTranslation.of("error.videoplayer.request_incomplete", "Request did not complete"));
             }
         }

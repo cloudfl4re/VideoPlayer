@@ -67,6 +67,7 @@ public final class ClientDanmakuRenderer {
 
     public static void clearCache() {
         DanmakuTextLayoutCache.clear();
+        BiliBiliSourceRegistry.clear();
     }
 
     public static void draw(MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen target) {
@@ -193,7 +194,8 @@ public final class ClientDanmakuRenderer {
                 ? new TargetProjection(surfaceTriangles(targetGeometry, SurfaceCoordinates.EDIT, null, false, false, target), false)
                 : targetProjection(targetGeometry, target);
         DirectPlane directPlane = !projection.mappedUv() ? directPlane(targetGeometry) : null;
-        return new RenderContext(targetGeometry, projection, source, targetBounds, rootTarget, directPlane);
+        Vector3f renderOrigin = targetGeometry.relativeOrigin(ScreenRenderer.preciseCameraX, ScreenRenderer.preciseCameraY, ScreenRenderer.preciseCameraZ);
+        return new RenderContext(targetGeometry, projection, source, targetBounds, rootTarget, directPlane, renderOrigin);
     }
 
     private static void collectPreviewItem(DrawContext context, GuiTextBatch batch,
@@ -339,16 +341,19 @@ public final class ClientDanmakuRenderer {
 
     private static Vector3f cameraFacingOffset(ScreenGeometry geometry, float distance) {
         Vector3f normal = geometry.normal();
-        Vector3f toCamera = new Vector3f(ScreenRenderer.cameraX, ScreenRenderer.cameraY, ScreenRenderer.cameraZ)
-                .sub(geometry.firstVertex());
-        if (normal.dot(toCamera) < 0.0f) {
+        Vector3f origin = geometry.origin();
+        double toCameraX = ScreenRenderer.preciseCameraX - origin.x;
+        double toCameraY = ScreenRenderer.preciseCameraY - origin.y;
+        double toCameraZ = ScreenRenderer.preciseCameraZ - origin.z;
+        double facing = normal.x * toCameraX + normal.y * toCameraY + normal.z * toCameraZ;
+        if (facing < 0.0) {
             normal.negate();
         }
         return normal.mul(Math.max(0.0f, distance));
     }
 
     private static TargetProjection targetProjection(ScreenGeometry geometry, ClientVideoScreen target) {
-        List<Vector2f> mappedUvs = mappedUvs(target, geometry.vertices().size());
+        List<Vector2f> mappedUvs = mappedUvs(target, geometry.localVertices().size());
         if (mappedUvs != null) {
             return new TargetProjection(surfaceTriangles(geometry, SurfaceCoordinates.MAPPED_UV, mappedUvs,
                     target.player != null && target.player.flippedX(),
@@ -361,7 +366,7 @@ public final class ClientDanmakuRenderer {
     private static List<SurfaceTriangle> surfaceTriangles(ScreenGeometry geometry, SurfaceCoordinates coordinates,
                                                           List<Vector2f> mappedUvs, boolean flippedX, boolean flippedY,
                                                           ClientVideoScreen target) {
-        List<Vector3f> vertices = geometry.vertices();
+        List<Vector3f> vertices = geometry.localVertices();
         int[] indices = geometry.triangles();
         ArrayList<SurfaceTriangle> result = new ArrayList<>(indices.length / 3);
         for (int i = 0; i < indices.length; i += 3) {
@@ -398,7 +403,7 @@ public final class ClientDanmakuRenderer {
     }
 
     private static DirectPlane directPlane(ScreenGeometry geometry) {
-        List<Vector3f> vertices = geometry.vertices();
+        List<Vector3f> vertices = geometry.localVertices();
         if (vertices.size() != 4) return null;
 
         float minX = Float.POSITIVE_INFINITY;
@@ -434,7 +439,7 @@ public final class ClientDanmakuRenderer {
 
         for (int i = 0; i < vertices.size(); i++) {
             Vector2f projected = geometry.projectedPoint(i);
-            if (geometry.unproject(projected.x, projected.y).distanceSquared(vertices.get(i)) > 0.0001f) {
+            if (geometry.unprojectLocal(projected.x, projected.y).distanceSquared(vertices.get(i)) > 0.0001f) {
                 return null;
             }
         }
@@ -442,7 +447,7 @@ public final class ClientDanmakuRenderer {
     }
 
     private static int editCorner(ScreenGeometry geometry, float x, float y) {
-        List<Vector3f> vertices = geometry.vertices();
+        List<Vector3f> vertices = geometry.localVertices();
         for (int i = 0; i < vertices.size(); i++) {
             Vector2f point = geometry.editPoint(i);
             if (Math.abs(point.x - x) <= 0.0001f && Math.abs(point.y - y) <= 0.0001f) {
@@ -542,7 +547,7 @@ public final class ClientDanmakuRenderer {
             RectRelation relation = relateToBounds(mapped, bounds);
             if (relation == RectRelation.OUTSIDE) return;
             if (relation == RectRelation.INSIDE) {
-                drawBackgroundDirectQuad(context.directPlane(), normalOffset, consumer, mapped, vertexColor);
+                drawBackgroundDirectQuad(context.directPlane(), context.renderOrigin(), normalOffset, consumer, mapped, vertexColor);
                 return;
             }
         }
@@ -560,85 +565,85 @@ public final class ClientDanmakuRenderer {
             if (clipped.size() < 3) continue;
             ClipVertex first = clipped.getFirst();
             for (int i = 1; i < clipped.size() - 1; i++) {
-                drawBackgroundTriangle(triangle, normalOffset, consumer, first, clipped.get(i), clipped.get(i + 1), vertexColor);
+                drawBackgroundTriangle(triangle, context.renderOrigin(), normalOffset, consumer, first, clipped.get(i), clipped.get(i + 1), vertexColor);
             }
         }
     }
 
-    private static void drawBackgroundDirectQuad(DirectPlane plane, Vector3f normalOffset, VertexConsumer consumer,
+    private static void drawBackgroundDirectQuad(DirectPlane plane, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
                                                  ClipVertex[] mapped, int vertexColor) {
-        drawBackgroundPlaneVertex(plane, normalOffset, consumer, mapped[0], vertexColor);
-        drawBackgroundPlaneVertex(plane, normalOffset, consumer, mapped[1], vertexColor);
-        drawBackgroundPlaneVertex(plane, normalOffset, consumer, mapped[2], vertexColor);
-        drawBackgroundPlaneVertex(plane, normalOffset, consumer, mapped[3], vertexColor);
+        drawBackgroundPlaneVertex(plane, renderOrigin, normalOffset, consumer, mapped[0], vertexColor);
+        drawBackgroundPlaneVertex(plane, renderOrigin, normalOffset, consumer, mapped[1], vertexColor);
+        drawBackgroundPlaneVertex(plane, renderOrigin, normalOffset, consumer, mapped[2], vertexColor);
+        drawBackgroundPlaneVertex(plane, renderOrigin, normalOffset, consumer, mapped[3], vertexColor);
     }
 
-    private static void drawBackgroundTriangle(SurfaceTriangle triangle, Vector3f normalOffset, VertexConsumer consumer,
+    private static void drawBackgroundTriangle(SurfaceTriangle triangle, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
                                                ClipVertex p1, ClipVertex p2, ClipVertex p3, int vertexColor) {
-        drawBackgroundVertex(triangle, normalOffset, consumer, p1, vertexColor);
-        drawBackgroundVertex(triangle, normalOffset, consumer, p2, vertexColor);
-        drawBackgroundVertex(triangle, normalOffset, consumer, p3, vertexColor);
-        drawBackgroundVertex(triangle, normalOffset, consumer, p3, vertexColor);
-        drawBackgroundVertex(triangle, normalOffset, consumer, p1, vertexColor);
-        drawBackgroundVertex(triangle, normalOffset, consumer, p3, vertexColor);
-        drawBackgroundVertex(triangle, normalOffset, consumer, p2, vertexColor);
-        drawBackgroundVertex(triangle, normalOffset, consumer, p2, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p1, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p2, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p3, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p3, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p1, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p3, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p2, vertexColor);
+        drawBackgroundVertex(triangle, renderOrigin, normalOffset, consumer, p2, vertexColor);
     }
 
-    private static void drawBackgroundVertex(SurfaceTriangle triangle, Vector3f normalOffset, VertexConsumer consumer,
+    private static void drawBackgroundVertex(SurfaceTriangle triangle, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
                                              ClipVertex point, int vertexColor) {
         Vector3f vertex = triangle.interpolate(point.x, point.y)
                 .add(normalOffset)
-                .sub(ScreenRenderer.cameraX, ScreenRenderer.cameraY, ScreenRenderer.cameraZ);
+                .add(renderOrigin);
         consumer.vertex(vertex.x, vertex.y, vertex.z)
                 .color(vertexColor)
                 .texture(point.u, point.v);
     }
 
-    private static void drawBackgroundPlaneVertex(DirectPlane plane, Vector3f normalOffset, VertexConsumer consumer,
+    private static void drawBackgroundPlaneVertex(DirectPlane plane, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
                                                   ClipVertex point, int vertexColor) {
         float x = plane.origin.x + plane.xAxis.x * (point.x - plane.minX) + plane.yAxis.x * (point.y - plane.minY)
-                + normalOffset.x - ScreenRenderer.cameraX;
+                + normalOffset.x + renderOrigin.x;
         float y = plane.origin.y + plane.xAxis.y * (point.x - plane.minX) + plane.yAxis.y * (point.y - plane.minY)
-                + normalOffset.y - ScreenRenderer.cameraY;
+                + normalOffset.y + renderOrigin.y;
         float z = plane.origin.z + plane.xAxis.z * (point.x - plane.minX) + plane.yAxis.z * (point.y - plane.minY)
-                + normalOffset.z - ScreenRenderer.cameraZ;
+                + normalOffset.z + renderOrigin.z;
         consumer.vertex(x, y, z)
                 .color(vertexColor)
                 .texture(point.u, point.v);
     }
 
-    private static void drawTriangle(SurfaceTriangle triangle, Vector3f normalOffset, VertexConsumer consumer,
+    private static void drawTriangle(SurfaceTriangle triangle, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
                                      ClipVertex p1, ClipVertex p2, ClipVertex p3, int vertexColor, int light) {
-        drawVertex(triangle, normalOffset, consumer, p1, vertexColor, light);
-        drawVertex(triangle, normalOffset, consumer, p2, vertexColor, light);
-        drawVertex(triangle, normalOffset, consumer, p3, vertexColor, light);
-        drawVertex(triangle, normalOffset, consumer, p3, vertexColor, light);
-        drawVertex(triangle, normalOffset, consumer, p1, vertexColor, light);
-        drawVertex(triangle, normalOffset, consumer, p3, vertexColor, light);
-        drawVertex(triangle, normalOffset, consumer, p2, vertexColor, light);
-        drawVertex(triangle, normalOffset, consumer, p2, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p1, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p2, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p3, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p3, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p1, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p3, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p2, vertexColor, light);
+        drawVertex(triangle, renderOrigin, normalOffset, consumer, p2, vertexColor, light);
     }
 
-    private static void drawVertex(SurfaceTriangle triangle, Vector3f normalOffset, VertexConsumer consumer,
+    private static void drawVertex(SurfaceTriangle triangle, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
                                    ClipVertex point, int vertexColor, int light) {
         Vector3f vertex = triangle.interpolate(point.x, point.y)
                 .add(normalOffset)
-                .sub(ScreenRenderer.cameraX, ScreenRenderer.cameraY, ScreenRenderer.cameraZ);
+                .add(renderOrigin);
         consumer.vertex(vertex.x, vertex.y, vertex.z)
                 .color(vertexColor)
                 .texture(point.u, point.v)
                 .light(light);
     }
 
-    private static void drawPlaneVertex(DirectPlane plane, Vector3f normalOffset, VertexConsumer consumer,
+    private static void drawPlaneVertex(DirectPlane plane, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
                                         ClipVertex point, int vertexColor, int light) {
         float x = plane.origin.x + plane.xAxis.x * (point.x - plane.minX) + plane.yAxis.x * (point.y - plane.minY)
-                + normalOffset.x - ScreenRenderer.cameraX;
+                + normalOffset.x + renderOrigin.x;
         float y = plane.origin.y + plane.xAxis.y * (point.x - plane.minX) + plane.yAxis.y * (point.y - plane.minY)
-                + normalOffset.y - ScreenRenderer.cameraY;
+                + normalOffset.y + renderOrigin.y;
         float z = plane.origin.z + plane.xAxis.z * (point.x - plane.minX) + plane.yAxis.z * (point.y - plane.minY)
-                + normalOffset.z - ScreenRenderer.cameraZ;
+                + normalOffset.z + renderOrigin.z;
         consumer.vertex(x, y, z)
                 .color(vertexColor)
                 .texture(point.u, point.v)
@@ -670,7 +675,10 @@ public final class ClientDanmakuRenderer {
     }
 
     private record RenderContext(ScreenGeometry geometry, TargetProjection projection, SourceMapping source,
-                                 float[] targetBounds, boolean rootTarget, DirectPlane directPlane) {
+                                 float[] targetBounds, boolean rootTarget, DirectPlane directPlane, Vector3f renderOrigin) {
+        private RenderContext {
+            renderOrigin = new Vector3f(renderOrigin);
+        }
     }
 
     private record DirectPlane(Vector3f origin, Vector3f xAxis, Vector3f yAxis, float minX, float minY) {
@@ -1108,16 +1116,16 @@ public final class ClientDanmakuRenderer {
                 if (clipped.size() < 3) continue;
                 ClipVertex first = clipped.getFirst();
                 for (int i = 1; i < clipped.size() - 1; i++) {
-                    drawTriangle(triangle, normalOffset, delegate, first, clipped.get(i), clipped.get(i + 1), color, glyphLight);
+                    drawTriangle(triangle, context.renderOrigin(), normalOffset, delegate, first, clipped.get(i), clipped.get(i + 1), color, glyphLight);
                 }
             }
         }
 
         private void drawDirectQuad(ClipVertex[] mapped, int glyphLight) {
-            drawPlaneVertex(context.directPlane(), normalOffset, delegate, mapped[0], color, glyphLight);
-            drawPlaneVertex(context.directPlane(), normalOffset, delegate, mapped[1], color, glyphLight);
-            drawPlaneVertex(context.directPlane(), normalOffset, delegate, mapped[2], color, glyphLight);
-            drawPlaneVertex(context.directPlane(), normalOffset, delegate, mapped[3], color, glyphLight);
+            drawPlaneVertex(context.directPlane(), context.renderOrigin(), normalOffset, delegate, mapped[0], color, glyphLight);
+            drawPlaneVertex(context.directPlane(), context.renderOrigin(), normalOffset, delegate, mapped[1], color, glyphLight);
+            drawPlaneVertex(context.directPlane(), context.renderOrigin(), normalOffset, delegate, mapped[2], color, glyphLight);
+            drawPlaneVertex(context.directPlane(), context.renderOrigin(), normalOffset, delegate, mapped[3], color, glyphLight);
         }
     }
 

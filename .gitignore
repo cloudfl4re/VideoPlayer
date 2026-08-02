@@ -33,9 +33,15 @@ bin/
 run/
 logs/
 
+# local runtime
+config/
+
 # java
 
 hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# local toolchain
+.tmp-jdk21/

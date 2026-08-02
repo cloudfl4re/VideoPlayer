@@ -108,6 +108,7 @@ public class VlcDecoder {
             List<String> options = new ArrayList<>();
             options.add("--audio-filter=scaletempo");
             options.add(HARDWARE_DECODING_FACTORY_OPTION);
+            options.addAll(VideoPlayerClient.activeAudioChannelMode().vlcInstanceOptions());
             instance = VlcLibrary.createInstance(options);
             loadError = null;
             VideoPlayerMain.LOGGER.info("loaded VLC library");

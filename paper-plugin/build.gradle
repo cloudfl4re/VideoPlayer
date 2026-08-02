@@ -47,8 +47,6 @@ dependencies {
     compileOnly "io.papermc.paper:paper-api:${rootProject.paper_api_version}"
     compileOnly "org.jetbrains:annotations:26.0.2"
     compileOnly "org.slf4j:slf4j-api:2.0.16"
-    compileOnly files("${rootProject.projectDir}/../videoplayer1.21.11/lib/Residence5.1.6.4.jar")
-
     implementation "io.netty:netty-buffer:4.1.118.Final"
     implementation "org.joml:joml:1.10.8"
     implementation "com.google.code.gson:gson:2.11.0"
@@ -59,8 +57,6 @@ dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter"
     testImplementation "org.mockito:mockito-core:5.15.2"
     testImplementation "io.papermc.paper:paper-api:${rootProject.paper_api_version}"
-    testImplementation files("${rootProject.projectDir}/../videoplayer1.21.11/lib/Residence5.1.6.4.jar")
-    testImplementation files("${rootProject.projectDir}/../videoplayer1.21.11/lib/CMILib1.5.2.6.jar")
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 
@@ -139,6 +135,24 @@ tasks.shadowJar {
     relocate 'org.joml', 'com.github.squi2rel.vp.paper.shadow.joml'
 }
 
+def shadowJarTask = tasks.named('shadowJar')
+
+tasks.register('verifyPaperPluginDescriptor') {
+    dependsOn shadowJarTask
+    inputs.file(shadowJarTask.flatMap { it.archiveFile })
+    doLast {
+        def archive = shadowJarTask.get().archiveFile.get().asFile
+        java.util.jar.JarFile jar = new java.util.jar.JarFile(archive)
+        try {
+            if (jar.getJarEntry('plugin.yml') == null) {
+                throw new GradleException("Paper plugin archive does not contain plugin.yml: ${archive}")
+            }
+        } finally {
+            jar.close()
+        }
+    }
+}
+
 tasks.build {
-    dependsOn tasks.shadowJar
+    dependsOn tasks.verifyPaperPluginDescriptor
 }

@@ -462,7 +462,7 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 			new DebugButton(startX, rowFiveY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT, translate("mcng.ui.debug.button.new_variable", "New Var"), DebugAction.NEW_VARIABLE, true),
 			new DebugButton(rightX, rowFiveY, DEBUG_BUTTON_WIDTH, DEBUG_BUTTON_HEIGHT, translate("mcng.ui.debug.button.variable_type", "Var Type"), DebugAction.CYCLE_VARIABLE_TYPE, selectedVariableId != null),
 			new DebugButton(startX, rowSixY, (DEBUG_BUTTON_WIDTH * 2) + DEBUG_BUTTON_GAP, DEBUG_BUTTON_HEIGHT, translate("mcng.ui.debug.button.delete_variable", "Delete Var"), DebugAction.DELETE_VARIABLE, selectedVariableId != null),
-			new DebugButton(startX, rowSevenY, (DEBUG_BUTTON_WIDTH * 2) + DEBUG_BUTTON_GAP, DEBUG_BUTTON_HEIGHT, translate("mcng.ui.debug.button.stop", "Stop [P]"), DebugAction.STOP_EXECUTION, session.isExecutionRunning())
+            new DebugButton(startX, rowSevenY, (DEBUG_BUTTON_WIDTH * 2) + DEBUG_BUTTON_GAP, DEBUG_BUTTON_HEIGHT, translate("mcng.ui.debug.button.stop", "Stop [%s]", GraphInputText.key(GLFW.GLFW_KEY_P)), DebugAction.STOP_EXECUTION, session.isExecutionRunning())
 		);
 	}
 
@@ -533,17 +533,28 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 		return i18n().translate(key, fallback, args);
 	}
 
-	private List<String> helpLines() {
-		return List.of(
-			translate("mcng.ui.debug.help.palette_toggle", "Nodes button or Tab: toggle node palette"),
-			translate("mcng.ui.debug.help.panel_toggle", "O: toggle debug panel"),
-			translate("mcng.ui.debug.help.enter_definition", "Double click subgraph/custom node: enter definition"),
-			translate("mcng.ui.debug.help.palette_drag", "Click a palette entry to add at center, or drag it onto the canvas"),
-			translate("mcng.ui.debug.help.selection", "Left click: select/drag or connect ports   Shift+Click / drag box: multi-select"),
-			translate("mcng.ui.debug.help.secondary", "Right click while wiring: cancel   Right click port: clear edges   Right click drag/release: pan or menu"),
-			translate("mcng.ui.debug.help.shortcuts", "Ctrl+Z undo   Ctrl+Shift+Z redo   E execute   T trigger   P stop   Del delete")
-		);
-	}
+    private List<String> helpLines() {
+        String leftMouse = GraphInputText.mouse(GLFW.GLFW_MOUSE_BUTTON_LEFT);
+        String rightMouse = GraphInputText.mouse(GLFW.GLFW_MOUSE_BUTTON_RIGHT);
+        String shift = GraphInputText.key(GLFW.GLFW_KEY_LEFT_SHIFT);
+        String control = GraphInputText.key(GLFW.GLFW_KEY_LEFT_CONTROL);
+        String tab = GraphInputText.key(GLFW.GLFW_KEY_TAB);
+        return List.of(
+            translate("mcng.ui.debug.help.palette_toggle", "%s: toggle node palette", tab),
+            translate("mcng.ui.debug.help.panel_toggle", "%s: toggle debug panel", GraphInputText.key(GLFW.GLFW_KEY_O)),
+            translate("mcng.ui.debug.help.enter_definition", "Double %s subgraph/custom node: enter definition", leftMouse),
+            translate("mcng.ui.debug.help.palette_drag", "%s a palette entry to add at center, or drag it onto the canvas", leftMouse),
+            translate("mcng.ui.debug.help.selection", "%s: select/drag or connect ports   %s+%s / drag box: multi-select", leftMouse, shift, leftMouse),
+            translate("mcng.ui.debug.help.secondary", "%s while wiring: cancel   %s port: clear edges   %s drag/release: pan or menu", rightMouse, rightMouse, rightMouse),
+            translate("mcng.ui.debug.help.shortcuts", "%s undo   %s redo   %s execute   %s trigger   %s stop   %s delete",
+                    GraphInputText.shortcut(control, GLFW.GLFW_KEY_Z),
+                    control + "+" + shift + "+" + GraphInputText.key(GLFW.GLFW_KEY_Z),
+                    GraphInputText.key(GLFW.GLFW_KEY_E),
+                    GraphInputText.key(GLFW.GLFW_KEY_T),
+                    GraphInputText.key(GLFW.GLFW_KEY_P),
+                    GraphInputText.key(GLFW.GLFW_KEY_DELETE))
+        );
+    }
 
 	private int presetIndexFor(GraphEditorTheme theme) {
 		for (int index = 0; index < THEME_OPTIONS.size(); index++) {

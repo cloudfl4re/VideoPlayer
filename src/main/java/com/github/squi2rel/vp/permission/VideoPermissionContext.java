@@ -19,12 +19,16 @@ public record VideoPermissionContext(
 
     public static VideoPermissionContext area(VideoArea area) {
         if (area == null) return global(null);
+        return bounds(area.dim, area.name, area.min, area.max);
+    }
+
+    public static VideoPermissionContext bounds(String dimension, String areaName, Vector3f first, Vector3f second) {
         return new VideoPermissionContext(
-                area.dim,
-                area.name,
+                dimension,
+                areaName,
                 null,
-                Position.from(area.min),
-                Position.from(area.max),
+                Position.from(first),
+                Position.from(second),
                 null
         );
     }
@@ -50,6 +54,10 @@ public record VideoPermissionContext(
 
     public boolean hasArea() {
         return areaName != null && !areaName.isBlank();
+    }
+
+    public boolean hasBounds() {
+        return areaMin != null && areaMax != null;
     }
 
     public record Position(float x, float y, float z) {

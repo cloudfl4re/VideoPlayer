@@ -16,7 +16,9 @@ import org.lwjgl.opengl.GL;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,14 +45,21 @@ public class MpvVideoBackend implements VideoBackend {
     private static final int PROPERTY_POLL_INTERVAL_MS = 100;
     private static final int SHARED_TEXTURE_COUNT = 3;
     private static final int SINGLE_CONTEXT_TEXTURE_INDEX = 0;
+    private static final long FRAME_SYNC_WAIT_NS = 2_000_000L;
+    private static final long RENDER_THREAD_JOIN_MS = 1_500L;
+    private static final int FRAME_SYNC_TIMEOUT_WARN_STREAK = 60;
+    private static final String AUDIO_METER_LABEL = "videoplayer_audio_meter";
+    private static final String AUDIO_METER_FILTER = "@" + AUDIO_METER_LABEL + ":lavfi=[astats=metadata=1:reset=1]";
     private static final Set<MpvVideoBackend> ACTIVE_BACKENDS = ConcurrentHashMap.newKeySet();
     private static volatile boolean libraryLoaded;
+    private static volatile boolean sharedContextUnavailable;
 
     private final LibMpv lib;
-    private final boolean singleContext = VideoPlayerMain.android;
+    private volatile boolean singleContext;
     private final BiConsumer<Integer, Integer> sizeListener;
     private final LinkedBlockingQueue<MpvTask> tasks = new LinkedBlockingQueue<>();
     private final AtomicBoolean released = new AtomicBoolean(false);
+    private final AtomicBoolean acceptingFrames = new AtomicBoolean(true);
     private final AtomicBoolean renderUpdate = new AtomicBoolean(false);
     private final AtomicBoolean renderThreadStopped = new AtomicBoolean(true);
     private final Object renderLock = new Object();
@@ -76,6 +85,7 @@ public class MpvVideoBackend implements VideoBackend {
     private final int[] textureIds = {-1, -1, -1};
     private final int[] fboIds = {-1, -1, -1};
     private int renderTextureIndex;
+    private int frameSyncTimeoutStreak;
 
     private volatile boolean loaded;
     private volatile boolean paused = true;
@@ -86,6 +96,8 @@ public class MpvVideoBackend implements VideoBackend {
     private volatile int volume = 100;
     private volatile boolean currentVideoInputAvailable = true;
     private volatile boolean currentAudioInputAvailable = true;
+    private volatile AudioLevelSnapshot audioLevel = AudioLevelSnapshot.waiting();
+    private volatile String lastAudioMeterPayload;
     private VideoInfo pendingInfo;
     private long pendingTargetTime = -1;
     private int pendingVolume = 100;
@@ -93,6 +105,7 @@ public class MpvVideoBackend implements VideoBackend {
 
     public MpvVideoBackend(BiConsumer<Integer, Integer> sizeListener) {
         this.lib = MpvLibrary.get();
+        this.singleContext = VideoPlayerMain.android || sharedContextUnavailable;
         libraryLoaded = true;
         this.sizeListener = sizeListener;
     }
@@ -148,7 +161,16 @@ public class MpvVideoBackend implements VideoBackend {
             return;
         }
 
-        sharedWindow = createSharedWindow();
+        try {
+            sharedWindow = createSharedWindow();
+        } catch (IllegalStateException e) {
+            sharedContextUnavailable = true;
+            singleContext = true;
+            renderThreadStopped.set(true);
+            VideoPlayerMain.LOGGER.warn("{} Using Minecraft's OpenGL context for MPV rendering.", e.getMessage());
+            notifySize(width, height);
+            return;
+        }
         CompletableFuture<Void> rendererReady = new CompletableFuture<>();
         renderThreadStopped.set(false);
         renderThread = new Thread(() -> renderLoop(rendererReady), "VideoPlayer-MPV-GL");
@@ -191,6 +213,8 @@ public class MpvVideoBackend implements VideoBackend {
         MediaInputs inputs = mediaInputs(info);
         currentVideoInputAvailable = inputs.video();
         currentAudioInputAvailable = inputs.audio();
+        audioLevel = inputs.audio() ? AudioLevelSnapshot.waiting() : AudioLevelSnapshot.noAudio();
+        lastAudioMeterPayload = null;
         String path = VideoParams.normalizeStreamPath(info.path());
         String graph = "";
         String loadOptions = VideoParams.mpvLoadOptionsForPath(info.path(), info.params(), configuredProxy(), configuredYtdlPath(), graph);
@@ -216,6 +240,10 @@ public class MpvVideoBackend implements VideoBackend {
             updateTextureSingleContext();
             return;
         }
+        if (released.get() || !acceptingFrames.get()) {
+            discardPendingReadySync();
+            return;
+        }
 
         long readySync;
         int readyTextureId;
@@ -226,13 +254,31 @@ public class MpvVideoBackend implements VideoBackend {
         }
         if (readySync == NULL) return;
 
-        glWaitSync(readySync, 0, GL_TIMEOUT_IGNORED);
+        int waitResult = glClientWaitSync(readySync, GL_SYNC_FLUSH_COMMANDS_BIT, FRAME_SYNC_WAIT_NS);
+        if (waitResult == GL_ALREADY_SIGNALED || waitResult == GL_CONDITION_SATISFIED) {
+            glDeleteSync(readySync);
+            displayTextureId = readyTextureId;
+            frameSyncTimeoutStreak = 0;
+            return;
+        }
+
         glDeleteSync(readySync);
-        displayTextureId = readyTextureId;
+        if (waitResult == GL_WAIT_FAILED) {
+            frameSyncTimeoutStreak = 0;
+            return;
+        }
+
+        frameSyncTimeoutStreak++;
+        if (frameSyncTimeoutStreak == FRAME_SYNC_TIMEOUT_WARN_STREAK) {
+            VideoPlayerMain.LOGGER.warn(
+                    "MPV frame fence wait timed out {} times; keeping last displayed frame to avoid freezes",
+                    frameSyncTimeoutStreak
+            );
+        }
     }
 
     private void updateTextureSingleContext() {
-        if (released.get() || renderFailed || handle == null) return;
+        if (released.get() || !acceptingFrames.get() || renderFailed || handle == null) return;
         try {
             ensureSingleContextRenderer();
             if (renderContext == null) return;
@@ -245,7 +291,7 @@ public class MpvVideoBackend implements VideoBackend {
 
             applyPendingSize();
 
-            if (shouldRender || loaded) {
+            if (shouldRender) {
                 renderFrameSingleContext();
             }
         } catch (Throwable t) {
@@ -291,6 +337,7 @@ public class MpvVideoBackend implements VideoBackend {
         loaded = false;
         paused = true;
         resetCurrentMediaInputs();
+        audioLevel = AudioLevelSnapshot.waiting();
         progressClock.reset(true);
         submit(ctx -> command(ctx, "stop"));
     }
@@ -317,6 +364,11 @@ public class MpvVideoBackend implements VideoBackend {
     public void setVolume(int volume) {
         this.volume = volume;
         submit(ctx -> setDouble(ctx, "volume", volume));
+    }
+
+    @Override
+    public AudioLevelSnapshot audioLevel() {
+        return audioLevel;
     }
 
     @Override
@@ -360,6 +412,7 @@ public class MpvVideoBackend implements VideoBackend {
     public void cleanup() {
         ACTIVE_BACKENDS.remove(this);
         if (!released.compareAndSet(false, true)) return;
+        acceptingFrames.set(false);
         discardPendingPlayback();
         tasks.clear();
         if (singleContext) {
@@ -371,6 +424,11 @@ public class MpvVideoBackend implements VideoBackend {
         signalRenderThread();
         Pointer ctx = handle;
         if (ctx != null) lib.mpv_wakeup(ctx);
+        discardPendingReadySyncOnRenderThread();
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (!client.isOnThread()) {
+            joinRenderThread(RENDER_THREAD_JOIN_MS);
+        }
     }
 
     private void discardPendingPlayback() {
@@ -381,6 +439,7 @@ public class MpvVideoBackend implements VideoBackend {
         loaded = false;
         paused = true;
         resetCurrentMediaInputs();
+        audioLevel = AudioLevelSnapshot.waiting();
         progressClock.reset(true);
     }
 
@@ -405,11 +464,53 @@ public class MpvVideoBackend implements VideoBackend {
     }
 
     private void runSingleContextCleanup() {
+        acceptingFrames.set(false);
         try {
             freeRenderContext();
         } finally {
             cleanupTexture();
         }
+    }
+
+    private void discardPendingReadySyncOnRenderThread() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        Runnable discard = this::discardPendingReadySync;
+        if (client.isOnThread()) {
+            discard.run();
+            return;
+        }
+        client.execute(discard);
+    }
+
+    private void discardPendingReadySync() {
+        long sync;
+        synchronized (publishLock) {
+            sync = pendingReadySync;
+            pendingReadySync = NULL;
+            publishedTextureId = -1;
+        }
+        if (sync != NULL) {
+            glDeleteSync(sync);
+        }
+        frameSyncTimeoutStreak = 0;
+    }
+
+    private void joinRenderThread(long timeoutMs) {
+        Thread thread = renderThread;
+        if (thread == null || !thread.isAlive()) {
+            renderThreadStopped.set(true);
+            return;
+        }
+        try {
+            thread.join(Math.max(1L, timeoutMs));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (thread.isAlive()) {
+            VideoPlayerMain.LOGGER.warn("MPV render thread did not stop within {}ms; continuing without blocking", timeoutMs);
+            return;
+        }
+        renderThreadStopped.set(true);
     }
 
     private long currentProgress() {
@@ -426,6 +527,8 @@ public class MpvVideoBackend implements VideoBackend {
             setOptionString(ctx, "terminal", "no");
             setOptionString(ctx, "vo", "libmpv");
             setOptionString(ctx, "hwdec", "auto-safe");
+            setOptionString(ctx, "audio-channels", VideoPlayerClient.activeAudioChannelMode().mpvAudioChannelsOption());
+            setOptionString(ctx, "af", AUDIO_METER_FILTER);
             check(lib.mpv_initialize(ctx), "mpv_initialize");
             created.complete(ctx);
 
@@ -495,6 +598,7 @@ public class MpvVideoBackend implements VideoBackend {
                 loaded = false;
                 paused = true;
                 resetCurrentMediaInputs();
+                audioLevel = AudioLevelSnapshot.waiting();
                 progressClock.reset(true);
                 if (event.data != null) {
                     MpvEventEndFile end = new MpvEventEndFile(event.data);
@@ -552,6 +656,20 @@ public class MpvVideoBackend implements VideoBackend {
 
         Double speed = getDouble(ctx, "speed");
         if (speed != null && speed > 0) progressClock.setRate(speed.floatValue());
+
+        if (!loaded) {
+            audioLevel = AudioLevelSnapshot.waiting();
+            lastAudioMeterPayload = null;
+        } else if (!currentAudioInputAvailable) {
+            audioLevel = AudioLevelSnapshot.noAudio();
+            lastAudioMeterPayload = null;
+        } else {
+            String payload = getString(ctx, "af-metadata/" + AUDIO_METER_LABEL);
+            if (!paused && !Objects.equals(payload, lastAudioMeterPayload)) {
+                lastAudioMeterPayload = payload;
+                audioLevel = MpvAudioLevelParser.parse(payload, System.currentTimeMillis());
+            }
+        }
     }
 
     private void submit(MpvTask task) {
@@ -568,6 +686,7 @@ public class MpvVideoBackend implements VideoBackend {
     private void resetCurrentMediaInputs() {
         currentVideoInputAvailable = true;
         currentAudioInputAvailable = true;
+        lastAudioMeterPayload = null;
     }
 
     private static MediaInputs mediaInputs(VideoInfo info) {
@@ -589,28 +708,27 @@ public class MpvVideoBackend implements VideoBackend {
     private long createSharedWindow() {
         long share = MinecraftClient.getInstance().getWindow().getHandle();
         glfwDefaultWindowHints();
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        glfwWindowHint(GLFW_CLIENT_API, glfwGetWindowAttrib(share, GLFW_CLIENT_API));
-        glfwWindowHint(GLFW_CONTEXT_CREATION_API, glfwGetWindowAttrib(share, GLFW_CONTEXT_CREATION_API));
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, glfwGetWindowAttrib(share, GLFW_CONTEXT_VERSION_MAJOR));
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, glfwGetWindowAttrib(share, GLFW_CONTEXT_VERSION_MINOR));
-        glfwWindowHint(GLFW_CONTEXT_ROBUSTNESS, glfwGetWindowAttrib(share, GLFW_CONTEXT_ROBUSTNESS));
-        glfwWindowHint(GLFW_CONTEXT_RELEASE_BEHAVIOR, glfwGetWindowAttrib(share, GLFW_CONTEXT_RELEASE_BEHAVIOR));
-        glfwWindowHint(GLFW_OPENGL_PROFILE, glfwGetWindowAttrib(share, GLFW_OPENGL_PROFILE));
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, glfwGetWindowAttrib(share, GLFW_OPENGL_FORWARD_COMPAT));
-        glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, glfwGetWindowAttrib(share, GLFW_OPENGL_DEBUG_CONTEXT));
-        glfwWindowHint(GLFW_CONTEXT_NO_ERROR, glfwGetWindowAttrib(share, GLFW_CONTEXT_NO_ERROR));
+        try {
+            glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+            glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_NATIVE_CONTEXT_API);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+            glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 
-        long window = glfwCreateWindow(1, 1, "VideoPlayer MPV", NULL, share);
-        glfwDefaultWindowHints();
-        if (window == NULL) {
-            PointerBuffer description = BufferUtils.createPointerBuffer(1);
-            int error = glfwGetError(description);
-            long descriptionAddress = description.get(0);
-            String detail = descriptionAddress == NULL ? "unknown GLFW error" : memUTF8(descriptionAddress);
-            throw new IllegalStateException("Failed to create shared MPV OpenGL context (GLFW " + error + ": " + detail + ")");
+            long window = glfwCreateWindow(1, 1, "VideoPlayer MPV", NULL, share);
+            if (window == NULL) {
+                PointerBuffer description = BufferUtils.createPointerBuffer(1);
+                int error = glfwGetError(description);
+                long descriptionAddress = description.get(0);
+                String detail = descriptionAddress == NULL ? "unknown GLFW error" : memUTF8(descriptionAddress);
+                throw new IllegalStateException("Failed to create shared MPV OpenGL context (GLFW " + error + ": " + detail + ").");
+            }
+            return window;
+        } finally {
+            glfwDefaultWindowHints();
         }
-        return window;
     }
 
     private void renderLoop(CompletableFuture<Void> ready) {
@@ -632,7 +750,7 @@ public class MpvVideoBackend implements VideoBackend {
 
                 applyPendingSize();
 
-                if (shouldRender) {
+                if (shouldRender && acceptingFrames.get() && !released.get()) {
                     renderFrame();
                 }
 
@@ -653,6 +771,7 @@ public class MpvVideoBackend implements VideoBackend {
                 VideoPlayerMain.LOGGER.error("MPV render thread failed; disabling MPV rendering.", t);
             }
         } finally {
+            acceptingFrames.set(false);
             freeRenderContext();
             cleanupTexture();
             GL.setCapabilities(null);
@@ -660,7 +779,7 @@ public class MpvVideoBackend implements VideoBackend {
             long window = sharedWindow;
             sharedWindow = NULL;
             if (window != NULL) {
-                glfwDestroyWindow(window);
+                destroySharedWindow(window);
             }
             renderThreadStopped.set(true);
             signalRenderThread();
@@ -676,6 +795,16 @@ public class MpvVideoBackend implements VideoBackend {
     private void signalRenderThread() {
         synchronized (renderLock) {
             renderLock.notifyAll();
+        }
+    }
+
+    private void destroySharedWindow(long window) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        Runnable destroy = () -> glfwDestroyWindow(window);
+        if (client.isOnThread()) {
+            destroy.run();
+        } else {
+            client.execute(destroy);
         }
     }
 
@@ -805,11 +934,14 @@ public class MpvVideoBackend implements VideoBackend {
     }
 
     private void renderFrame() {
+        if (!acceptingFrames.get() || released.get()) return;
         int textureIndex = nextRenderTextureIndex();
         renderFrameToTexture(textureIndex);
         long readySync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         glFlush();
-        publishRenderedTexture(textureIds[textureIndex], readySync);
+        if (!publishRenderedTexture(textureIds[textureIndex], readySync)) {
+            glDeleteSync(readySync);
+        }
     }
 
     private void renderFrameSingleContext() {
@@ -854,9 +986,15 @@ public class MpvVideoBackend implements VideoBackend {
         }
     }
 
-    private void publishRenderedTexture(int readyTextureId, long readySync) {
+    private boolean publishRenderedTexture(int readyTextureId, long readySync) {
+        if (!acceptingFrames.get() || released.get()) {
+            return false;
+        }
         long previousSync;
         synchronized (publishLock) {
+            if (!acceptingFrames.get() || released.get()) {
+                return false;
+            }
             previousSync = pendingReadySync;
             pendingReadySync = readySync;
             publishedTextureId = readyTextureId;
@@ -864,6 +1002,7 @@ public class MpvVideoBackend implements VideoBackend {
         if (previousSync != NULL) {
             glDeleteSync(previousSync);
         }
+        return true;
     }
 
     private int nextRenderTextureIndex() {
@@ -1209,6 +1348,19 @@ public class MpvVideoBackend implements VideoBackend {
         Memory data = intMemory(0);
         int result = lib.mpv_get_property(ctx, name, MPV_FORMAT_FLAG, data);
         return result < 0 ? null : data.getInt(0) != 0;
+    }
+
+    private String getString(Pointer ctx, String name) {
+        PointerByReference reference = new PointerByReference();
+        int result = lib.mpv_get_property(ctx, name, MPV_FORMAT_STRING, reference.getPointer());
+        if (result < 0) return null;
+        Pointer value = reference.getValue();
+        if (value == null) return null;
+        try {
+            return value.getString(0, StandardCharsets.UTF_8.name());
+        } finally {
+            lib.mpv_free(value);
+        }
     }
 
     private static Memory intMemory(int value) {

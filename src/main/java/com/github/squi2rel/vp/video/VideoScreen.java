@@ -2,6 +2,8 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.DataHolder;
 import com.github.squi2rel.vp.network.ByteBufUtils;
+import com.github.squi2rel.vp.network.ClientPlaybackResolution;
+import com.github.squi2rel.vp.network.IdlePlayMutation;
 import com.github.squi2rel.vp.network.VideoPackets;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
@@ -9,6 +11,7 @@ import io.netty.buffer.ByteBuf;
 import org.joml.Vector3f;
 
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
 
@@ -21,6 +24,7 @@ public class VideoScreen {
     public static final int MAX_IDLE_PLAY_URL_BYTES = MAX_PLAY_URL_BYTES;
     public static final int MAX_IDLE_PLAY_URL_LENGTH = MAX_IDLE_PLAY_URL_BYTES;
     public static final int MAX_IDLE_PLAY_TOTAL_BYTES = 24_000;
+    public static final long MAX_RESUME_PROGRESS_MS = TimeUnit.DAYS.toMillis(7);
     public static final int DEFAULT_SPHERE_SEGMENTS = 32;
     public static final int MIN_SPHERE_SEGMENTS = 4;
     public static final int MAX_SPHERE_SEGMENTS = 128;
@@ -44,22 +48,25 @@ public class VideoScreen {
     public float sphereRotZ;
     public boolean sphereSkybox;
     public float skipPercent = 0.5f;
+    public ArrayList<IdlePlayEntry> idlePlayEntries = new ArrayList<>();
     public ArrayList<String> idlePlayUrls = new ArrayList<>();
     public boolean idlePlayRandom;
     public ScreenMetadata metadata = new ScreenMetadata();
+    public ArrayList<VideoInfo> playlist = new ArrayList<>();
+    public long playbackResumeProgress = -1L;
     public transient ArrayDeque<VideoInfo> infos = new ArrayDeque<>();
     private transient PlaybackQueue queue;
     private transient PlaybackController playback;
     private transient OrderedPlayAdmissions admissions;
     private transient ScreenBroadcaster broadcaster;
     private transient ScreenGeometry geometry;
-    private transient int idlePlayIndex;
-    private transient ArrayList<Integer> idlePlayShuffle = new ArrayList<>();
-    private transient int idlePlayShuffleIndex;
-    private transient String lastIdlePlayUrl;
+    private transient ArrayList<UUID> idlePlayOrder = new ArrayList<>();
+    private transient int idlePlayOrderIndex;
+    private transient UUID lastIdlePlayId;
     private transient long serverPluginEpoch;
     private transient long serverScreenEpoch;
     private transient boolean serverActive;
+    private transient long pendingResumeProgress = -1L;
 
     public VideoScreen(VideoArea area, String name, Vector3f p1, Vector3f p2, Vector3f p3, Vector3f p4, String source) {
         this(area, name, List.of(p1, p2, p3, p4), source);
@@ -99,6 +106,8 @@ public class VideoScreen {
         if (vertices == null) vertices = new ArrayList<>();
         if (source == null) source = "";
         if (metadata == null) metadata = new ScreenMetadata();
+        if (playlist == null) playlist = new ArrayList<>();
+        if (playbackResumeProgress < -1L || playbackResumeProgress > MAX_RESUME_PROGRESS_MS) playbackResumeProgress = -1L;
         if (surface == null) surface = ScreenSurface.FLAT;
         if (sphereCenter == null) sphereCenter = new Vector3f();
         if (surface == ScreenSurface.SPHERE_360 && vertices.isEmpty()) spherePreset = true;
@@ -141,9 +150,92 @@ public class VideoScreen {
     }
 
     public void setIdlePlayConfig(List<String> urls, boolean random) {
-        idlePlayUrls = normalizeIdlePlay(urls, true);
+        ArrayList<IdlePlayEntry> entries = new ArrayList<>();
+        if (urls != null) {
+            for (String url : urls) {
+                if (url != null && !url.isBlank()) entries.add(IdlePlayEntry.legacy(url));
+            }
+        }
+        setIdlePlayEntries(entries, random);
+    }
+
+    public void setIdlePlayEntries(List<IdlePlayEntry> entries, boolean random) {
+        idlePlayEntries = normalizeIdlePlayEntries(entries, true);
+        idlePlayUrls = new ArrayList<>();
         idlePlayRandom = random;
         resetIdlePlayOrder();
+    }
+
+    public boolean addIdlePlayEntry(String url, UUID addedBy, String addedByName, int priority) {
+        sanitizeIdlePlay();
+        if (idlePlayEntries.size() >= MAX_IDLE_PLAY_ITEMS) return false;
+        IdlePlayEntry entry = IdlePlayEntry.create(url, addedBy, addedByName, priority);
+        if (entry.url().isBlank()) return false;
+        int bytes = ByteBufUtils.utf8Length(entry.url());
+        if (bytes > MAX_IDLE_PLAY_URL_BYTES) return false;
+        int totalBytes = bytes;
+        for (IdlePlayEntry existing : idlePlayEntries) totalBytes += ByteBufUtils.utf8Length(existing.url());
+        if (totalBytes > MAX_IDLE_PLAY_TOTAL_BYTES) return false;
+        ArrayList<IdlePlayEntry> next = new ArrayList<>(idlePlayEntries);
+        next.add(entry);
+        idlePlayEntries = normalizeIdlePlayEntries(next, false);
+        resetIdlePlayOrder();
+        return true;
+    }
+
+    public boolean removeIdlePlayEntry(UUID id) {
+        sanitizeIdlePlay();
+        boolean removed = idlePlayEntries.removeIf(entry -> entry.id().equals(id));
+        if (removed) resetIdlePlayOrder();
+        return removed;
+    }
+
+    public boolean setIdlePlayPriority(UUID id, int priority) {
+        if (priority < IdlePlayEntry.MIN_PRIORITY || priority > IdlePlayEntry.MAX_PRIORITY) return false;
+        sanitizeIdlePlay();
+        for (int i = 0; i < idlePlayEntries.size(); i++) {
+            IdlePlayEntry entry = idlePlayEntries.get(i);
+            if (!entry.id().equals(id)) continue;
+            idlePlayEntries.set(i, entry.withPriority(priority));
+            resetIdlePlayOrder();
+            return true;
+        }
+        return false;
+    }
+
+    public boolean adjustIdlePlayPriority(UUID id, int delta) {
+        sanitizeIdlePlay();
+        for (IdlePlayEntry entry : idlePlayEntries) {
+            if (!entry.id().equals(id)) continue;
+            return setIdlePlayPriority(id, Math.clamp((long) entry.priority() + delta, IdlePlayEntry.MIN_PRIORITY, IdlePlayEntry.MAX_PRIORITY));
+        }
+        return false;
+    }
+
+    public void clearIdlePlayEntries() {
+        sanitizeIdlePlay();
+        if (idlePlayEntries.isEmpty()) return;
+        idlePlayEntries.clear();
+        resetIdlePlayOrder();
+    }
+
+    public boolean applyIdlePlayMutation(IdlePlayMutation mutation, UUID addedBy, String addedByName) {
+        if (mutation == null || mutation.action() == null) return false;
+        return switch (mutation.action()) {
+            case ADD -> addIdlePlayEntry(mutation.url(), addedBy, addedByName, mutation.priority());
+            case REMOVE -> removeIdlePlayEntry(mutation.entryId());
+            case SET_PRIORITY -> setIdlePlayPriority(mutation.entryId(), mutation.priority());
+            case ADJUST_PRIORITY -> adjustIdlePlayPriority(mutation.entryId(), mutation.delta());
+            case CLEAR -> {
+                clearIdlePlayEntries();
+                yield true;
+            }
+            case SET_MODE -> {
+                idlePlayRandom = mutation.random();
+                resetIdlePlayOrder();
+                yield true;
+            }
+        };
     }
 
     public void idlePlayConfigChanged() {
@@ -151,50 +243,76 @@ public class VideoScreen {
     }
 
     public void resetIdlePlayOrder() {
-        idlePlayIndex = 0;
-        idlePlayShuffle.clear();
-        idlePlayShuffleIndex = 0;
-        lastIdlePlayUrl = null;
+        if (idlePlayOrder == null) idlePlayOrder = new ArrayList<>();
+        idlePlayOrder.clear();
+        idlePlayOrderIndex = 0;
+        lastIdlePlayId = null;
     }
 
     public String nextIdlePlayUrl() {
         sanitizeIdlePlay();
-        if (idlePlayUrls.isEmpty()) return null;
-        String url;
-        if (idlePlayRandom) {
-            if (idlePlayShuffle.size() != idlePlayUrls.size() || idlePlayShuffleIndex >= idlePlayShuffle.size()) {
-                rebuildIdlePlayShuffle();
-            }
-            url = idlePlayUrls.get(idlePlayShuffle.get(idlePlayShuffleIndex++));
-        } else {
-            int index = Math.floorMod(idlePlayIndex, idlePlayUrls.size());
-            url = idlePlayUrls.get(index);
-            idlePlayIndex = (index + 1) % idlePlayUrls.size();
+        if (idlePlayEntries.isEmpty()) return null;
+        if (idlePlayOrder.size() != idlePlayEntries.size() || idlePlayOrderIndex >= idlePlayOrder.size()) {
+            rebuildIdlePlayOrder();
         }
-        lastIdlePlayUrl = url;
-        return url;
+        UUID id = idlePlayOrder.get(idlePlayOrderIndex++);
+        for (IdlePlayEntry entry : idlePlayEntries) {
+            if (entry.id().equals(id)) {
+                lastIdlePlayId = id;
+                return entry.url();
+            }
+        }
+        rebuildIdlePlayOrder();
+        if (idlePlayOrder.isEmpty()) return null;
+        lastIdlePlayId = idlePlayOrder.get(idlePlayOrderIndex++);
+        return findIdlePlayUrl(lastIdlePlayId);
     }
 
-    private void rebuildIdlePlayShuffle() {
-        idlePlayShuffle.clear();
-        for (int i = 0; i < idlePlayUrls.size(); i++) {
-            idlePlayShuffle.add(i);
-        }
-        Collections.shuffle(idlePlayShuffle);
-        if (idlePlayShuffle.size() > 1 && lastIdlePlayUrl != null) {
-            int first = idlePlayShuffle.getFirst();
-            if (Objects.equals(idlePlayUrls.get(first), lastIdlePlayUrl)) {
-                Collections.swap(idlePlayShuffle, 0, 1);
+    private void rebuildIdlePlayOrder() {
+        idlePlayOrder.clear();
+        ArrayList<IdlePlayEntry> sorted = new ArrayList<>(idlePlayEntries);
+        sorted.sort(Comparator.comparingInt(IdlePlayEntry::priority).reversed());
+        if (!idlePlayRandom) {
+            for (IdlePlayEntry entry : sorted) idlePlayOrder.add(entry.id());
+        } else {
+            int offset = 0;
+            while (offset < sorted.size()) {
+                int priority = sorted.get(offset).priority();
+                int end = offset + 1;
+                while (end < sorted.size() && sorted.get(end).priority() == priority) end++;
+                ArrayList<UUID> group = new ArrayList<>();
+                for (int i = offset; i < end; i++) group.add(sorted.get(i).id());
+                Collections.shuffle(group);
+                if (offset == 0 && group.size() > 1 && group.getFirst().equals(lastIdlePlayId)) {
+                    Collections.swap(group, 0, 1);
+                }
+                idlePlayOrder.addAll(group);
+                offset = end;
             }
         }
-        idlePlayShuffleIndex = 0;
+        idlePlayOrderIndex = 0;
+    }
+
+    private String findIdlePlayUrl(UUID id) {
+        for (IdlePlayEntry entry : idlePlayEntries) {
+            if (entry.id().equals(id)) return entry.url();
+        }
+        return null;
     }
 
     private void sanitizeIdlePlay() {
-        idlePlayUrls = normalizeIdlePlay(idlePlayUrls, false);
-        if (idlePlayShuffle == null) idlePlayShuffle = new ArrayList<>();
-        if (idlePlayIndex < 0) idlePlayIndex = 0;
-        if (!idlePlayUrls.isEmpty()) idlePlayIndex %= idlePlayUrls.size();
+        if ((idlePlayEntries == null || idlePlayEntries.isEmpty()) && idlePlayUrls != null && !idlePlayUrls.isEmpty()) {
+            ArrayList<IdlePlayEntry> migrated = new ArrayList<>();
+            for (String url : idlePlayUrls) {
+                if (url != null && !url.isBlank()) migrated.add(IdlePlayEntry.legacy(url));
+            }
+            idlePlayEntries = migrated;
+        }
+        idlePlayEntries = normalizeIdlePlayEntries(idlePlayEntries, false);
+        idlePlayUrls = new ArrayList<>();
+        if (idlePlayOrder == null) idlePlayOrder = new ArrayList<>();
+        if (idlePlayOrderIndex < 0) idlePlayOrderIndex = 0;
+        if (idlePlayOrder.size() != idlePlayEntries.size()) resetIdlePlayOrder();
     }
 
     public void syncInfo() {
@@ -240,8 +358,40 @@ public class VideoScreen {
         }
     }
 
+    static boolean shouldKeepFallbackFrame(boolean hasPlaybackContent, boolean showIdleImage) {
+        return hasPlaybackContent || showIdleImage;
+    }
+
     public static List<String> validatedIdlePlayConfig(List<String> urls) {
         return List.copyOf(normalizeIdlePlay(urls, true));
+    }
+
+    public static boolean validIdlePlayEntries(List<IdlePlayEntry> entries) {
+        try {
+            validatedIdlePlayEntries(entries);
+            return true;
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    public static List<IdlePlayEntry> validatedIdlePlayEntries(List<IdlePlayEntry> entries) {
+        return List.copyOf(normalizeIdlePlayEntries(entries, true));
+    }
+
+    public static boolean validIdlePlayLimits(List<IdlePlayEntry> entries, List<String> legacyUrls) {
+        if (entries == null || entries.isEmpty()) return validIdlePlayConfig(legacyUrls);
+        int items = 0;
+        int totalBytes = 0;
+        for (IdlePlayEntry entry : entries) {
+            if (entry == null || entry.url() == null || entry.url().isBlank()) continue;
+            int bytes = ByteBufUtils.utf8Length(entry.url());
+            if (bytes > MAX_IDLE_PLAY_URL_BYTES) return false;
+            items++;
+            totalBytes += bytes;
+            if (items > MAX_IDLE_PLAY_ITEMS || totalBytes > MAX_IDLE_PLAY_TOTAL_BYTES) return false;
+        }
+        return true;
     }
 
     private static ArrayList<String> normalizeIdlePlay(List<String> urls, boolean rejectInvalid) {
@@ -266,13 +416,46 @@ public class VideoScreen {
         return clean;
     }
 
+    private static ArrayList<IdlePlayEntry> normalizeIdlePlayEntries(List<IdlePlayEntry> entries, boolean rejectInvalid) {
+        ArrayList<IdlePlayEntry> clean = new ArrayList<>();
+        if (entries == null) return clean;
+        HashSet<UUID> ids = new HashSet<>();
+        int totalBytes = 0;
+        for (IdlePlayEntry value : entries) {
+            if (value == null) continue;
+            IdlePlayEntry entry = new IdlePlayEntry(value.id(), value.url(), value.addedBy(), value.addedByName(), value.priority());
+            UUID id = entry.id();
+            if (IdlePlayEntry.UNKNOWN_UUID.equals(id) || ids.contains(id)) {
+                if (rejectInvalid) throw new IllegalArgumentException("IdlePlay entry id is invalid");
+                entry = new IdlePlayEntry(UUID.randomUUID(), entry.url(), entry.addedBy(), entry.addedByName(), entry.priority());
+                id = entry.id();
+            }
+            int bytes = ByteBufUtils.utf8Length(entry.url());
+            boolean valid = !entry.url().isBlank()
+                    && bytes <= MAX_IDLE_PLAY_URL_BYTES
+                    && clean.size() < MAX_IDLE_PLAY_ITEMS
+                    && totalBytes + bytes <= MAX_IDLE_PLAY_TOTAL_BYTES
+                    && ByteBufUtils.utf8Length(entry.addedByName()) <= IdlePlayEntry.MAX_ADDED_BY_NAME_BYTES;
+            if (!valid) {
+                if (rejectInvalid) throw new IllegalArgumentException("IdlePlay configuration exceeds protocol limits");
+                continue;
+            }
+            clean.add(entry);
+            ids.add(id);
+            totalBytes += bytes;
+        }
+        return clean;
+    }
+
     public void initServer() {
         ensureValidState();
         serverPluginEpoch = DataHolder.lifecycleEpoch();
         serverScreenEpoch++;
         serverActive = true;
         queue = new PlaybackQueue(this);
+        queue.restore(playlist);
         infos = queue.rawInfos();
+        pendingResumeProgress = playbackResumeProgress;
         broadcaster = new ScreenBroadcaster(this);
         playback = new PlaybackController(this, queue, broadcaster);
         admissions = new OrderedPlayAdmissions(this);
@@ -288,13 +471,13 @@ public class VideoScreen {
 
     public void addResolvedInfos(List<VideoInfo> resolved) {
         if (!serverActive || resolved == null || resolved.isEmpty()) return;
-        boolean added = false;
+        ArrayList<VideoInfo> accepted = new ArrayList<>();
         for (VideoInfo info : resolved) {
-            if (info == null || !queue.add(info)) continue;
+            if (info == null || queue.size() + accepted.size() >= PlaybackQueue.MAX_ITEMS) continue;
             LOGGER.info("added info: {} {} {}", info.playerName(), info.name(), VideoProviders.redactedSource(info.path()));
-            added = true;
+            accepted.add(info);
         }
-        if (!added) return;
+        if (queue.addAll(accepted) == 0) return;
         playNext();
         syncInfo();
     }
@@ -304,7 +487,18 @@ public class VideoScreen {
     }
 
     public void setProgress(long progress) {
+        VideoInfo active = currentPlayback();
+        if (active == null || !active.seekable()) return;
         playback.setProgress(progress);
+        rememberPlaybackResumeProgress(progress);
+        queueChanged();
+    }
+
+    public boolean acceptClientPlaybackResolution(UUID reporter, long generation, long reporterToken,
+                                                  ClientPlaybackResolution resolution, long durationMs) {
+        return playback != null && playback.acceptClientPlaybackResolution(
+                reporter, generation, reporterToken, resolution, durationMs
+        );
     }
 
     public void voteSkip(UUID uuid) {
@@ -322,8 +516,14 @@ public class VideoScreen {
     }
 
     public void removePlayer(UUID uuid) {
+        if (playback != null) playback.clientPlaybackReporterLeft(uuid);
+        if (queue == null) return;
         queue.removePlayer(uuid);
         if (queue.shouldSkip()) skip();
+    }
+
+    public void addPlayer(UUID uuid) {
+        if (playback != null) playback.clientPlaybackReporterAvailable();
     }
 
     public void remove() {
@@ -380,6 +580,48 @@ public class VideoScreen {
 
     public int queueSize() {
         return queue == null ? 0 : queue.size();
+    }
+
+    public PlaybackDiagnostics diagnostics(String backendState) {
+        return playback == null ? PlaybackDiagnostics.empty(backendState) : playback.diagnostics(backendState);
+    }
+
+    void queueChanged() {
+        if (queue != null) playlist = new ArrayList<>(queue.snapshot());
+        if (queue == null || queue.peek() == null) {
+            playbackResumeProgress = -1L;
+            pendingResumeProgress = -1L;
+        }
+        if (serverActive && area != null && area.dim != null && !area.dim.isBlank()) {
+            DataHolder.queueWorldSave(area.dim);
+        }
+    }
+
+    public void prepareForPersistence() {
+        if (queue != null) playlist = new ArrayList<>(queue.snapshot());
+        if (queue == null || queue.peek() == null) {
+            playbackResumeProgress = -1L;
+            return;
+        }
+        if (playback == null || playback.isIdlePlaying() || playback.currentInfo() == null) return;
+        long progress = playback.getProgress();
+        if (progress >= 0L) playbackResumeProgress = progress;
+    }
+
+    long consumePlaybackResumeProgress() {
+        long progress = pendingResumeProgress;
+        pendingResumeProgress = -1L;
+        playbackResumeProgress = -1L;
+        return progress < 0L || progress > MAX_RESUME_PROGRESS_MS ? -1L : progress;
+    }
+
+    void rememberPlaybackResumeProgress(long progress) {
+        if (progress >= 0L && progress <= MAX_RESUME_PROGRESS_MS) playbackResumeProgress = progress;
+    }
+
+    void clearPlaybackResumeProgress() {
+        playbackResumeProgress = -1L;
+        pendingResumeProgress = -1L;
     }
 
     public int pendingPlayAdmissions() {

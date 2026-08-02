@@ -50,7 +50,13 @@ public class VideoArea {
     }
 
     public boolean addPlayer(UUID uuid) {
-        return players.add(uuid);
+        boolean added = players.add(uuid);
+        if (added) {
+            for (VideoScreen screen : screens) {
+                screen.addPlayer(uuid);
+            }
+        }
+        return added;
     }
 
     public void playerEntered() {

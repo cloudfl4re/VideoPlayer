@@ -7,15 +7,20 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 final class BiliBiliSourceRegistry {
     private static final Pattern DIRECT_ROOM = Pattern.compile("^(?:https?://live\\.bilibili\\.com/)?(\\d+)(?:[/?#].*)?$");
-    private static final Map<String, CompletableFuture<BiliBiliSourceInfo>> CACHE = new ConcurrentHashMap<>();
+    static final int MAX_CACHE_ENTRIES = 256;
+    static final long CACHE_TTL_MILLIS = 10 * 60 * 1000L;
+    private static final Map<String, CacheEntry> CACHE = new ConcurrentHashMap<>();
 
     private BiliBiliSourceRegistry() {
     }
@@ -29,9 +34,56 @@ final class BiliBiliSourceRegistry {
     }
 
     static CompletableFuture<BiliBiliSourceInfo> resolve(VideoInfo info) {
-        String raw = rawPath(info);
-        if (raw.isBlank()) return CompletableFuture.completedFuture(null);
-        return CACHE.computeIfAbsent(raw, key -> CompletableFuture.supplyAsync(() -> resolveBlocking(raw)));
+        return resolve(rawPath(info), BiliBiliSourceRegistry::resolveBlocking, System.currentTimeMillis());
+    }
+
+    static CompletableFuture<BiliBiliSourceInfo> resolve(String raw, Resolver resolver, long now) {
+        String key = raw == null ? "" : raw.trim();
+        if (key.isBlank() || resolver == null) return CompletableFuture.completedFuture(null);
+        cleanup(now);
+        AtomicBoolean created = new AtomicBoolean();
+        CacheEntry entry = CACHE.compute(key, (ignored, existing) -> {
+            if (existing != null && !existing.expired(now) && !existing.failed()) return existing;
+            created.set(true);
+            return new CacheEntry(CompletableFuture.supplyAsync(() -> resolver.resolve(key)), expiresAt(now), now);
+        });
+        if (created.get()) {
+            entry.future().whenComplete((value, error) -> {
+                if (error != null || value == null || entry.future().isCancelled()) {
+                    CACHE.remove(key, entry);
+                }
+            });
+        }
+        cleanup(now);
+        return entry.future();
+    }
+
+    static void clear() {
+        for (CacheEntry entry : CACHE.values()) {
+            entry.future().cancel(true);
+        }
+        CACHE.clear();
+    }
+
+    static int cacheSize() {
+        CACHE.entrySet().removeIf(entry -> entry.getValue().failed());
+        return CACHE.size();
+    }
+
+    private static void cleanup(long now) {
+        CACHE.entrySet().removeIf(entry -> entry.getValue().expired(now) || entry.getValue().failed());
+        int excess = CACHE.size() - MAX_CACHE_ENTRIES;
+        if (excess <= 0) return;
+        ArrayList<Map.Entry<String, CacheEntry>> entries = new ArrayList<>(CACHE.entrySet());
+        entries.sort(Comparator.comparingLong(entry -> entry.getValue().createdAt()));
+        for (Map.Entry<String, CacheEntry> entry : entries) {
+            if (excess <= 0) return;
+            if (CACHE.remove(entry.getKey(), entry.getValue())) excess--;
+        }
+    }
+
+    private static long expiresAt(long now) {
+        return now > Long.MAX_VALUE - CACHE_TTL_MILLIS ? Long.MAX_VALUE : now + CACHE_TTL_MILLIS;
     }
 
     private static BiliBiliSourceInfo resolveBlocking(String raw) {
@@ -81,5 +133,21 @@ final class BiliBiliSourceRegistry {
     private static String rawPath(VideoInfo info) {
         if (info == null || info.rawPath() == null) return "";
         return info.rawPath().trim();
+    }
+
+    @FunctionalInterface
+    interface Resolver {
+        BiliBiliSourceInfo resolve(String raw);
+    }
+
+    private record CacheEntry(CompletableFuture<BiliBiliSourceInfo> future, long expiresAt, long createdAt) {
+        private boolean expired(long now) {
+            return future.isDone() && now >= expiresAt;
+        }
+
+        private boolean failed() {
+            return future.isCompletedExceptionally() || future.isCancelled()
+                    || future.isDone() && future.getNow(null) == null;
+        }
     }
 }

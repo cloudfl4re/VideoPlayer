@@ -151,7 +151,9 @@ final class MpvLibrary {
     }
 
     private static IllegalStateException unavailable(Throwable cause) {
-        return new IllegalStateException("libmpv is not available; tried " + String.join(", ", LIBRARY_CANDIDATES), cause);
+        String detail = NativeDependencyDiagnostics.recommendation(cause, NativeDownloadConfig.osKey());
+        String suffix = detail.isBlank() ? "" : ": " + detail;
+        return new IllegalStateException("libmpv is not available; tried " + String.join(", ", LIBRARY_CANDIDATES) + suffix, cause);
     }
 
     private static LibMpv loadByName(String name) {

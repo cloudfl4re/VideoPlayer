@@ -99,6 +99,7 @@ public class StreamListener implements IVideoListener {
     }
 
     public static synchronized void shutdown() {
+        MpvStreamListener.shutdown();
         VlcStreamListener.shutdown();
         mpvAvailable = false;
         vlcAvailable = false;

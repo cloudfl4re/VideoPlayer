@@ -17,6 +17,7 @@ public class VideoPlayer extends AbstractScreenPlayer implements RateAdjustableP
     protected boolean initialized = false;
     protected long targetTime = -1;
     protected boolean is3d = false;
+    private Integer outputVolumeOverride;
     public int videoWidth, videoHeight;
     private String requestedBackend = VideoBackends.VLC;
     private final java.util.function.BiConsumer<Integer, Integer> sizeListener = (w, h) -> {
@@ -78,7 +79,7 @@ public class VideoPlayer extends AbstractScreenPlayer implements RateAdjustableP
 
     @Override
     public void play(VideoInfo info) {
-        backend.play(info, targetTime, effectiveVolume());
+        backend.play(info, targetTime, backendVolume());
     }
 
     @Override
@@ -120,7 +121,25 @@ public class VideoPlayer extends AbstractScreenPlayer implements RateAdjustableP
         if (VideoBackends.MPV.equals(backendName())) {
             screen.volume = clamped;
         }
+        if (outputVolumeOverride != null) return;
         backend.setVolume(screen.metadata.getBool("mute", false) ? 0 : clamped);
+    }
+
+    @Override
+    public void setOutputVolume(int volume) {
+        outputVolumeOverride = Math.clamp(volume, 0, 100);
+        backend.setVolume(backendVolume());
+    }
+
+    @Override
+    public void clearOutputVolume() {
+        outputVolumeOverride = null;
+        if (initialized && backend != null) backend.setVolume(effectiveVolume());
+    }
+
+    @Override
+    public AudioLevelSnapshot audioLevel() {
+        return backend == null ? AudioLevelSnapshot.unsupported() : backend.audioLevel();
     }
 
     @Override
@@ -168,8 +187,13 @@ public class VideoPlayer extends AbstractScreenPlayer implements RateAdjustableP
     public void onMetaChanged() {
         is3d = screen.stereo3d;
         if (initialized && backend != null) {
-            backend.setVolume(effectiveVolume());
+            backend.setVolume(backendVolume());
         }
+    }
+
+    private int backendVolume() {
+        if (outputVolumeOverride == null) return effectiveVolume();
+        return screen.metadata.getBool("mute", false) ? 0 : outputVolumeOverride;
     }
 
     private int effectiveVolume() {

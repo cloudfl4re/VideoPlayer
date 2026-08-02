@@ -6,6 +6,8 @@ import com.github.squi2rel.vp.video.ScreenSurface;
 import com.github.squi2rel.vp.video.VideoArea;
 import com.github.squi2rel.vp.video.VideoScreen;
 import com.github.squi2rel.vp.video.VideoSourceGraph;
+import com.github.squi2rel.vp.video.PlaybackQueue;
+import com.github.squi2rel.vp.provider.VideoInfo;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -65,9 +67,14 @@ public final class VideoConfigValidator {
             if (!source.isEmpty() && !VideoScreen.validName(source)) {
                 throw new IllegalArgumentException("VideoPlayer source screen name exceeds protocol limits");
             }
-            if (!VideoScreen.validIdlePlayConfig(screen.idlePlayUrls)) {
+            if (!VideoScreen.validIdlePlayLimits(screen.idlePlayEntries, screen.idlePlayUrls)) {
                 throw new IllegalArgumentException("VideoPlayer IdlePlay configuration exceeds protocol limits");
             }
+            screen.ensureValidState();
+            if (!VideoScreen.validIdlePlayEntries(screen.idlePlayEntries)) {
+                throw new IllegalArgumentException("VideoPlayer IdlePlay configuration exceeds protocol limits");
+            }
+            validatePlaylist(screen);
             if (screen.metadata == null) screen.metadata = new ScreenMetadata();
             screen.metadata.ensureValid();
             if (screen.metadata.size() > ScreenMetadata.MAX_ENTRIES) {
@@ -82,6 +89,19 @@ public final class VideoConfigValidator {
         }
         if (!VideoSourceGraph.isAcyclic(area.screens)) {
             throw new IllegalArgumentException("VideoPlayer source screen graph contains a cycle");
+        }
+    }
+
+    private static void validatePlaylist(VideoScreen screen) {
+        if (screen.playlist == null) screen.playlist = new ArrayList<>();
+        if (screen.playlist.size() > PlaybackQueue.MAX_ITEMS) {
+            throw new IllegalArgumentException("VideoPlayer screen playlist exceeds " + PlaybackQueue.MAX_ITEMS + " items");
+        }
+        for (VideoInfo info : screen.playlist) {
+            if (info == null) throw new IllegalArgumentException("VideoPlayer screen playlist contains an invalid item");
+        }
+        if (screen.playbackResumeProgress < -1L || screen.playbackResumeProgress > VideoScreen.MAX_RESUME_PROGRESS_MS) {
+            screen.playbackResumeProgress = -1L;
         }
     }
 

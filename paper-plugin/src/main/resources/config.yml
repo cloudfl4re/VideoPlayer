@@ -42,3 +42,7 @@ native:
   # Leave empty to use VideoPlayer's managed version, PATH, or automatic server installation.
   # Examples: /usr/bin/yt-dlp, C:\Tools\yt-dlp.exe
   mpv-ytdl-path: ""
+
+youtube:
+  cookies-file: ""
+  cookies-from-browser: ""

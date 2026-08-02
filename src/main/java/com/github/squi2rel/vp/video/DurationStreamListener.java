@@ -2,6 +2,8 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.VideoPlayerMain;
 
+import java.util.Objects;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -9,6 +11,7 @@ import java.util.function.Consumer;
 
 final class DurationStreamListener implements IVideoListener {
     private final long durationMs;
+    private final ScheduledExecutorService scheduler;
     private final AtomicBoolean finished = new AtomicBoolean(true);
     private volatile boolean playingState;
     private volatile long progressMs;
@@ -18,7 +21,12 @@ final class DurationStreamListener implements IVideoListener {
     private Runnable stopped = () -> {};
 
     DurationStreamListener(long durationMs) {
+        this(durationMs, VideoPlayerMain.scheduler);
+    }
+
+    DurationStreamListener(long durationMs, ScheduledExecutorService scheduler) {
         this.durationMs = Math.max(0L, durationMs);
+        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
     }
 
     @Override
@@ -81,7 +89,7 @@ final class DurationStreamListener implements IVideoListener {
         if (existing != null) existing.cancel(false);
         if (!playingState || finished.get() || durationMs <= 0) return;
         long delay = Math.max(0L, durationMs - getProgress());
-        stopTask = VideoPlayerMain.scheduler.schedule(this::completeStopped, delay, TimeUnit.MILLISECONDS);
+        stopTask = scheduler.schedule(this::completeStopped, delay, TimeUnit.MILLISECONDS);
     }
 
     private void completeStopped() {

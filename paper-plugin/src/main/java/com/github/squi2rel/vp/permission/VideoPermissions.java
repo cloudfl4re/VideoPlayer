@@ -2,31 +2,16 @@ package com.github.squi2rel.vp.permission;
 
 import org.bukkit.entity.Player;
 
-import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Set;
 
 public final class VideoPermissions {
     public static final String ADMIN = "videoplayer.admin";
-    private static final Set<VideoPermissionAction> RESIDENCE_CONTROLLED_ACTIONS = EnumSet.of(
-            VideoPermissionAction.FORCE_SKIP,
-            VideoPermissionAction.SET_SKIP_PERCENT,
-            VideoPermissionAction.CREATE_AREA,
-            VideoPermissionAction.REMOVE_AREA,
-            VideoPermissionAction.CREATE_SCREEN,
-            VideoPermissionAction.REMOVE_SCREEN,
-            VideoPermissionAction.UPDATE_SCREEN,
-            VideoPermissionAction.SET_UV,
-            VideoPermissionAction.SET_SCALE,
-            VideoPermissionAction.SET_METADATA,
-            VideoPermissionAction.SET_IDLE_PLAY
-    );
     private static final GlobalPermissionChecker ALLOW_GLOBAL = (player, action, context) -> true;
-    private static final AreaPermissionChecker ALLOW_AREA = (player, action, context) -> true;
+    private static final AreaPermissionResolver NO_AREA = (player, action, context) -> AreaPermissionDecision.NOT_APPLICABLE;
 
     private static volatile GlobalPermissionChecker globalChecker = ALLOW_GLOBAL;
-    private static volatile AreaPermissionChecker areaChecker = ALLOW_AREA;
+    private static volatile AreaPermissionResolver areaResolver = NO_AREA;
 
     private VideoPermissions() {
     }
@@ -36,25 +21,37 @@ public final class VideoPermissions {
     }
 
     public static void setAreaChecker(AreaPermissionChecker checker) {
-        areaChecker = Objects.requireNonNullElse(checker, ALLOW_AREA);
+        if (checker == null) {
+            areaResolver = NO_AREA;
+            return;
+        }
+        areaResolver = (player, action, context) -> {
+            if (context == null || !context.hasArea()) return AreaPermissionDecision.NOT_APPLICABLE;
+            return checker.allowed(player, action, context) ? AreaPermissionDecision.ALLOW : AreaPermissionDecision.DENY;
+        };
+    }
+
+    public static void setAreaResolver(AreaPermissionResolver resolver) {
+        areaResolver = Objects.requireNonNullElse(resolver, NO_AREA);
     }
 
     public static void reset() {
         globalChecker = ALLOW_GLOBAL;
-        areaChecker = ALLOW_AREA;
+        areaResolver = NO_AREA;
     }
 
     public static boolean allowed(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
         VideoPermissionContext safeContext = context == null ? VideoPermissionContext.global(null) : context;
         if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.online()) return false;
         if (player.opOrGameMaster()) return true;
-        boolean residenceControlled = RESIDENCE_CONTROLLED_ACTIONS.contains(action);
-        if (!residenceControlled
+        if (action == VideoPermissionAction.SEEK
                 && player instanceof BukkitPermissionPlayer bukkit
                 && !bukkit.hasAction(action)) return false;
-        if (!residenceControlled && !globalChecker.allowed(player, action, safeContext)) return false;
-        if (!safeContext.hasArea()) return true;
-        return areaChecker.allowed(player, action, safeContext);
+        AreaPermissionDecision areaDecision = areaResolver.resolve(player, action, safeContext);
+        if (areaDecision == AreaPermissionDecision.ALLOW) return true;
+        if (areaDecision == null || areaDecision == AreaPermissionDecision.DENY) return false;
+        if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.hasAction(action)) return false;
+        return globalChecker.allowed(player, action, safeContext);
     }
 
     public static long mask(VideoPermissionPlayer player, VideoPermissionContext context) {

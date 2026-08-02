@@ -12,17 +12,24 @@ import com.github.squi2rel.vp.creation.StartupGuideScreen;
 import com.github.squi2rel.vp.creation.VideoCreationEditor;
 import com.github.squi2rel.vp.creation.BiliLoginScreen;
 import com.github.squi2rel.vp.creation.ServerStateScreen;
+import com.github.squi2rel.vp.creation.VideoManagementScreen;
+import com.github.squi2rel.vp.creation.YouTubeAuthScreen;
 import com.github.squi2rel.vp.danmaku.BiliAuthRefresher;
 import com.github.squi2rel.vp.danmaku.BiliCookie;
 import com.github.squi2rel.vp.danmaku.ClientDanmakuController;
 import com.github.squi2rel.vp.danmaku.ClientDanmakuRenderer;
+import com.github.squi2rel.vp.command.VideoPlayerCommandHelp;
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.video.*;
 import com.github.squi2rel.vp.vivecraft.Vivecraft;
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.mojang.brigadier.arguments.*;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.tree.LiteralCommandNode;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.suggestion.Suggestions;
 import io.netty.buffer.ByteBuf;
@@ -52,6 +59,7 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.profiler.Profiler;
 import net.minecraft.util.profiler.Profilers;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 
 import java.io.IOException;
@@ -69,13 +77,18 @@ import static com.github.squi2rel.vp.VideoPlayerMain.error;
 
 @SuppressWarnings({"DataFlowIssue"})
 public class VideoPlayerClient implements ClientModInitializer {
-    private static final int HANDSHAKE_INTERVAL_TICKS = 40;
-    private static final int CONNECTING_HANDSHAKE_INTERVAL_TICKS = 20;
+    private static final long HANDSHAKE_TIMEOUT_MS = 10_000L;
     public static final Path configPath = FabricLoader.getInstance().getConfigDir().resolve("videoplayer").resolve("videoplayer-client.json");
     private static final Path startupGuideVersionPath = configPath.getParent().resolve("startup-guide-version.txt");
     public static final MinecraftClient client = MinecraftClient.getInstance();
+    private static final VideoConnectionDiagnostics connectionDiagnostics = new VideoConnectionDiagnostics(
+            HANDSHAKE_TIMEOUT_MS,
+            System::currentTimeMillis,
+            VideoPlayerClient::logConnectionEvent
+    );
     public static Config config;
     private static final Gson gson = new Gson();
+    private static volatile AudioChannelMode activeAudioChannelMode = AudioChannelMode.STEREO;
 
     public static final HashMap<String, ClientVideoArea> areas = new HashMap<>();
     public static final ArrayList<ClientVideoScreen> screens = new ArrayList<>();
@@ -88,7 +101,8 @@ public class VideoPlayerClient implements ClientModInitializer {
     private static boolean startupGuideOpened = false;
     private static boolean pendingStartupGuideScreen = false;
     private static boolean pendingBiliLoginScreen = false;
-    private static int handshakeTicks;
+    private static boolean pendingYouTubeAuthScreen = false;
+    private static boolean joinHandshakePending;
     private static boolean protocolRejected;
     private static boolean protocolMismatchShown;
     private static long handshakeNonce;
@@ -146,7 +160,12 @@ public class VideoPlayerClient implements ClientModInitializer {
             ).formatted(Formatting.RED), false));
         }
         loadConfig();
+        activeAudioChannelMode = AudioChannelMode.normalize(config.audioChannelMode);
         BiliBiliProvider.setCookieSupplier(BiliCookie::header);
+        YouTubeProvider.configureMissingYtdlHandler(() -> {
+            YtDlpManager.EnsureResult result = ClientYtDlpInstaller.ensureBlocking();
+            return result == null || result.detection() == null ? "" : result.detection().executable();
+        });
         BiliAuthRefresher.checkOnStartup();
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             BiliAuthRefresher.tick();
@@ -155,17 +174,24 @@ public class VideoPlayerClient implements ClientModInitializer {
         registerStartupGuide();
         registerStartupGuideScreenOpener();
         registerBiliLoginScreenOpener();
+        registerYouTubeAuthScreenOpener();
         VideoProviders.register();
+        if (!VideoPlayerMain.android) ClientYtDlpInstaller.ensureAsync();
         disconnectHandler = () -> client.execute(VideoPlayerClient::cleanupClientState);
-        ClientLifecycleEvents.CLIENT_STOPPING.register(ignored -> cleanupClientState());
+        ClientLifecycleEvents.CLIENT_STOPPING.register(ignored -> {
+            cleanupClientState();
+            connectionDiagnostics.disconnected();
+        });
         if (Vivecraft.loaded) LOGGER.info("Found Vivecraft");
         ClientPlayConnectionEvents.JOIN.register((h, s, c) -> {
-            handshakeTicks = 0;
+            joinHandshakePending = true;
             handshakeNonce = 0L;
             connected = false;
             protocolRejected = false;
             protocolMismatchShown = false;
+            connectionDiagnostics.beginJoin(currentServerAddress(), VideoPlayerMain.version);
         });
+        ClientPlayConnectionEvents.DISCONNECT.register((h, c) -> connectionDiagnostics.disconnected());
         WorldRenderEvents.START_MAIN.register(e -> VideoPlayerClient.update());
         WorldRenderEvents.AFTER_ENTITIES.register(ScreenRenderer::render);
         VideoCreationEditor.register();
@@ -182,7 +208,10 @@ public class VideoPlayerClient implements ClientModInitializer {
                 }
             });
         });
-        ClientCommandRegistrationCallback.EVENT.register((d, c) -> d.register(ClientCommandManager.literal("vlc")
+        ClientCommandRegistrationCallback.EVENT.register((d, c) -> {
+            LiteralCommandNode<FabricClientCommandSource> videoplayerRoot = d.register(ClientCommandManager.literal("videoplayer")
+                .executes(VideoPlayerClient::showCommandHelp)
+                .then(commandHelp())
                 .then(ClientCommandManager.literal("play")
                         .then(ClientCommandManager.argument("url", StringArgumentType.greedyString())
                                 .executes(s -> {
@@ -242,9 +271,19 @@ public class VideoPlayerClient implements ClientModInitializer {
                             s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.current_backend", "Current playback backend: %s", VideoBackends.normalize(config.videoBackend)).formatted(Formatting.GREEN));
                             return 1;
                         }))
+                .then(ClientCommandManager.literal("audio")
+                        .then(ClientCommandManager.literal(AudioChannelMode.STEREO.configValue())
+                                .executes(s -> setAudioChannelMode(s, AudioChannelMode.STEREO)))
+                        .then(ClientCommandManager.literal(AudioChannelMode.AUTO.configValue())
+                                .executes(s -> setAudioChannelMode(s, AudioChannelMode.AUTO)))
+                        .executes(VideoPlayerClient::showAudioChannelMode))
                 .then(ClientCommandManager.literal("boot")
                         .executes(VideoPlayerClient::openStartupGuide))
+                .then(ClientCommandManager.literal("diagnostics")
+                        .executes(VideoPlayerClient::openDiagnostics))
                 .then(biliAuthCommand("biliAuth"))
+                .then(youtubeAuthCommand("youtubeAuth"))
+                .then(youtubeAuthCommand("youtube-auth"))
                 .then(ClientCommandManager.literal("danmaku")
                         .executes(s -> {
                             if (checkInvalid(s, false)) return 0;
@@ -486,14 +525,23 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                     ClientPacketHandler.setScale(currentLooking, false, s.getArgument("scaleX", Float.class), s.getArgument("scaleY", Float.class));
                                                     return 1;
                                                 })))))
-        ));
+        );
+            d.register(ClientCommandManager.literal("vlc")
+                    .executes(VideoPlayerClient::showCommandHelp)
+                    .redirect(videoplayerRoot));
+        });
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null || client.world == null || client.currentScreen != null || currentLooking == null) return;
             boolean pressed = client.options.useKey.isPressed();
             if (pressed && !keyPressed) {
                 keyPressed = true;
                 if (remoteControl || client.player.getStackInHand(Hand.MAIN_HAND).isEmpty() && client.player.getStackInHand(Hand.OFF_HAND).isEmpty()) {
-                    VideoCreationEditor.instance().openConfigScreen(currentLooking);
+                    ClientVideoScreen selected = currentLooking;
+                    ClientPacketHandler.openMenu(selected, result -> {
+                        if (!ClientPacketHandler.failed(result) && client.currentScreen == null) {
+                            VideoCreationEditor.instance().openConfigScreen(selected);
+                        }
+                    });
                 }
             } else if (!pressed) {
                 keyPressed = false;
@@ -501,8 +549,69 @@ public class VideoPlayerClient implements ClientModInitializer {
         });
     }
 
+    private static LiteralArgumentBuilder<FabricClientCommandSource> commandHelp() {
+        return ClientCommandManager.literal("help")
+                .executes(VideoPlayerClient::showCommandHelp)
+                .then(ClientCommandManager.argument("subcommand", StringArgumentType.word()).suggests((context, builder) -> {
+                    for (VideoPlayerCommandHelp.Entry entry : VideoPlayerCommandHelp.entries()) {
+                        if (entry.name().toLowerCase(Locale.ROOT).startsWith(builder.getRemaining().toLowerCase(Locale.ROOT))) {
+                            builder.suggest(entry.name());
+                        }
+                    }
+                    return builder.buildFuture();
+                }).executes(VideoPlayerClient::showCommandHelp));
+    }
+
+    private static int showCommandHelp(CommandContext<FabricClientCommandSource> context) {
+        String subcommand = null;
+        try {
+            subcommand = context.getArgument("subcommand", String.class);
+        } catch (IllegalArgumentException ignored) {
+        }
+        if (subcommand == null || subcommand.isBlank()) {
+            context.getSource().sendFeedback(VpTexts.tr(
+                    "command.videoplayer.help.header",
+                    "VideoPlayer client commands. Use /videoplayer help <subcommand> for details."
+            ).formatted(Formatting.GOLD));
+            for (VideoPlayerCommandHelp.Entry entry : VideoPlayerCommandHelp.entries()) {
+                String detailKey = "command.videoplayer.help." + entry.name().toLowerCase(Locale.ROOT) + ".detail";
+                context.getSource().sendFeedback(VpTexts.tr(
+                        "command.videoplayer.help." + entry.name().toLowerCase(Locale.ROOT) + ".summary",
+                        "%1$s - %2$s",
+                        entry.usage().isBlank() ? "/videoplayer " + entry.name() : "/videoplayer " + entry.name() + " " + entry.usage(),
+                        VpTexts.tr(detailKey, entry.details()).getString()
+                ));
+            }
+            context.getSource().sendFeedback(VpTexts.tr(
+                    "command.videoplayer.help.alias",
+                    "/vlc remains a compatible alias for /videoplayer."
+            ).formatted(Formatting.GRAY));
+            return 1;
+        }
+        Optional<VideoPlayerCommandHelp.Entry> found = VideoPlayerCommandHelp.find(subcommand);
+        if (found.isEmpty()) {
+            context.getSource().sendFeedback(VpTexts.tr(
+                    "command.videoplayer.help.unknown",
+                    "Unknown subcommand '%s'. Use /videoplayer help to list available commands.",
+                    subcommand
+            ).formatted(Formatting.RED));
+            return 0;
+        }
+        VideoPlayerCommandHelp.Entry entry = found.get();
+        String usage = entry.usage().isBlank()
+                ? "/videoplayer " + entry.name()
+                : "/videoplayer " + entry.name() + " " + entry.usage();
+        context.getSource().sendFeedback(Text.literal(usage).formatted(Formatting.AQUA));
+        context.getSource().sendFeedback(VpTexts.tr(
+                "command.videoplayer.help." + entry.name().toLowerCase(Locale.ROOT) + ".detail",
+                entry.details()
+        ));
+        return 1;
+    }
+
     private static LiteralArgumentBuilder<FabricClientCommandSource> biliAuthCommand(String literal) {
         return ClientCommandManager.literal(literal)
+                .executes(VideoPlayerClient::showBiliAuthHelp)
                 .then(ClientCommandManager.literal("login")
                         .executes(VideoPlayerClient::openBiliLogin))
                 .then(ClientCommandManager.literal("set")
@@ -521,6 +630,45 @@ public class VideoPlayerClient implements ClientModInitializer {
                 .then(ClientCommandManager.literal("status")
                         .executes(s -> {
                             s.getSource().sendFeedback(VpTexts.text(BiliCookie.status()).formatted(Formatting.GREEN));
+                            return 1;
+                        }));
+    }
+
+    private static int showBiliAuthHelp(CommandContext<FabricClientCommandSource> context) {
+        VideoPlayerCommandHelp.find("biliAuth").ifPresent(entry -> context.getSource().sendFeedback(VpTexts.tr(
+                "command.videoplayer.help.biliauth.detail", entry.details()
+        )));
+        return 1;
+    }
+
+    private static LiteralArgumentBuilder<FabricClientCommandSource> youtubeAuthCommand(String literal) {
+        return ClientCommandManager.literal(literal)
+                .executes(VideoPlayerClient::openYouTubeAuth)
+                .then(ClientCommandManager.literal("login").executes(VideoPlayerClient::openYouTubeAuth))
+                .then(ClientCommandManager.literal("clear")
+                        .executes(s -> {
+                            config.youtubeCookiesFile = "";
+                            config.youtubeCookiesFromBrowser = "";
+                            saveConfig();
+                            applyNativePlatformConfig();
+                            s.getSource().sendFeedback(VpTexts.tr(
+                                    "message.videoplayer.youtube_auth_cleared",
+                                    "YouTube authentication settings cleared"
+                            ).formatted(Formatting.GREEN));
+                            return 1;
+                        }))
+                .then(ClientCommandManager.literal("status")
+                        .executes(s -> {
+                            boolean file = config.youtubeCookiesFile != null && !config.youtubeCookiesFile.isBlank();
+                            boolean browser = config.youtubeCookiesFromBrowser != null && !config.youtubeCookiesFromBrowser.isBlank();
+                            String configured = VpTexts.tr("label.videoplayer.configured", "Configured").getString();
+                            String notConfigured = VpTexts.tr("label.videoplayer.not_configured", "Not configured").getString();
+                            s.getSource().sendFeedback(VpTexts.tr(
+                                    "message.videoplayer.youtube_auth_status",
+                                    "YouTube authentication: cookie file=%s, browser profile=%s",
+                                    file ? configured : notConfigured,
+                                    browser ? configured : notConfigured
+                            ).formatted(Formatting.GREEN));
                             return 1;
                         }));
     }
@@ -549,6 +697,41 @@ public class VideoPlayerClient implements ClientModInitializer {
         }
         s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.backend_set", "Playback backend set to %s. Only newly started videos are affected.", config.videoBackend).formatted(Formatting.GREEN));
         return 1;
+    }
+
+    private static int showAudioChannelMode(CommandContext<FabricClientCommandSource> context) {
+        AudioChannelMode configured = AudioChannelMode.normalize(config.audioChannelMode);
+        boolean restartRequired = configured != activeAudioChannelMode;
+        context.getSource().sendFeedback(VpTexts.tr(
+                restartRequired ? "message.videoplayer.audio_channel_status_restart_required" : "message.videoplayer.audio_channel_status",
+                restartRequired
+                        ? "Audio channel mode: configured %s, active %s. Restart Minecraft to apply the configured mode."
+                        : "Audio channel mode: configured %s, active %s.",
+                audioChannelModeLabel(configured).getString(),
+                audioChannelModeLabel(activeAudioChannelMode).getString()
+        ).formatted(restartRequired ? Formatting.YELLOW : Formatting.GREEN));
+        return 1;
+    }
+
+    private static int setAudioChannelMode(CommandContext<FabricClientCommandSource> context, AudioChannelMode mode) {
+        config.audioChannelMode = mode.configValue();
+        saveConfig();
+        boolean restartRequired = mode != activeAudioChannelMode;
+        context.getSource().sendFeedback(VpTexts.tr(
+                restartRequired ? "message.videoplayer.audio_channel_mode_restart_required" : "message.videoplayer.audio_channel_mode_set",
+                restartRequired
+                        ? "Audio channel mode saved as %s. Restart Minecraft to apply."
+                        : "Audio channel mode saved as %s and is already active.",
+                audioChannelModeLabel(mode).getString()
+        ).formatted(restartRequired ? Formatting.YELLOW : Formatting.GREEN));
+        return 1;
+    }
+
+    private static Text audioChannelModeLabel(AudioChannelMode mode) {
+        return VpTexts.tr(
+                "label.videoplayer.audio_channel_mode." + mode.configValue(),
+                mode == AudioChannelMode.AUTO ? "Auto" : "Stereo"
+        );
     }
 
     private ClientVideoArea getArea(CommandContext<FabricClientCommandSource> s) {
@@ -658,7 +841,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         Vec3d eyePos = client.player.getCameraPosVec(delta);
         Vec3d lookVec = client.player.getRotationVec(delta);
 
-        Vector3f lineStart = new Vector3f(eyePos.toVector3f());
+        Vector3d lineStart = new Vector3d(eyePos.x, eyePos.y, eyePos.z);
 
         remoteControl = false;
         for (ItemStack item : List.of(client.player.getMainHandStack(), client.player.getOffHandStack())) {
@@ -669,7 +852,8 @@ public class VideoPlayerClient implements ClientModInitializer {
             if (id.isEmpty() || !id.contains(remoteControlId)) continue;
             remoteControl = true;
         }
-        Vector3f lineEnd = eyePos.add(lookVec.multiply(remoteControl ? remoteControlRange : noControlRange)).toVector3f();
+        Vec3d end = eyePos.add(lookVec.multiply(remoteControl ? remoteControlRange : noControlRange));
+        Vector3d lineEnd = new Vector3d(end.x, end.y, end.z);
 
         ArrayList<Intersection.Result> list = new ArrayList<>();
         for (ClientVideoScreen s : screens) {
@@ -679,7 +863,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             Intersection.Result result = Intersection.intersect(lineStart, lineEnd, screen);
             if (result.intersects) list.add(result);
         }
-        Intersection.Result target = list.isEmpty() ? null : Collections.min(list, Comparator.comparing(s -> s.distance));
+        Intersection.Result target = list.isEmpty() ? null : Collections.min(list, Comparator.comparingDouble(s -> s.preciseDistance));
         currentLooking = target == null || target.screen == null ? null : target.screen;
         touchHandler.handle(target);
 
@@ -734,7 +918,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         }
         connected = false;
         handshakeNonce = 0L;
-        handshakeTicks = 0;
+        joinHandshakePending = false;
         for (ClientVideoArea area : new ArrayList<>(areas.values())) {
             area.remove();
         }
@@ -761,6 +945,26 @@ public class VideoPlayerClient implements ClientModInitializer {
         VideoCreationEditor.instance().clear();
     }
 
+    private static int openDiagnostics(CommandContext<FabricClientCommandSource> context) {
+        if (!connected && !config.alwaysConnected) {
+            context.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").formatted(Formatting.RED));
+            return 0;
+        }
+        ClientVideoScreen selected = currentLooking != null ? currentLooking : currentScreen;
+        if (selected == null && !screens.isEmpty()) selected = screens.getFirst();
+        ClientVideoScreen target = selected;
+        if (target == null) {
+            client.setScreen(VideoManagementScreen.diagnostics(VideoCreationEditor.instance(), null));
+            return 1;
+        }
+        ClientPacketHandler.openMenu(target, result -> {
+            if (!ClientPacketHandler.failed(result) && client.currentScreen == null) {
+                client.setScreen(VideoManagementScreen.diagnostics(VideoCreationEditor.instance(), target));
+            }
+        });
+        return 1;
+    }
+
     public static void resetServerState() {
         cleanupClientState();
     }
@@ -773,39 +977,175 @@ public class VideoPlayerClient implements ClientModInitializer {
         protocolRejected = false;
     }
 
+    static void handshakeResponse(String remoteVersion) {
+        connectionDiagnostics.handshakeResponse(remoteVersion);
+    }
+
+    static void connectionEstablished(String remoteVersion) {
+        connectionDiagnostics.connected(remoteVersion);
+    }
+
     static void setHandshakeNonce(long nonce) {
         handshakeNonce = nonce;
+    }
+
+    static void serverHandshakeReset() {
+        joinHandshakePending = false;
     }
 
     public static void rejectProtocol(String remoteVersion) {
         if (!protocolRejected) cleanupClientState();
         protocolRejected = true;
         connected = false;
-        if (protocolMismatchShown || client.player == null) return;
+        joinHandshakePending = false;
+        connectionDiagnostics.versionMismatch(remoteVersion);
+        if (connectionDiagnostics.snapshot().trigger() == VideoConnectionDiagnostics.Trigger.MANUAL_RETRY
+                || protocolMismatchShown || client.player == null) return;
         protocolMismatchShown = true;
         client.player.sendMessage(VpTexts.tr(
                 "message.videoplayer.version_mismatch",
-                "VideoPlayer client and server must use the same 2.0.1 build. Local: %s, server: %s",
+                "VideoPlayer client and server must use the same release version. Local: %s, server: %s",
                 VideoPlayerMain.version, remoteVersion == null || remoteVersion.isBlank() ? "unknown" : remoteVersion
         ).formatted(Formatting.RED), false);
     }
 
     private static void tickHandshake(MinecraftClient client) {
         if (client.getNetworkHandler() == null || client.player == null) {
-            handshakeTicks = 0;
+            joinHandshakePending = false;
+            connectionDiagnostics.disconnected();
             return;
         }
         if (protocolRejected) return;
         if (!ClientPlayNetworking.canSend(VideoPayload.ID)) {
-            handshakeTicks = 0;
+            connected = false;
+            connectionDiagnostics.channelUnavailable();
             return;
         }
-        if (handshakeTicks > 0) {
-            handshakeTicks--;
-            return;
-        }
-        handshakeTicks = connected ? HANDSHAKE_INTERVAL_TICKS : CONNECTING_HANDSHAKE_INTERVAL_TICKS;
+        connectionDiagnostics.channelAvailable();
+        connectionDiagnostics.tick();
+        if (!joinHandshakePending) return;
+        joinHandshakePending = false;
+        connectionDiagnostics.handshakeSent();
         ClientPacketHandler.config(VideoPlayerMain.version);
+    }
+
+    public static VideoConnectionDiagnostics.Snapshot connectionSnapshot() {
+        return connectionDiagnostics.snapshot();
+    }
+
+    public static void reconnectServer() {
+        if (client.getNetworkHandler() == null || client.player == null) {
+            LOGGER.warn("VideoPlayer connection: trigger=manual_retry address={} state=failed reason=no_active_minecraft_connection",
+                    logField(currentServerAddress()));
+            return;
+        }
+        if (!connectionDiagnostics.beginManualRetry(currentServerAddress(), VideoPlayerMain.version)) return;
+        protocolRejected = false;
+        protocolMismatchShown = false;
+        connected = false;
+        handshakeNonce = 0L;
+        joinHandshakePending = false;
+        if (!ClientPlayNetworking.canSend(VideoPayload.ID)) {
+            connectionDiagnostics.channelUnavailable();
+            return;
+        }
+        connectionDiagnostics.handshakeSent();
+        ClientPacketHandler.config(VideoPlayerMain.version);
+    }
+
+    private static String currentServerAddress() {
+        var server = client.getCurrentServerEntry();
+        if (server == null || server.address == null || server.address.isBlank()) return "local";
+        return server.address;
+    }
+
+    private static void logConnectionEvent(VideoConnectionDiagnostics.Event event) {
+        VideoConnectionDiagnostics.Snapshot snapshot = event.snapshot();
+        String trigger = snapshot.trigger().name().toLowerCase(Locale.ROOT);
+        String address = logField(snapshot.address());
+        switch (event.type()) {
+            case ATTEMPT_STARTED -> LOGGER.info(
+                    "VideoPlayer connection: trigger={} address={} state=connecting local_version={}",
+                    trigger, address, logField(snapshot.localVersion()));
+            case CHANNEL_UNAVAILABLE -> LOGGER.warn(
+                    "VideoPlayer connection: trigger={} address={} state=failed reason=payload_channel_unavailable payload={} attempts={} elapsed_ms={}",
+                    trigger, address, VideoPayload.VIDEO_PAYLOAD_ID, snapshot.attempts(), snapshot.elapsedMillis());
+            case CHANNEL_AVAILABLE -> LOGGER.info(
+                    "VideoPlayer connection: trigger={} address={} state=connecting reason=payload_channel_available attempts={}",
+                    trigger, address, snapshot.attempts());
+            case TIMED_OUT -> LOGGER.warn(
+                    "VideoPlayer connection: trigger={} address={} state=timed_out reason=no_handshake_response attempts={} elapsed_ms={}",
+                    trigger, address, snapshot.attempts(), snapshot.elapsedMillis());
+            case CONNECTED -> LOGGER.info(
+                    "VideoPlayer connection: trigger={} address={} state=connected remote_version={} attempts={} elapsed_ms={}",
+                    trigger, address, logField(snapshot.remoteVersion()), snapshot.attempts(), snapshot.elapsedMillis());
+            case VERSION_MISMATCH -> LOGGER.warn(
+                    "VideoPlayer connection: trigger={} address={} state=failed reason=version_mismatch local_version={} remote_version={} attempts={} elapsed_ms={}",
+                    trigger, address, logField(snapshot.localVersion()), logField(snapshot.remoteVersion()), snapshot.attempts(), snapshot.elapsedMillis());
+            case RETRY_BLOCKED -> LOGGER.warn(
+                    "VideoPlayer connection: trigger=manual_retry address={} state=failed reason=version_mismatch_retry_blocked local_version={} remote_version={}",
+                    address, logField(snapshot.localVersion()), logField(snapshot.remoteVersion()));
+            case DISCONNECTED -> LOGGER.info(
+                    "VideoPlayer connection: trigger={} address={} state=disconnected attempts={} elapsed_ms={}",
+                    trigger, address, snapshot.attempts(), snapshot.elapsedMillis());
+        }
+        notifyManualReconnect(event);
+    }
+
+    private static void notifyManualReconnect(VideoConnectionDiagnostics.Event event) {
+        VideoConnectionDiagnostics.Snapshot snapshot = event.snapshot();
+        if (snapshot.trigger() != VideoConnectionDiagnostics.Trigger.MANUAL_RETRY || client.player == null) return;
+        Text message;
+        Formatting formatting;
+        switch (event.type()) {
+            case ATTEMPT_STARTED -> {
+                message = VpTexts.tr("message.videoplayer.reconnect_started", "Reconnecting to the VideoPlayer server...");
+                formatting = Formatting.YELLOW;
+            }
+            case CHANNEL_UNAVAILABLE -> {
+                message = VpTexts.tr("message.videoplayer.reconnect_channel_unavailable",
+                        "VideoPlayer server reconnect failed: the server did not register the communication channel");
+                formatting = Formatting.RED;
+            }
+            case TIMED_OUT -> {
+                message = VpTexts.tr("message.videoplayer.reconnect_timed_out",
+                        "VideoPlayer server reconnect failed: no handshake response within 10 seconds");
+                formatting = Formatting.RED;
+            }
+            case CONNECTED -> {
+                message = VpTexts.tr("message.videoplayer.reconnect_success",
+                        "VideoPlayer server reconnected. Server version: %s", reconnectVersion(snapshot.remoteVersion()));
+                formatting = Formatting.GREEN;
+            }
+            case VERSION_MISMATCH, RETRY_BLOCKED -> {
+                message = VpTexts.tr("message.videoplayer.reconnect_version_mismatch",
+                        "VideoPlayer server reconnect failed: local version %s is incompatible with server version %s",
+                        reconnectVersion(snapshot.localVersion()), reconnectVersion(snapshot.remoteVersion()));
+                formatting = Formatting.RED;
+            }
+            case CHANNEL_AVAILABLE, DISCONNECTED -> {
+                return;
+            }
+            default -> {
+                return;
+            }
+        }
+        client.player.sendMessage(message.copy().formatted(formatting), false);
+    }
+
+    private static String reconnectVersion(String version) {
+        if (version != null && !version.isBlank()) return version;
+        return VpTexts.tr("label.videoplayer.connection.unknown", "Unknown").getString();
+    }
+
+    private static String logField(String value) {
+        if (value == null || value.isBlank()) return "unknown";
+        StringBuilder sanitized = new StringBuilder(value.length());
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            sanitized.append(Character.isISOControl(character) || Character.isWhitespace(character) ? '_' : character);
+        }
+        return sanitized.toString();
     }
 
     public static void postUpdate() {
@@ -887,6 +1227,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         }
         StreamListener.configureProxy(config.nativeDownloadProxy);
         YouTubeProvider.configureProxy(config.nativeDownloadProxy);
+        YouTubeProvider.configureCookies(config.youtubeCookiesFile, config.youtubeCookiesFromBrowser);
         String effectiveYtdlPath = YtDlpManager.effectiveExecutable(config.mpvYtdlPath);
         StreamListener.configureYtdlPath(effectiveYtdlPath);
         YouTubeProvider.configureYtdlPath(effectiveYtdlPath);
@@ -911,12 +1252,25 @@ public class VideoPlayerClient implements ClientModInitializer {
         }
     }
 
+    public static AudioChannelMode activeAudioChannelMode() {
+        return activeAudioChannelMode;
+    }
+
     private static void loadConfig() {
         boolean existed = Files.exists(configPath);
         boolean changed = false;
         boolean preserveInvalidFile = false;
         try {
-            config = gson.fromJson(Files.readString(configPath), Config.class);
+            String serializedConfig = Files.readString(configPath);
+            JsonElement configJson = JsonParser.parseString(serializedConfig);
+            if (!configJson.isJsonObject()) throw new IllegalArgumentException("Client configuration root must be an object");
+            JsonObject configObject = configJson.getAsJsonObject();
+            JsonElement configuredAudioChannelMode = configObject.get("audioChannelMode");
+            if (!AudioChannelMode.isCanonicalJsonValue(configuredAudioChannelMode)) {
+                configObject.addProperty("audioChannelMode", AudioChannelMode.normalizeJson(configuredAudioChannelMode).configValue());
+                changed = true;
+            }
+            config = gson.fromJson(configObject, Config.class);
             if (config == null) config = new Config();
         } catch (Exception e) {
             config = new Config();
@@ -941,6 +1295,11 @@ public class VideoPlayerClient implements ClientModInitializer {
             changed = true;
         }
         config.videoBackend = VideoBackends.normalize(config.videoBackend);
+        String audioChannelMode = AudioChannelMode.normalize(config.audioChannelMode).configValue();
+        if (!Objects.equals(config.audioChannelMode, audioChannelMode)) {
+            config.audioChannelMode = audioChannelMode;
+            changed = true;
+        }
         String nativeVlcPlatform = NativeDownloadConfig.normalizePlatformForCurrentOs(config.nativeVlcPlatform);
         if (!Objects.equals(config.nativeVlcPlatform, nativeVlcPlatform)) {
             config.nativeVlcPlatform = nativeVlcPlatform;
@@ -960,6 +1319,14 @@ public class VideoPlayerClient implements ClientModInitializer {
             changed = true;
         } else if (YtDlpManager.isCurrentManagedExecutable(config.mpvYtdlPath)) {
             config.mpvYtdlPath = "";
+            changed = true;
+        }
+        if (config.youtubeCookiesFile == null) {
+            config.youtubeCookiesFile = "";
+            changed = true;
+        }
+        if (config.youtubeCookiesFromBrowser == null) {
+            config.youtubeCookiesFromBrowser = "";
             changed = true;
         }
         applyNativePlatformConfig();
@@ -1010,6 +1377,20 @@ public class VideoPlayerClient implements ClientModInitializer {
             pendingBiliLoginScreen = false;
             if (client.currentScreen instanceof BiliLoginScreen) return;
             client.setScreen(new BiliLoginScreen(client.currentScreen));
+        });
+    }
+
+    public static int openYouTubeAuth(CommandContext<FabricClientCommandSource> ignored) {
+        pendingYouTubeAuthScreen = true;
+        return 1;
+    }
+
+    private static void registerYouTubeAuthScreenOpener() {
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (!pendingYouTubeAuthScreen) return;
+            pendingYouTubeAuthScreen = false;
+            if (client.currentScreen instanceof YouTubeAuthScreen) return;
+            client.setScreen(new YouTubeAuthScreen(client.currentScreen));
         });
     }
 

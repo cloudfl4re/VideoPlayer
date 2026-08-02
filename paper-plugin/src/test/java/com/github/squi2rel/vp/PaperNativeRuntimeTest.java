@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -122,5 +123,28 @@ class PaperNativeRuntimeTest {
         assertFalse(PaperNativeRuntime.isReady());
         assertNotNull(runtime.error());
         assertEquals(runtime.error(), PaperNativeRuntime.currentError());
+    }
+
+    @Test
+    void retriesLoadingAfterPreparingVlcFallback() {
+        AtomicReference<Runnable> task = new AtomicReference<>();
+        AtomicBoolean fallbackInstalled = new AtomicBoolean();
+        AtomicInteger loads = new AtomicInteger();
+
+        PaperNativeRuntime runtime = PaperNativeRuntime.start(
+                active -> {},
+                active -> fallbackInstalled.set(active.getAsBoolean()),
+                () -> loads.incrementAndGet() >= 2,
+                runnable -> {
+                    task.set(runnable);
+                    return () -> {};
+                }
+        );
+
+        task.get().run();
+
+        assertTrue(fallbackInstalled.get());
+        assertEquals(2, loads.get());
+        assertEquals(PaperNativeRuntime.State.READY, runtime.state());
     }
 }

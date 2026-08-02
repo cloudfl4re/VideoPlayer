@@ -2,10 +2,8 @@ package com.github.squi2rel.vp.creation;
 
 import com.github.squi2rel.vp.video.VideoScreen;
 import com.github.squi2rel.vp.ClientPacketHandler;
-import com.github.squi2rel.vp.ClientPermissionCache;
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.network.RequestResultStatus;
-import com.github.squi2rel.vp.permission.VideoPermissionAction;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -162,7 +160,11 @@ public class VideoCreationScreen extends Screen {
         if (draft.target == VideoCreationEditor.Target.SCREEN && draft.areaName.isEmpty()) {
             context.drawTextWithShadow(textRenderer, VpTexts.tr("error.videoplayer.need_area_first", "Enter or create an Area first").formatted(Formatting.RED), left, top + 190, 0xFFFF5555);
         } else if (draft.target == VideoCreationEditor.Target.SCREEN) {
-            context.drawTextWithShadow(textRenderer, VpTexts.tr("hint.videoplayer.select_points", "Left-click points, right-click undo, press V to return and confirm"), left, top + 190, 0xFFB0B0B0);
+            context.drawTextWithShadow(textRenderer, Text.translatableWithFallback(
+                    "hint.videoplayer.select_points",
+                    "%1$s points, %2$s undo, press %3$s to return and confirm",
+                    editor.leftMouseText(), editor.rightMouseText(), editor.openKeyText()
+            ), left, top + 190, 0xFFB0B0B0);
         } else {
             context.drawTextWithShadow(textRenderer, VpTexts.tr("hint.videoplayer.area_two_blocks", "Area uses two blocks to create a bounding box"), left, top + 190, 0xFFB0B0B0);
         }
@@ -201,10 +203,7 @@ public class VideoCreationScreen extends Screen {
     }
 
     private boolean canSelect() {
-        if (draft.target == VideoCreationEditor.Target.AREA) {
-            return ClientPermissionCache.allowedOrUnknown(VideoPermissionAction.CREATE_AREA, "", "");
-        }
-        return ClientPermissionCache.allowedOrUnknown(VideoPermissionAction.CREATE_SCREEN, draft.areaName, "");
+        return draft.target == VideoCreationEditor.Target.AREA || editor.areaNames().contains(draft.areaName);
     }
 
     private boolean canSubmit() {

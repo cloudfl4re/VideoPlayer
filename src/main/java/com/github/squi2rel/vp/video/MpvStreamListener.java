@@ -8,8 +8,11 @@ import com.sun.jna.Native;
 import com.sun.jna.Pointer;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 import static com.github.squi2rel.vp.video.MpvLibrary.*;
@@ -17,6 +20,7 @@ import static com.github.squi2rel.vp.video.MpvLibrary.*;
 final class MpvStreamListener implements IVideoListener {
     private static final long TIMEOUT_MS = 30_000;
     private static final long PROPERTY_POLL_INTERVAL_MS = 100;
+    private static final Set<MpvStreamListener> ACTIVE = ConcurrentHashMap.newKeySet();
 
     private final LibMpv lib;
     private final VideoInfo info;
@@ -57,6 +61,12 @@ final class MpvStreamListener implements IVideoListener {
             if (ctx != null) {
                 lib.mpv_terminate_destroy(ctx);
             }
+        }
+    }
+
+    static void shutdown() {
+        for (MpvStreamListener listener : List.copyOf(ACTIVE)) {
+            listener.cancel();
         }
     }
 
@@ -121,6 +131,7 @@ final class MpvStreamListener implements IVideoListener {
         finished.set(false);
         started.set(false);
         progressClock.reset(false);
+        ACTIVE.add(this);
         thread = new Thread(this::run, "VideoPlayer-MPV-stream");
         thread.setDaemon(true);
         thread.start();
@@ -188,6 +199,7 @@ final class MpvStreamListener implements IVideoListener {
                     }
                 }
             }
+            ACTIVE.remove(this);
         }
     }
 

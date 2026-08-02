@@ -6,16 +6,34 @@ folia-supported: true
 softdepend: [Residence]
 authors: [squi2rel, cloudfl4re]
 description: VideoPlayer server plugin bridge for the Fabric client mod.
+commands:
+  vlc:
+    description: Manage VideoPlayer server notifications.
+    usage: /videoplayer:vlc joinmessage
+    permission: videoplayer.joinmessage
+  vlcversion:
+    description: Show connected VideoPlayer client versions.
+    usage: /vlcversion
+    permission: videoplayer.version
 permissions:
   videoplayer.admin:
     description: Allows VideoPlayer plugin administration and custom metadata changes.
+    default: op
+    children:
+      videoplayer.version: true
+      videoplayer.joinmessage: true
+  videoplayer.version:
+    description: Allows viewing connected VideoPlayer client versions.
+    default: op
+  videoplayer.joinmessage:
+    description: Allows toggling VideoPlayer join-version notifications.
     default: op
   videoplayer.action.play:
     description: Allows queueing videos.
     default: true
   videoplayer.action.seek:
-    description: Allows seeking videos.
-    default: true
+    description: Allows dragging playback progress to seek videos.
+    default: op
   videoplayer.action.sync:
     description: Allows syncing video progress.
     default: true
@@ -29,17 +47,17 @@ permissions:
     description: Allows changing skip vote percent.
     default: true
   videoplayer.action.create_area:
-    description: Allows creating video areas.
+    description: Allows creating video areas. Inside Residence this still requires owner/padd flags.
     default: true
   videoplayer.action.remove_area:
-    description: Allows removing video areas.
-    default: true
+    description: Allows removing video areas. Inside Residence this still requires owner/padd flags.
+    default: op
   videoplayer.action.create_screen:
-    description: Allows creating video screens.
+    description: Allows creating video screens. Inside Residence this still requires owner/padd flags.
     default: true
   videoplayer.action.remove_screen:
-    description: Allows removing video screens.
-    default: true
+    description: Allows removing video screens. Inside Residence this still requires owner/padd flags.
+    default: op
   videoplayer.action.update_screen:
     description: Allows updating video screens.
     default: true

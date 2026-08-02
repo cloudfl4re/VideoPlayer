@@ -104,6 +104,7 @@ public class ScreenRenderer {
 
     private static final Quaternionf rotation = new Quaternionf();
     public static float cameraX, cameraY, cameraZ;
+    public static double preciseCameraX, preciseCameraY, preciseCameraZ;
     public static boolean skybox;
 
     public static void render(WorldRenderContext ctx) {
@@ -116,9 +117,12 @@ public class ScreenRenderer {
         matrices.push();
         Camera cameraObject = MinecraftClient.getInstance().gameRenderer.getCamera();
         Vec3d camera = cameraObject.getCameraPos();
-        cameraX = (float) camera.x;
-        cameraY = (float) camera.y;
-        cameraZ = (float) camera.z;
+        preciseCameraX = camera.x;
+        preciseCameraY = camera.y;
+        preciseCameraZ = camera.z;
+        cameraX = (float) preciseCameraX;
+        cameraY = (float) preciseCameraY;
+        cameraZ = (float) preciseCameraZ;
         if (Vivecraft.loaded && Vivecraft.isVRActive()) {
             rotation.setFromNormalized(Vivecraft.getRotation()).invert();
         } else {

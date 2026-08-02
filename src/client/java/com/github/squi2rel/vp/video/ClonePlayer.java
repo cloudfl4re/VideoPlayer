@@ -33,6 +33,21 @@ public record ClonePlayer(ClientVideoScreen screen, ClientVideoScreen source) im
     }
 
     @Override
+    public AudioLevelSnapshot audioLevel() {
+        return source.player == null ? AudioLevelSnapshot.waiting() : source.player.audioLevel();
+    }
+
+    @Override
+    public void setOutputVolume(int volume) {
+        if (source.player != null) source.player.setOutputVolume(volume);
+    }
+
+    @Override
+    public void clearOutputVolume() {
+        if (source.player != null) source.player.clearOutputVolume();
+    }
+
+    @Override
     public long getProgress() {
         return source.player == null ? 0 : source.player.getProgress();
     }

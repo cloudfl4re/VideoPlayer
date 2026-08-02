@@ -34,8 +34,9 @@ final class VideoPlayerRenderer {
             return;
         }
 
+        Vector3f relativeOrigin = geometry.relativeOrigin(ScreenRenderer.preciseCameraX, ScreenRenderer.preciseCameraY, ScreenRenderer.preciseCameraZ);
         matrices.push();
-        matrices.translate(-ScreenRenderer.cameraX, -ScreenRenderer.cameraY, -ScreenRenderer.cameraZ);
+        matrices.translate(relativeOrigin.x, relativeOrigin.y, relativeOrigin.z);
         Matrix4f mat = matrices.peek().getPositionMatrix();
         matrices.pop();
 
@@ -53,7 +54,7 @@ final class VideoPlayerRenderer {
                 player.getHeight()
         );
         int[] triangles = geometry.triangleIndices();
-        List<Vector3f> vertices = geometry.vertices();
+        List<Vector3f> vertices = geometry.localVertices();
         List<Vector2f> mappedUvs = mappedUvs(target, vertices);
         Vector3f normal = geometry.normal();
         VertexConsumer backingConsumer = consumers.getBuffer(ScreenRenderer.getBackingLayer(player.getTextureId()));
@@ -79,8 +80,9 @@ final class VideoPlayerRenderer {
             return;
         }
 
+        Vector3f relativeOrigin = geometry.relativeOrigin(ScreenRenderer.preciseCameraX, ScreenRenderer.preciseCameraY, ScreenRenderer.preciseCameraZ);
         matrices.push();
-        matrices.translate(-ScreenRenderer.cameraX, -ScreenRenderer.cameraY, -ScreenRenderer.cameraZ);
+        matrices.translate(relativeOrigin.x, relativeOrigin.y, relativeOrigin.z);
         Matrix4f mat = matrices.peek().getPositionMatrix();
         matrices.pop();
 
@@ -96,7 +98,7 @@ final class VideoPlayerRenderer {
                 textureHeight
         );
         int[] triangles = geometry.triangleIndices();
-        List<Vector3f> vertices = geometry.vertices();
+        List<Vector3f> vertices = geometry.localVertices();
         List<Vector2f> mappedUvs = mappedUvs(target, vertices);
         Vector3f normal = geometry.normal();
         VertexConsumer backingConsumer = consumers.getBuffer(ScreenRenderer.getBackingLayer(textureId));

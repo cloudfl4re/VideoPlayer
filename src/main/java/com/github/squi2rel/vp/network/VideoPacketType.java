@@ -29,7 +29,12 @@ public enum VideoPacketType {
     PERMISSIONS(22),
     RESET_CLIENT(23),
     PROTOCOL_REJECT(24),
-    HANDSHAKE_ACK(25);
+    HANDSHAKE_ACK(25),
+    CLIENT_PLAYBACK_RESOLVED(26),
+    CLIENT_PLAYBACK_REPORTER(27),
+    DIAGNOSTICS_REQUEST(28),
+    DIAGNOSTICS(29),
+    PLAYBACK_NOTICE(30);
 
     private static final Map<Integer, VideoPacketType> BY_ID = new HashMap<>();
 

@@ -9,31 +9,28 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginPermissionDefaultsTest {
     @Test
-    void permissionDefaultsMatchPublicAndAdministrativeActions() throws IOException {
+    void permissionDefaultsMatchPublicAndRestrictedActions() throws IOException {
         Map<String, String> defaults = readDefaults(Path.of("src/main/resources/plugin.yml"));
 
         assertEquals("op", defaults.get("videoplayer.admin"));
-        assertEquals("true", defaults.get("videoplayer.action.play"));
-        assertEquals("true", defaults.get("videoplayer.action.seek"));
-        assertEquals("true", defaults.get("videoplayer.action.sync"));
-        assertEquals("true", defaults.get("videoplayer.action.vote_skip"));
-        assertEquals("true", defaults.get("videoplayer.action.auto_sync"));
-        assertEquals("true", defaults.get("videoplayer.action.open_menu"));
-        assertEquals("true", defaults.get("videoplayer.action.force_skip"));
-        assertEquals("true", defaults.get("videoplayer.action.set_skip_percent"));
-        assertEquals("true", defaults.get("videoplayer.action.create_area"));
-        assertEquals("true", defaults.get("videoplayer.action.remove_area"));
-        assertEquals("true", defaults.get("videoplayer.action.create_screen"));
-        assertEquals("true", defaults.get("videoplayer.action.remove_screen"));
-        assertEquals("true", defaults.get("videoplayer.action.update_screen"));
-        assertEquals("true", defaults.get("videoplayer.action.set_uv"));
-        assertEquals("true", defaults.get("videoplayer.action.set_scale"));
-        assertEquals("true", defaults.get("videoplayer.action.set_metadata"));
-        assertEquals("true", defaults.get("videoplayer.action.set_idle_play"));
-        assertEquals(VideoPermissionAction.values().length + 1, defaults.size());
+        assertEquals("op", defaults.get("videoplayer.version"));
+        assertEquals("op", defaults.get("videoplayer.joinmessage"));
+        for (VideoPermissionAction action : VideoPermissionAction.values()) {
+            String expected = switch (action) {
+                case SEEK, REMOVE_AREA, REMOVE_SCREEN -> "op";
+                default -> "true";
+            };
+            assertEquals(expected, defaults.get("videoplayer.action." + action.name().toLowerCase(java.util.Locale.ROOT)));
+        }
+        assertEquals(VideoPermissionAction.values().length + 3, defaults.size());
+
+        String plugin = Files.readString(Path.of("src/main/resources/plugin.yml"));
+        assertTrue(plugin.contains("  vlc:\n    description: Manage VideoPlayer server notifications.\n    usage: /videoplayer:vlc joinmessage\n    permission: videoplayer.joinmessage"));
+        assertTrue(plugin.contains("  vlcversion:\n    description: Show connected VideoPlayer client versions.\n    usage: /vlcversion\n    permission: videoplayer.version"));
     }
 
     private static Map<String, String> readDefaults(Path path) throws IOException {

@@ -1,7 +1,5 @@
 package com.github.squi2rel.vp.permission;
 
-import com.bekvon.bukkit.residence.protection.ClaimedResidence;
-import com.bekvon.bukkit.residence.protection.CuboidArea;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -10,16 +8,16 @@ import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class ResidencePermissionHookTest {
     @Test
@@ -33,14 +31,17 @@ class ResidencePermissionHookTest {
                 (residence, checkedPlayer, flag, fallback) -> false
         );
 
-        assertTrue(hook.allowedBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(4, 5, 6), new Vector3f(1, 2, 3)));
+        assertEquals(
+                AreaPermissionDecision.NOT_APPLICABLE,
+                hook.resolveBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(4, 5, 6), new Vector3f(1, 2, 3))
+        );
     }
 
     @Test
     void boundsRejectsWildernessAndClaimMix() {
         World world = world();
         Player player = player(true, false, false, world);
-        ClaimedResidence residence = residence("one", 0, 0, 0, 3, 3, 3);
+        ResidencePermissionHook.Claim residence = residence("one", 0, 0, 0, 3, 3, 3);
         ResidencePermissionHook hook = new ResidencePermissionHook(
                 uuid -> player,
                 location -> residence,
@@ -48,16 +49,18 @@ class ResidencePermissionHookTest {
                 (checkedResidence, checkedPlayer, flag, fallback) -> true
         );
 
-        assertFalse(hook.allowedBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(), new Vector3f(8)));
+        assertEquals(
+                AreaPermissionDecision.DENY,
+                hook.resolveBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(), new Vector3f(8))
+        );
     }
 
     @Test
     void boundsRejectsFullyEnclosedSubzone() {
         World world = world();
         Player player = player(true, false, false, world);
-        ClaimedResidence child = residence("child", 3, 3, 3, 6, 6, 6);
-        ClaimedResidence parent = residence("parent", 0, 0, 0, 9, 9, 9, child);
-        when(child.getParent()).thenReturn(parent);
+        TestClaim child = residence("child", 3, 3, 3, 6, 6, 6);
+        ResidencePermissionHook.Claim parent = residence("parent", 0, 0, 0, 9, 9, 9, child);
         ResidencePermissionHook hook = new ResidencePermissionHook(
                 uuid -> player,
                 location -> parent,
@@ -65,33 +68,38 @@ class ResidencePermissionHookTest {
                 (residence, checkedPlayer, flag, fallback) -> true
         );
 
-        assertFalse(hook.allowedBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(), new Vector3f(10)));
+        assertEquals(
+                AreaPermissionDecision.DENY,
+                hook.resolveBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(), new Vector3f(10))
+        );
     }
 
     @Test
     void boundsRejectsDifferentAdjacentClaimsWithoutWilderness() {
         World world = world();
         Player player = player(true, false, false, world);
-        ClaimedResidence first = residence("first", 0, 0, 0, 3, 3, 3);
-        ClaimedResidence second = residence("second", 4, 0, 0, 7, 3, 3);
+        ResidencePermissionHook.Claim first = residence("first", 0, 0, 0, 3, 3, 3);
+        ResidencePermissionHook.Claim second = residence("second", 4, 0, 0, 7, 3, 3);
         ResidencePermissionHook hook = new ResidencePermissionHook(
                 uuid -> player,
                 location -> location.getX() < 4 ? first : second,
                 ignored -> List.of(first, second),
-                (residence, checkedPlayer, flag, fallback) -> true
+                (checkedResidence, checkedPlayer, flag, fallback) -> true
         );
 
-        assertFalse(hook.allowedBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(), new Vector3f(8, 4, 4)));
+        assertEquals(
+                AreaPermissionDecision.DENY,
+                hook.resolveBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(), new Vector3f(8, 4, 4))
+        );
     }
 
     @Test
     void boundsUsesDeepestClaimWhenSelectionIsInsideSubzone() {
         World world = world();
         Player player = player(true, false, false, world);
-        ClaimedResidence child = residence("child", 3, 3, 3, 6, 6, 6);
-        ClaimedResidence parent = residence("parent", 0, 0, 0, 9, 9, 9, child);
-        when(child.getParent()).thenReturn(parent);
-        AtomicReference<ClaimedResidence> checked = new AtomicReference<>();
+        TestClaim child = residence("child", 3, 3, 3, 6, 6, 6);
+        ResidencePermissionHook.Claim parent = residence("parent", 0, 0, 0, 9, 9, 9, child);
+        AtomicReference<ResidencePermissionHook.Claim> checked = new AtomicReference<>();
         ResidencePermissionHook hook = new ResidencePermissionHook(
                 uuid -> player,
                 location -> child,
@@ -102,21 +110,29 @@ class ResidencePermissionHookTest {
                 }
         );
 
-        assertTrue(hook.allowedBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(3), new Vector3f(7)));
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                hook.resolveBounds(player, VideoPermissionAction.CREATE_AREA, new Vector3f(3), new Vector3f(7))
+        );
         assertSame(child, checked.get());
     }
 
     @Test
-    void areaContextRejectsInternalSubzoneInsteadOfUsingOnlyCenter() {
+    void screenContextUsesAnchorInsteadOfAreaBounds() {
         World world = world();
         UUID uuid = UUID.randomUUID();
         Player player = player(true, false, false, world);
-        ClaimedResidence child = residence("child", 1, 1, 1, 2, 2, 2);
-        ClaimedResidence parent = residence("parent", 0, 0, 0, 9, 9, 9, child);
+        ResidencePermissionHook.Claim anchorClaim = residence("anchor");
+        AtomicReference<Location> checkedLocation = new AtomicReference<>();
         ResidencePermissionHook hook = new ResidencePermissionHook(
                 ignored -> player,
-                location -> parent,
-                ignored -> List.of(parent),
+                location -> {
+                    checkedLocation.set(location);
+                    return anchorClaim;
+                },
+                ignored -> {
+                    throw new IllegalStateException("bounds must not be queried");
+                },
                 (residence, checkedPlayer, flag, fallback) -> true
         );
         VideoPermissionContext context = new VideoPermissionContext(
@@ -128,11 +144,63 @@ class ResidencePermissionHookTest {
                 new VideoPermissionContext.Position(8, 8, 8)
         );
 
-        assertFalse(hook.allowed(permissionPlayer(uuid, false), VideoPermissionAction.CREATE_SCREEN, context));
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                hook.resolve(permissionPlayer(uuid, false), VideoPermissionAction.CREATE_SCREEN, context)
+        );
+        assertEquals(8.0, checkedLocation.get().getX());
+        assertEquals(8.0, checkedLocation.get().getY());
+        assertEquals(8.0, checkedLocation.get().getZ());
     }
 
     @Test
-    void pointChecksAllowWildernessAndRejectOfflineOrApiFailure() {
+    void namedScreenWithoutAnchorFailsClosedInsteadOfUsingAreaBounds() {
+        World world = world();
+        UUID uuid = UUID.randomUUID();
+        Player player = player(true, false, false, world);
+        ResidencePermissionHook hook = new ResidencePermissionHook(
+                ignored -> player,
+                location -> {
+                    throw new IllegalStateException("point must not be queried");
+                },
+                ignored -> {
+                    throw new IllegalStateException("bounds must not be queried");
+                },
+                (residence, checkedPlayer, flag, fallback) -> true
+        );
+        VideoPermissionContext context = new VideoPermissionContext(
+                "world",
+                "area",
+                "screen",
+                new VideoPermissionContext.Position(0, 0, 0),
+                new VideoPermissionContext.Position(10, 10, 10),
+                null
+        );
+
+        assertEquals(
+                AreaPermissionDecision.DENY,
+                hook.resolve(permissionPlayer(uuid, false), VideoPermissionAction.PLAY, context)
+        );
+    }
+
+    @Test
+    void deepestPermissionRespectsChildOverridesAndInheritanceConfiguration() {
+        World world = world();
+        Player player = player(true, false, false, world);
+        TestClaim childAllow = residence("child-allow").withPermissions(effectivePermission(true, false, true));
+        TestClaim childDeny = residence("child-deny").withPermissions(effectivePermission(false, true, true));
+        TestClaim inheritedAllow = residence("inherited-allow").withPermissions(effectivePermission(null, true, true));
+        TestClaim inheritanceDisabled = residence("inheritance-disabled").withPermissions(effectivePermission(null, true, false));
+
+        assertEquals(true, ResidencePermissionHook.permission(childAllow, player, "flag", false));
+        assertEquals(false, ResidencePermissionHook.permission(childDeny, player, "flag", true));
+        assertEquals(true, ResidencePermissionHook.permission(inheritedAllow, player, "flag", false));
+        assertNull(ResidencePermissionHook.permission(inheritanceDisabled, player, "flag", false));
+        assertEquals(true, ResidencePermissionHook.permission(inheritanceDisabled, player, "flag", true));
+    }
+
+    @Test
+    void pointChecksFallBackInWildernessRejectOfflineAndPropagateApiFailure() {
         World world = world();
         UUID uuid = UUID.randomUUID();
         Player online = player(true, false, false, world);
@@ -159,27 +227,32 @@ class ResidencePermissionHookTest {
                 (residence, checkedPlayer, flag, fallback) -> true
         );
 
-        assertTrue(wilderness.allowed(permissionPlayer, VideoPermissionAction.CREATE_SCREEN, VideoPermissionContext.global("world")));
-        assertFalse(unavailable.allowed(permissionPlayer, VideoPermissionAction.PLAY, VideoPermissionContext.global("world")));
-        assertFalse(disconnected.allowed(permissionPlayer, VideoPermissionAction.PLAY, VideoPermissionContext.global("world")));
+        assertEquals(
+                AreaPermissionDecision.NOT_APPLICABLE,
+                wilderness.resolve(permissionPlayer, VideoPermissionAction.CREATE_SCREEN, pointContext())
+        );
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class,
+                () -> unavailable.resolve(permissionPlayer, VideoPermissionAction.PLAY, pointContext())
+        );
+        assertEquals(
+                AreaPermissionDecision.DENY,
+                disconnected.resolve(permissionPlayer, VideoPermissionAction.PLAY, pointContext())
+        );
     }
 
     @Test
     void administratorBypassesResidenceAndDefaultFlagsMatchPermissionDefaults() {
         World world = world();
         UUID uuid = UUID.randomUUID();
-        ClaimedResidence residence = residence("one");
+        ResidencePermissionHook.Claim residence = residence("one");
         Player player = player(true, false, false, world);
         Player administrator = player(true, false, true, world);
-        AtomicBoolean fallback = new AtomicBoolean();
         ResidencePermissionHook hook = new ResidencePermissionHook(
                 ignored -> player,
                 location -> residence,
                 ignored -> List.of(residence),
-                (checkedResidence, checkedPlayer, flag, defaultValue) -> {
-                    fallback.set(defaultValue);
-                    return defaultValue;
-                }
+                (checkedResidence, checkedPlayer, flag, defaultValue) -> null
         );
         ResidencePermissionHook adminHook = new ResidencePermissionHook(
                 ignored -> administrator,
@@ -190,11 +263,86 @@ class ResidencePermissionHookTest {
                 (checkedResidence, checkedPlayer, flag, defaultValue) -> false
         );
 
-        assertTrue(hook.allowed(permissionPlayer(uuid, false), VideoPermissionAction.AUTO_SYNC, VideoPermissionContext.global("world")));
-        assertTrue(fallback.get());
-        assertFalse(hook.allowed(permissionPlayer(uuid, false), VideoPermissionAction.CREATE_SCREEN, VideoPermissionContext.global("world")));
-        assertFalse(fallback.get());
-        assertTrue(adminHook.allowed(permissionPlayer(uuid, true), VideoPermissionAction.CREATE_AREA, VideoPermissionContext.global("world")));
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                hook.resolve(permissionPlayer(uuid, false), VideoPermissionAction.AUTO_SYNC, pointContext())
+        );
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                hook.resolve(permissionPlayer(uuid, false), VideoPermissionAction.UPDATE_SCREEN, pointContext())
+        );
+        assertEquals(
+                AreaPermissionDecision.DENY,
+                hook.resolve(permissionPlayer(uuid, false), VideoPermissionAction.CREATE_SCREEN, pointContext())
+        );
+        UUID playerId = player.getUniqueId();
+        TestClaim owned = residence("owned").withOwner(playerId);
+        ResidencePermissionHook ownerHook = new ResidencePermissionHook(
+                ignored -> player,
+                location -> owned,
+                ignored -> List.of(owned),
+                (checkedResidence, checkedPlayer, flag, defaultValue) -> null
+        );
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                ownerHook.resolve(permissionPlayer(playerId, false), VideoPermissionAction.CREATE_SCREEN, pointContext())
+        );
+        TestClaim padd = residence("padd").withPermissions((checkedPlayer, flag, defaultValue) -> "admin".equals(flag));
+        ResidencePermissionHook paddHook = new ResidencePermissionHook(
+                ignored -> player,
+                location -> padd,
+                ignored -> List.of(padd),
+                (checkedResidence, checkedPlayer, flag, defaultValue) -> null
+        );
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                paddHook.resolve(permissionPlayer(playerId, false), VideoPermissionAction.REMOVE_AREA, pointContext())
+        );
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                adminHook.resolve(permissionPlayer(uuid, true), VideoPermissionAction.CREATE_AREA, VideoPermissionContext.global("world"))
+        );
+    }
+
+    @Test
+    void currentResidenceFlagOverridesLegacyAndLegacyIsFallback() {
+        World world = world();
+        UUID uuid = UUID.randomUUID();
+        Player player = player(true, false, false, world);
+        ResidencePermissionHook.Claim residence = residence("one");
+        ArrayList<String> checked = new ArrayList<>();
+        ResidencePermissionHook legacyAllowed = new ResidencePermissionHook(
+                ignored -> player,
+                location -> residence,
+                ignored -> List.of(residence),
+                (checkedResidence, checkedPlayer, flag, fallback) -> {
+                    checked.add(flag);
+                    return flag.equals("videoplayer.screen.request") ? true : null;
+                }
+        );
+
+        assertEquals(
+                AreaPermissionDecision.ALLOW,
+                legacyAllowed.resolve(permissionPlayer(uuid, false), VideoPermissionAction.PLAY, pointContext())
+        );
+        assertEquals(List.of("videoplayer.action.play", "videoplayer.screen.request"), checked);
+
+        checked.clear();
+        ResidencePermissionHook currentDenied = new ResidencePermissionHook(
+                ignored -> player,
+                location -> residence,
+                ignored -> List.of(residence),
+                (checkedResidence, checkedPlayer, flag, fallback) -> {
+                    checked.add(flag);
+                    return flag.equals("videoplayer.action.play") ? false : true;
+                }
+        );
+
+        assertEquals(
+                AreaPermissionDecision.DENY,
+                currentDenied.resolve(permissionPlayer(uuid, false), VideoPermissionAction.PLAY, pointContext())
+        );
+        assertEquals(List.of("videoplayer.action.play"), checked);
     }
 
     @Test
@@ -219,11 +367,30 @@ class ResidencePermissionHookTest {
         }
     }
 
-    private static ClaimedResidence residence(String name) {
-        return mock(ClaimedResidence.class, name);
+    private static TestClaim residence(String name) {
+        return new TestClaim(name, List.of(), List.of());
     }
 
-    private static ClaimedResidence residence(
+    private static ResidencePermissionHook.Permissions effectivePermission(Boolean local, Boolean parent, boolean inherit) {
+        return (player, flag, defaultValue) -> {
+            if (local != null) return local;
+            if (inherit && parent != null) return parent;
+            return defaultValue;
+        };
+    }
+
+    private static VideoPermissionContext pointContext() {
+        return new VideoPermissionContext(
+                "world",
+                "area",
+                "screen",
+                null,
+                null,
+                new VideoPermissionContext.Position(1, 2, 3)
+        );
+    }
+
+    private static TestClaim residence(
             String name,
             int minX,
             int minY,
@@ -231,17 +398,13 @@ class ResidencePermissionHookTest {
             int maxX,
             int maxY,
             int maxZ,
-            ClaimedResidence... children
+            TestClaim... children
     ) {
-        ClaimedResidence residence = residence(name);
-        CuboidArea area = mock(CuboidArea.class, name + "Area");
-        when(area.getWorldName()).thenReturn("world");
-        when(area.getLowVector()).thenReturn(new Vector(minX, minY, minZ));
-        when(area.getHighVector()).thenReturn(new Vector(maxX, maxY, maxZ));
-        when(residence.getWorldName()).thenReturn("world");
-        when(residence.getAreaArray()).thenReturn(new CuboidArea[]{area});
-        when(residence.getSubzones()).thenReturn(List.of(children));
-        return residence;
+        return new TestClaim(
+                name,
+                List.of(new ResidencePermissionHook.Area("world", new Vector(minX, minY, minZ), new Vector(maxX, maxY, maxZ))),
+                List.of(children)
+        );
     }
 
     private static World world() {
@@ -309,5 +472,84 @@ class ResidencePermissionHookTest {
         if (type == float.class) return 0F;
         if (type == double.class) return 0D;
         return null;
+    }
+
+    private static final class TestClaim implements ResidencePermissionHook.Claim {
+        private final String name;
+        private final List<ResidencePermissionHook.Area> areas;
+        private final List<ResidencePermissionHook.Claim> children;
+        private ResidencePermissionHook.Claim parent;
+        private ResidencePermissionHook.Permissions permissions = (player, flag, defaultValue) -> false;
+        private UUID ownerUUID;
+
+        private TestClaim(String name, List<ResidencePermissionHook.Area> areas, List<TestClaim> children) {
+            this.name = name;
+            this.areas = List.copyOf(areas);
+            this.children = new ArrayList<>(children);
+            for (TestClaim child : children) child.parent = this;
+        }
+
+        @Override
+        public UUID ownerUUID() {
+            return ownerUUID;
+        }
+
+        private TestClaim withOwner(UUID owner) {
+            this.ownerUUID = owner;
+            return this;
+        }
+
+        @Override
+        public ResidencePermissionHook.Claim parent() {
+            return parent;
+        }
+
+        @Override
+        public List<ResidencePermissionHook.Claim> subzones() {
+            return List.copyOf(children);
+        }
+
+        @Override
+        public List<ResidencePermissionHook.Area> areas() {
+            return areas;
+        }
+
+        @Override
+        public String worldName() {
+            return "world";
+        }
+
+        @Override
+        public ResidencePermissionHook.Claim subzoneByLoc(Location location) {
+            for (ResidencePermissionHook.Claim child : children) {
+                if (child instanceof TestClaim test && test.contains(location)) return child;
+            }
+            return null;
+        }
+
+        @Override
+        public ResidencePermissionHook.Permissions permissions() {
+            return permissions;
+        }
+
+        private TestClaim withPermissions(ResidencePermissionHook.Permissions permissions) {
+            this.permissions = permissions;
+            return this;
+        }
+
+        private boolean contains(Location location) {
+            if (areas.isEmpty()) return false;
+            ResidencePermissionHook.Area area = areas.getFirst();
+            Vector low = area.low();
+            Vector high = area.high();
+            return location.getX() >= low.getX() && location.getX() <= high.getX()
+                    && location.getY() >= low.getY() && location.getY() <= high.getY()
+                    && location.getZ() >= low.getZ() && location.getZ() <= high.getZ();
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
     }
 }

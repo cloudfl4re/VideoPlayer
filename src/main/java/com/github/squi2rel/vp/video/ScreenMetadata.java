@@ -13,6 +13,7 @@ public class ScreenMetadata {
     public static final String KEY_MAPPING_UVS = "mapping.uvs";
     public static final String KEY_DEFAULT_VOLUME = "defaultVolume";
     public static final String KEY_DANMAKU_ENABLED = "danmaku";
+    public static final String KEY_SHOW_IDLE_IMAGE = "showIdleImage";
     public static final String KEY_BILIBILI_QUALITY = "bilibiliQuality";
     public static final String KEY_YOUTUBE_QUALITY = "youtubeQuality";
     public static final String KEY_CAMERA_ASPECT = "aspect";

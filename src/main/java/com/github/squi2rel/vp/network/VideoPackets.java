@@ -5,6 +5,9 @@ import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.video.MetaType;
 import com.github.squi2rel.vp.video.MetaValue;
+import com.github.squi2rel.vp.video.IdlePlayEntry;
+import com.github.squi2rel.vp.video.PlaybackDiagnostics;
+import com.github.squi2rel.vp.video.PlaybackFailureReason;
 import com.github.squi2rel.vp.video.ScreenMetadata;
 import com.github.squi2rel.vp.video.VideoArea;
 import com.github.squi2rel.vp.video.VideoScreen;
@@ -16,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static com.github.squi2rel.vp.network.ByteBufUtils.writeString;
 
@@ -83,34 +87,56 @@ public final class VideoPackets {
         if (count > VideoScreen.MAX_IDLE_PLAY_ITEMS) {
             throw new IllegalStateException("IdlePlay item count exceeds " + VideoScreen.MAX_IDLE_PLAY_ITEMS);
         }
-        ArrayList<String> urls = new ArrayList<>(Math.min(count, VideoScreen.MAX_IDLE_PLAY_ITEMS));
+        ArrayList<IdlePlayEntry> entries = new ArrayList<>(Math.min(count, VideoScreen.MAX_IDLE_PLAY_ITEMS));
         int totalBytes = 0;
         for (int i = 0; i < count; i++) {
+            UUID id = readUuid(buf);
             String url = ByteBufUtils.readString(buf, VideoScreen.MAX_IDLE_PLAY_URL_LENGTH);
+            UUID addedBy = readUuid(buf);
+            String addedByName = ByteBufUtils.readString(buf, IdlePlayEntry.MAX_ADDED_BY_NAME_BYTES);
+            int priority = buf.readUnsignedByte();
+            if (priority < IdlePlayEntry.MIN_PRIORITY || priority > IdlePlayEntry.MAX_PRIORITY) {
+                throw new IllegalStateException("IdlePlay priority is invalid");
+            }
             totalBytes += ByteBufUtils.utf8Length(url);
             if (totalBytes > VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES) {
                 throw new IllegalStateException("IdlePlay URL payload exceeds " + VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES + " bytes");
             }
-            if (urls.size() < VideoScreen.MAX_IDLE_PLAY_ITEMS) urls.add(url);
+            if (entries.size() < VideoScreen.MAX_IDLE_PLAY_ITEMS) {
+                entries.add(new IdlePlayEntry(id, url, addedBy, addedByName, priority));
+            }
         }
-        screen.setIdlePlayConfig(urls, random);
-    }
-
-    public static void writeIdlePlayConfig(ByteBuf buf, VideoScreen screen) {
-        writeIdlePlayConfig(buf, screen.idlePlayUrls, screen.idlePlayRandom);
-    }
-
-    public static void writeIdlePlayConfig(ByteBuf buf, List<String> requestedUrls, boolean random) {
-        List<String> urls;
         try {
-            urls = VideoScreen.validatedIdlePlayConfig(requestedUrls);
+            screen.setIdlePlayEntries(entries, random);
         } catch (IllegalArgumentException error) {
             throw new IllegalStateException(error.getMessage(), error);
         }
-        int count = urls.size();
+    }
+
+    public static void writeIdlePlayConfig(ByteBuf buf, VideoScreen screen) {
+        writeIdlePlayEntries(buf, screen.idlePlayEntries, screen.idlePlayRandom);
+    }
+
+    public static void writeIdlePlayConfig(ByteBuf buf, List<String> requestedUrls, boolean random) {
+        ArrayList<IdlePlayEntry> entries = new ArrayList<>();
+        if (requestedUrls != null) {
+            for (String url : requestedUrls) entries.add(IdlePlayEntry.legacy(url));
+        }
+        writeIdlePlayEntries(buf, entries, random);
+    }
+
+    public static void writeIdlePlayEntries(ByteBuf buf, List<IdlePlayEntry> requestedEntries, boolean random) {
+        List<IdlePlayEntry> entries;
+        try {
+            entries = VideoScreen.validatedIdlePlayEntries(requestedEntries);
+        } catch (IllegalArgumentException error) {
+            throw new IllegalStateException(error.getMessage(), error);
+        }
+        int count = entries.size();
         int totalBytes = 0;
         for (int i = 0; i < count; i++) {
-            String url = urls.get(i);
+            IdlePlayEntry entry = entries.get(i);
+            String url = entry.url();
             if (url == null || url.isBlank()) throw new IllegalStateException("IdlePlay URL must not be empty");
             int bytes = ByteBufUtils.utf8Length(url);
             if (bytes > VideoScreen.MAX_IDLE_PLAY_URL_BYTES) {
@@ -124,9 +150,97 @@ public final class VideoPackets {
         buf.writeBoolean(random);
         buf.writeByte(count);
         for (int i = 0; i < count; i++) {
-            String url = urls.get(i);
-            ByteBufUtils.writeString(buf, url);
+            IdlePlayEntry entry = entries.get(i);
+            writeUuid(buf, entry.id());
+            ByteBufUtils.writeString(buf, entry.url());
+            writeUuid(buf, entry.addedBy());
+            ByteBufUtils.writeString(buf, entry.addedByName());
+            buf.writeByte(entry.priority());
         }
+    }
+
+    public static void writeUuid(ByteBuf buf, UUID value) {
+        UUID uuid = value == null ? IdlePlayEntry.UNKNOWN_UUID : value;
+        buf.writeLong(uuid.getMostSignificantBits());
+        buf.writeLong(uuid.getLeastSignificantBits());
+    }
+
+    public static UUID readUuid(ByteBuf buf) {
+        return new UUID(buf.readLong(), buf.readLong());
+    }
+
+    public static IdlePlayMutation readIdlePlayMutation(ByteBuf buf) {
+        IdlePlayAction action = IdlePlayAction.fromId(buf.readUnsignedByte());
+        if (action == null) throw new IllegalStateException("Unknown IdlePlay action");
+        return switch (action) {
+            case ADD -> {
+                String url = ByteBufUtils.readString(buf, VideoScreen.MAX_IDLE_PLAY_URL_LENGTH);
+                int priority = readIdlePlayPriority(buf);
+                yield IdlePlayMutation.add(url, priority);
+            }
+            case REMOVE -> IdlePlayMutation.remove(readUuid(buf));
+            case SET_PRIORITY -> IdlePlayMutation.setPriority(readUuid(buf), readIdlePlayPriority(buf));
+            case ADJUST_PRIORITY -> IdlePlayMutation.adjustPriority(readUuid(buf), readIdlePlayDelta(buf));
+            case CLEAR -> IdlePlayMutation.clear();
+            case SET_MODE -> IdlePlayMutation.setMode(buf.readBoolean());
+        };
+    }
+
+    public static void writeIdlePlayMutation(ByteBuf buf, IdlePlayMutation mutation) {
+        if (mutation == null || mutation.action() == null) throw new IllegalArgumentException("IdlePlay mutation is required");
+        buf.writeByte(mutation.action().id());
+        switch (mutation.action()) {
+            case ADD -> {
+                ByteBufUtils.writeString(buf, mutation.url());
+                writeIdlePlayPriority(buf, mutation.priority());
+            }
+            case REMOVE -> writeUuid(buf, mutation.entryId());
+            case SET_PRIORITY -> {
+                writeUuid(buf, mutation.entryId());
+                writeIdlePlayPriority(buf, mutation.priority());
+            }
+            case ADJUST_PRIORITY -> {
+                writeUuid(buf, mutation.entryId());
+                writeIdlePlayDelta(buf, mutation.delta());
+            }
+            case CLEAR -> {
+            }
+            case SET_MODE -> buf.writeBoolean(mutation.random());
+        }
+    }
+
+    private static int readIdlePlayPriority(ByteBuf buf) {
+        int priority = buf.readUnsignedByte();
+        if (priority < IdlePlayEntry.MIN_PRIORITY || priority > IdlePlayEntry.MAX_PRIORITY) {
+            throw new IllegalStateException("IdlePlay priority is invalid");
+        }
+        return priority;
+    }
+
+    private static void writeIdlePlayPriority(ByteBuf buf, int priority) {
+        if (priority < IdlePlayEntry.MIN_PRIORITY || priority > IdlePlayEntry.MAX_PRIORITY) {
+            throw new IllegalArgumentException("IdlePlay priority is invalid");
+        }
+        buf.writeByte(priority);
+    }
+
+    private static int readIdlePlayDelta(ByteBuf buf) {
+        int delta = buf.readByte();
+        if (!validIdlePlayDelta(delta)) {
+            throw new IllegalStateException("IdlePlay priority delta is invalid");
+        }
+        return delta;
+    }
+
+    private static void writeIdlePlayDelta(ByteBuf buf, int delta) {
+        if (!validIdlePlayDelta(delta)) {
+            throw new IllegalArgumentException("IdlePlay priority delta is invalid");
+        }
+        buf.writeByte(delta);
+    }
+
+    private static boolean validIdlePlayDelta(int delta) {
+        return delta != 0 && Math.abs(delta) <= IdlePlayEntry.MAX_PRIORITY - IdlePlayEntry.MIN_PRIORITY;
     }
 
     public static void readMeta(ByteBuf buf, VideoScreen screen) {
@@ -313,6 +427,64 @@ public final class VideoPackets {
         return toByteArray(buf);
     }
 
+    public static byte[] diagnostics(VideoScreen screen, PlaybackDiagnostics diagnostics) {
+        if (screen == null || diagnostics == null) throw new IllegalArgumentException("Screen and diagnostics are required");
+        ByteBuf buf = create(VideoPacketType.DIAGNOSTICS);
+        writeString(buf, screen.area.name);
+        writeString(buf, screen.name);
+        writeString(buf, diagnostics.currentTitle());
+        writeString(buf, diagnostics.queuedTitle());
+        buf.writeByte(diagnostics.queueSize());
+        buf.writeLong(diagnostics.generation());
+        buf.writeLong(diagnostics.progressMs());
+        buf.writeBoolean(diagnostics.playing());
+        buf.writeBoolean(diagnostics.resolving());
+        buf.writeBoolean(diagnostics.idle());
+        buf.writeBoolean(diagnostics.seekable());
+        buf.writeByte(diagnostics.retryAttempt());
+        buf.writeLong(diagnostics.nextRetryAtMs());
+        buf.writeByte(diagnostics.failureReason().id());
+        writeString(buf, diagnostics.failureMessage());
+        buf.writeLong(diagnostics.failureAtMs());
+        buf.writeBoolean(diagnostics.awaitingClientResolution());
+        buf.writeBoolean(diagnostics.reporterAssigned());
+        writeString(buf, diagnostics.backendState());
+        return toByteArray(buf);
+    }
+
+    public static PlaybackDiagnostics readDiagnostics(ByteBuf buf) {
+        String currentTitle = ByteBufUtils.readString(buf, PlaybackDiagnostics.MAX_TEXT_BYTES);
+        String queuedTitle = ByteBufUtils.readString(buf, PlaybackDiagnostics.MAX_TEXT_BYTES);
+        int queueSize = buf.readUnsignedByte();
+        long generation = buf.readLong();
+        long progress = buf.readLong();
+        boolean playing = buf.readBoolean();
+        boolean resolving = buf.readBoolean();
+        boolean idle = buf.readBoolean();
+        boolean seekable = buf.readBoolean();
+        int retryAttempt = buf.readUnsignedByte();
+        long nextRetryAt = buf.readLong();
+        PlaybackFailureReason reason = PlaybackFailureReason.fromId(buf.readUnsignedByte());
+        String failureMessage = ByteBufUtils.readString(buf, PlaybackDiagnostics.MAX_TEXT_BYTES);
+        long failureAt = buf.readLong();
+        boolean awaitingClientResolution = buf.readBoolean();
+        boolean reporterAssigned = buf.readBoolean();
+        String backendState = ByteBufUtils.readString(buf, PlaybackDiagnostics.MAX_BACKEND_STATE_BYTES);
+        return new PlaybackDiagnostics(currentTitle, queuedTitle, queueSize, generation, progress,
+                playing, resolving, idle, seekable, retryAttempt, nextRetryAt, reason, failureMessage,
+                failureAt, awaitingClientResolution, reporterAssigned, backendState);
+    }
+
+    public static byte[] playbackNotice(VideoScreen screen, VpTranslation message, boolean error) {
+        if (screen == null) throw new IllegalArgumentException("Screen is required");
+        ByteBuf buf = create(VideoPacketType.PLAYBACK_NOTICE);
+        writeString(buf, screen.area.name);
+        writeString(buf, screen.name);
+        buf.writeBoolean(error);
+        writeTranslation(buf, message);
+        return toByteArray(buf);
+    }
+
     public static byte[] request(VideoScreen screen, VideoInfo info) {
         return request(screen, info, false);
     }
@@ -331,6 +503,29 @@ public final class VideoPackets {
 
     public static byte[] request(VideoScreen screen, VideoInfo info, boolean idle) {
         return request(screen, info, idle, screen.currentPlaybackGeneration(), screen.getProgress());
+    }
+
+    public static byte[] clientPlaybackResolved(VideoScreen screen, long generation, long reporterToken,
+                                                 ClientPlaybackResolution resolution, long durationMs) {
+        if (screen == null || resolution == null) throw new IllegalArgumentException("Screen and resolution are required");
+        ByteBuf buf = create(VideoPacketType.CLIENT_PLAYBACK_RESOLVED);
+        writeString(buf, screen.area.name);
+        writeString(buf, screen.name);
+        buf.writeLong(generation);
+        buf.writeLong(reporterToken);
+        buf.writeByte(resolution.id);
+        buf.writeLong(Math.max(0L, durationMs));
+        return toByteArray(buf);
+    }
+
+    public static byte[] clientPlaybackReporter(VideoScreen screen, long generation, long reporterToken) {
+        if (screen == null || reporterToken == 0L) throw new IllegalArgumentException("Screen and reporter token are required");
+        ByteBuf buf = create(VideoPacketType.CLIENT_PLAYBACK_REPORTER);
+        writeString(buf, screen.area.name);
+        writeString(buf, screen.name);
+        buf.writeLong(generation);
+        buf.writeLong(reporterToken);
+        return toByteArray(buf);
     }
 
     public static byte[] sync(VideoScreen screen, long time) {

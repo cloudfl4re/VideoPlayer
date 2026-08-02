@@ -205,7 +205,7 @@ public final class NativePackageManager {
             }
             try (InstallFileLock ignored = acquireInstallFileLock(normalizedBackend, normalizedPlatform, guard)) {
                 if (isInstalled(normalizedBackend, normalizedPlatform)) {
-                    return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "Installation complete"));
+                    return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "安装完成"));
                 }
                 return downloadAndInstallLocked(normalizedBackend, normalizedPlatform, sources, proxy, listener, guard);
             }
@@ -258,7 +258,7 @@ public final class NativePackageManager {
                 checkActive(active);
                 installZip(normalizedBackend, normalizedPlatform, zip, active);
                 VpTranslation complete = VpTranslation.of("message.videoplayer.native.install_complete_source",
-                        "Installation complete (source: %s)", sourceName);
+                        "安装完成，来源：%s", sourceName);
                 notify(listener, new DownloadProgress(i + 1, usableSources.size(), 0, -1,
                         sourceName, complete));
                 VideoPlayerMain.LOGGER.info("Installed native package {} {} from {}", normalizedBackend, normalizedPlatform, sourceName);
@@ -301,7 +301,7 @@ public final class NativePackageManager {
             }
             try (InstallFileLock ignored = acquireDestinationFileLock(normalizedDestination, guard)) {
                 if (validExistingFile(normalizedDestination, validator)) {
-                    return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "Installation complete"));
+                    return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "安装完成"));
                 }
                 return downloadAndInstallFileLocked(name, platform, sources, proxy, normalizedDestination,
                         executable, validator, listener, guard);
@@ -355,7 +355,7 @@ public final class NativePackageManager {
                 checkActive(guard);
                 installFile(downloaded, destination, executable, validator, guard);
                 VpTranslation complete = VpTranslation.of("message.videoplayer.native.install_complete_source",
-                        "Installation complete (source: %s)", selectedSource);
+                        "安装完成，来源：%s", selectedSource);
                 notify(listener, new DownloadProgress(i + 1, usableSources.size(), 0, -1, selectedSource, complete));
                 return DownloadResult.ok(complete, selectedSource);
             } catch (CancellationException cancelled) {
@@ -440,7 +440,7 @@ public final class NativePackageManager {
             try (InstallFileLock ignored = acquireInstallFileLock(normalizedBackend, normalizedPlatform, guard)) {
                 checkActive(guard);
                 if (isInstalled(normalizedBackend, normalizedPlatform)) {
-                    return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "Installation complete"));
+                    return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "安装完成"));
                 }
                 InputStream resourceInput = NativePackageManager.class.getResourceAsStream(resource);
                 if (resourceInput == null) {
@@ -454,7 +454,7 @@ public final class NativePackageManager {
                 verify(new NativeDownloadConfig.DownloadSource(resource, expectedSha256), zip, guard);
                 checkActive(guard);
                 installZip(normalizedBackend, normalizedPlatform, zip, guard);
-                return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "Installation complete"));
+                return DownloadResult.ok(VpTranslation.of("message.videoplayer.native.install_complete", "安装完成"));
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();

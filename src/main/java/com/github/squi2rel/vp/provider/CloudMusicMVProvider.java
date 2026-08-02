@@ -34,7 +34,7 @@ public class CloudMusicMVProvider implements IVideoProvider {
     }
 
     private VideoInfo fetchPlayableMv(String rawPath, String id, IProviderSource source) {
-        try (HttpClient client = HttpClient.newHttpClient()) {
+        try (HttpClient client = httpClient()) {
             HttpResponse<InputStream> response = client.send(request(String.format(DETAIL_URL, id)), HttpResponse.BodyHandlers.ofInputStream());
             JsonObject root = JsonParser.parseString(HttpResponseBody.read(response)).getAsJsonObject();
             if (root.get("code").getAsLong() != 200) {
@@ -89,6 +89,12 @@ public class CloudMusicMVProvider implements IVideoProvider {
         if (object == null || !object.has(name)) return fallback;
         JsonElement element = object.get(name);
         return element == null || element.isJsonNull() ? fallback : element.getAsLong();
+    }
+
+    private static HttpClient httpClient() {
+        return HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15))
+                .build();
     }
 
     private static HttpRequest request(String url) {

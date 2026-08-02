@@ -48,6 +48,9 @@ public class YouTubeProvider implements IVideoProvider {
     private static final AtomicLong RESOLUTION_IDS = new AtomicLong();
     private static volatile String configuredProxy = "";
     private static volatile String configuredYtdlPath = "";
+    private static volatile String configuredCookiesFile = "";
+    private static volatile String configuredCookiesFromBrowser = "";
+    private static volatile MissingYtDlpHandler missingYtDlpHandler = () -> "";
     private final ProcessStarter processStarter;
 
     public YouTubeProvider() {
@@ -64,6 +67,35 @@ public class YouTubeProvider implements IVideoProvider {
 
     public static void configureYtdlPath(String ytdlPath) {
         configuredYtdlPath = ytdlPath == null ? "" : ytdlPath.trim();
+    }
+
+    public static void configureCookies(String cookiesFile, String cookiesFromBrowser) {
+        configuredCookiesFile = safeSetting(cookiesFile);
+        configuredCookiesFromBrowser = safeSetting(cookiesFromBrowser);
+    }
+
+    public static void configureCookiesFile(String cookiesFile) {
+        configureCookies(cookiesFile, configuredCookiesFromBrowser);
+    }
+
+    public static void configureCookiesFromBrowser(String cookiesFromBrowser) {
+        configureCookies(configuredCookiesFile, cookiesFromBrowser);
+    }
+
+    public static void configureMissingYtdlHandler(MissingYtDlpHandler handler) {
+        missingYtDlpHandler = handler == null ? () -> "" : handler;
+    }
+
+    public static void configureMissingYtDlpHandler(MissingYtDlpHandler handler) {
+        configureMissingYtdlHandler(handler);
+    }
+
+    public static void configureYtdlInstaller(MissingYtDlpHandler handler) {
+        configureMissingYtdlHandler(handler);
+    }
+
+    public static void configureYtDlpInstaller(MissingYtDlpHandler handler) {
+        configureMissingYtdlHandler(handler);
     }
 
     @Override
@@ -108,21 +140,22 @@ public class YouTubeProvider implements IVideoProvider {
         } catch (CancellationException e) {
             throw e;
         } catch (YtDlpMissingException e) {
-            LOGGER.warn("Unable to start yt-dlp; configured path is '{}'", configuredYtdlPath.isBlank() ? "<server PATH>" : configuredYtdlPath, e);
-            source.reply(VpTranslation.of("message.videoplayer.youtube_ytdlp_missing", "yt-dlp is not installed or not on PATH"));
-            return null;
+            LOGGER.warn("Unable to start yt-dlp; no usable executable was found", e);
+            source.reply(VpTranslation.of("message.videoplayer.youtube_ytdlp_missing", "yt-dlp is unavailable; install it or enable automatic download"));
+            return clientResolvableFallback(source, url, "", 0L, false);
         } catch (Exception e) {
-            LOGGER.warn("Failed to run yt-dlp for YouTube metadata", e);
-            source.reply(VpTranslation.of("message.videoplayer.youtube_metadata_failed", "Failed to resolve YouTube metadata"));
-            return null;
+            LOGGER.warn("Failed to run yt-dlp for YouTube metadata: {}", failureSummary(e));
+            replyFailure(source, classifyFailure(e.getMessage()));
+            return clientResolvableFallback(source, url, "", 0L, false);
         }
 
         cancellation.throwIfCancelled();
         if (result.exitCode != 0) {
-            LOGGER.warn("yt-dlp resolution #{} failed; exit={}, stderr={}",
-                    resolutionId, result.exitCode, summarizeOutput(result.stderr));
-            source.reply(VpTranslation.of("message.videoplayer.youtube_metadata_failed", "Failed to resolve YouTube metadata"));
-            return null;
+            String failure = classifyFailure(result.stderr);
+            LOGGER.warn("yt-dlp resolution #{} failed; exit={}, reason={}",
+                    resolutionId, result.exitCode, failure);
+            replyFailure(source, failure);
+            return clientResolvableFallback(source, url, "", 0L, false);
         }
 
         JsonObject metadata;
@@ -130,9 +163,9 @@ public class YouTubeProvider implements IVideoProvider {
             metadata = JsonParser.parseString(result.stdout).getAsJsonObject();
         } catch (RuntimeException e) {
             LOGGER.warn("yt-dlp resolution #{} returned invalid YouTube metadata JSON; stdoutBytes={}, stderr={}",
-                    resolutionId, utf8Bytes(result.stdout), summarizeOutput(result.stderr), e);
-            source.reply(VpTranslation.of("message.videoplayer.youtube_metadata_failed", "Failed to resolve YouTube metadata"));
-            return null;
+                    resolutionId, utf8Bytes(result.stdout), summarizeOutput(result.stderr), failureSummary(e));
+            replyFailure(source, "unknown");
+            return clientResolvableFallback(source, url, "", 0L, false);
         }
 
         cancellation.throwIfCancelled();
@@ -153,23 +186,30 @@ public class YouTubeProvider implements IVideoProvider {
         long durationMs = durationMs(metadata);
         if (durationMs <= 0 && !live) {
             source.reply(VpTranslation.of("message.videoplayer.youtube_duration_missing", "Failed to get YouTube duration"));
-            return null;
+            return clientResolvableFallback(source, url, string(metadata, "title", ""), durationMs, false);
         }
 
         String id = string(metadata, "id", idFromUrl(url));
         String title = string(metadata, "title", id == null ? "YouTube Video" : "YouTube " + id);
         ResolvedMedia media = resolvedMedia(metadata);
         if (media == null) {
-            source.reply(VpTranslation.of("message.videoplayer.youtube_stream_missing", "Failed to get a playable YouTube stream"));
-            return null;
+            source.reply(VpTranslation.of("message.videoplayer.youtube_stream_missing", "Failed to get a playable YouTube stream; the client will retry with its local yt-dlp"));
+            return clientResolvableFallback(source, url, title, durationMs, live);
         }
         return new VideoInfo(source.name(), title, media.videoUrl, url, media.expire, !live,
                 params(metadata, url, media), durationMs);
     }
 
+    static VideoInfo clientResolvableFallback(IProviderSource source, String rawUrl, String title,
+                                              long durationMs, boolean live) {
+        String safeTitle = title == null || title.isBlank() ? "YouTube Video" : title;
+        return new VideoInfo(source.name(), safeTitle, "", rawUrl, -1, !live, new String[0], durationMs);
+    }
+
     private static String[] params(JsonObject metadata, String referer, ResolvedMedia media) {
         ArrayList<String> params = new ArrayList<>();
         addParameter(params, VideoParams.PARAM_YOUTUBE + "=true");
+        if (hasLiveChat(metadata)) addParameter(params, VideoParams.PARAM_YOUTUBE_LIVE_CHAT + "=true");
         addParameter(params, "ytdl=no");
         JsonObject headers = media.headers == null ? object(metadata, "http_headers") : media.headers;
         String userAgent = string(headers, "User-Agent", string(headers, "user-agent", ""));
@@ -259,6 +299,18 @@ public class YouTubeProvider implements IVideoProvider {
         return status.equals("is_live") || status.equals("is_upcoming");
     }
 
+    static boolean hasLiveChat(JsonObject metadata) {
+        if (metadata == null) return false;
+        JsonElement live = metadata.get("is_live");
+        if (live != null && live.isJsonPrimitive()) {
+            try {
+                if (live.getAsBoolean()) return true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return string(metadata, "live_status", "").equalsIgnoreCase("is_live");
+    }
+
     private static boolean hasCodec(JsonObject format, String key) {
         String codec = string(format, key, "");
         return !codec.isBlank() && !codec.equalsIgnoreCase("none");
@@ -291,10 +343,12 @@ public class YouTubeProvider implements IVideoProvider {
         if (subtitles == null || subtitles.isEmpty()) return;
         int index = result.size();
         for (String language : subtitles.keySet()) {
+            if (language != null && language.equalsIgnoreCase("live_chat")) continue;
             JsonElement element = subtitles.get(language);
             if (element == null || !element.isJsonArray()) continue;
             JsonObject format = bestSubtitleFormat(element.getAsJsonArray());
             if (format == null) continue;
+            if (string(format, "protocol", "").equalsIgnoreCase("youtube_live_chat")) continue;
             String url = string(format, "url", "");
             if (url.isBlank()) continue;
             String name = string(format, "name", "");
@@ -339,14 +393,28 @@ public class YouTubeProvider implements IVideoProvider {
 
     private YtDlpResult runYtDlp(String url, int heightLimit, ResolutionCancellation cancellation,
                                  long resolutionId, String threadName) throws Exception {
+        try {
+            return runYtDlpOnce(url, heightLimit, cancellation, resolutionId, threadName, configuredYtdlPath);
+        } catch (YtDlpMissingException missing) {
+            cancellation.throwIfCancelled();
+            String installed = installMissingYtdl();
+            if (installed.isBlank()) throw missing;
+            configuredYtdlPath = installed;
+            LOGGER.info("Retrying YouTube resolution #{} with the installed yt-dlp executable", resolutionId);
+            return runYtDlpOnce(url, heightLimit, cancellation, resolutionId, threadName, installed);
+        }
+    }
+
+    private YtDlpResult runYtDlpOnce(String url, int heightLimit, ResolutionCancellation cancellation,
+                                     long resolutionId, String threadName, String preferredExecutable) throws Exception {
         YtDlpStartException missing = null;
         cancellation.throwIfCancelled();
-        String configured = VideoParams.normalizeMpvOptionValue(configuredYtdlPath);
+        String configured = VideoParams.normalizeMpvOptionValue(preferredExecutable);
         if (!configured.isBlank()) {
             try {
                 return executeYtDlp(configured, url, heightLimit, cancellation, resolutionId, threadName);
             } catch (YtDlpStartException e) {
-                LOGGER.warn("Configured yt-dlp executable could not be started: {}", configured, e);
+                LOGGER.warn("Configured yt-dlp executable could not be started", e);
                 missing = e;
             }
         }
@@ -361,6 +429,18 @@ public class YouTubeProvider implements IVideoProvider {
         throw new YtDlpMissingException(missing);
     }
 
+    private static String installMissingYtdl() {
+        MissingYtDlpHandler handler = missingYtDlpHandler;
+        if (handler == null) return "";
+        try {
+            String executable = handler.ensure();
+            return VideoParams.normalizeMpvOptionValue(executable);
+        } catch (Throwable error) {
+            LOGGER.warn("Automatic yt-dlp installation callback failed: {}", failureSummary(error));
+            return "";
+        }
+    }
+
     private YtDlpResult executeYtDlp(String executable, String url, int heightLimit,
                                      ResolutionCancellation cancellation, long resolutionId,
                                      String threadName) throws Exception {
@@ -372,6 +452,7 @@ public class YouTubeProvider implements IVideoProvider {
         command.add("--skip-download");
         command.add("--format");
         command.add(formatSelector(heightLimit));
+        appendCookieArguments(command);
         String proxy = VideoParams.normalizeHttpProxy(configuredProxy);
         String commandProxy = proxyWithoutCredentials(proxy);
         if (!commandProxy.isBlank()) {
@@ -382,9 +463,9 @@ public class YouTubeProvider implements IVideoProvider {
 
         cancellation.throwIfCancelled();
         long startedAt = System.nanoTime();
-        LOGGER.info("Starting yt-dlp resolution #{} executable={} url={} format={} proxy={}",
-                resolutionId, executable, VideoProviders.redactedSource(url), formatSelector(heightLimit),
-                commandProxy.isBlank() ? "none" : VideoProviders.redactedSource(commandProxy));
+        LOGGER.info("Starting yt-dlp resolution #{} executable={} url={} format={} proxy={} cookies={}",
+                resolutionId, executableName(executable), VideoProviders.redactedSource(url), formatSelector(heightLimit),
+                commandProxy.isBlank() ? "none" : VideoProviders.redactedSource(commandProxy), cookieMode());
         Process process;
         try {
             process = processStarter.start(List.copyOf(command), proxyEnvironment(proxy));
@@ -666,9 +747,105 @@ public class YouTubeProvider implements IVideoProvider {
     private static String summarizeOutput(String value) {
         if (value == null || value.isBlank()) return "<empty>";
         String normalized = value.replace('\r', ' ').replace('\n', ' ').trim();
+        normalized = redactSensitive(normalized);
         int max = 1024;
         if (normalized.length() <= max) return normalized;
         return normalized.substring(0, max) + "...";
+    }
+
+    private static String safeSetting(String value) {
+        if (value == null || value.isBlank()) return "";
+        String normalized = value.trim().replace("\r", "").replace("\n", "").replace("\u0000", "");
+        return normalized.length() > 4096 ? normalized.substring(0, 4096) : normalized;
+    }
+
+    private static void appendCookieArguments(List<String> command) {
+        String file = safeSetting(configuredCookiesFile);
+        if (!file.isBlank()) {
+            command.add("--cookies");
+            command.add(file);
+            return;
+        }
+        String browser = safeSetting(configuredCookiesFromBrowser);
+        if (!browser.isBlank()) {
+            command.add("--cookies-from-browser");
+            command.add(browser);
+        }
+    }
+
+    private static String cookieMode() {
+        if (!safeSetting(configuredCookiesFile).isBlank()) return "file";
+        if (!safeSetting(configuredCookiesFromBrowser).isBlank()) return "browser";
+        return "none";
+    }
+
+    private static String executableName(String executable) {
+        if (executable == null || executable.isBlank()) return "<path>";
+        try {
+            java.nio.file.Path path = java.nio.file.Path.of(executable);
+            java.nio.file.Path name = path.getFileName();
+            return name == null || name.toString().isBlank() ? "<path>" : name.toString();
+        } catch (RuntimeException ignored) {
+            return "<path>";
+        }
+    }
+
+    private static String redactSensitive(String value) {
+        String result = value == null ? "" : value;
+        String cookiesFile = safeSetting(configuredCookiesFile);
+        String browser = safeSetting(configuredCookiesFromBrowser);
+        if (!cookiesFile.isBlank()) result = result.replace(cookiesFile, "<redacted-cookie-file>");
+        if (!browser.isBlank()) result = result.replace(browser, "<redacted-browser-profile>");
+        result = result.replaceAll("(?i)(cookie|authorization|token|password|passwd|secret|session[_-]?id|sid)\\s*[=:]\\s*[^\\s,;]+", "$1=<redacted>");
+        result = result.replaceAll("(?i)([?&](?:token|sig|signature|expire|expires|key|sparams|lsig|sp|si)=)[^&#\\s]+", "$1<redacted>");
+        return result;
+    }
+
+    private static String failureSummary(Throwable error) {
+        if (error == null) return "unknown";
+        String message = error.getMessage();
+        return summarizeOutput(message == null ? error.getClass().getSimpleName() : message);
+    }
+
+    private static String classifyFailure(String stderr) {
+        String value = stderr == null ? "" : stderr.toLowerCase(Locale.ROOT);
+        if (value.contains("sign in") || value.contains("login") || value.contains("cookies")
+                || value.contains("confirm you're not a bot") || value.contains("confirm you are not a bot")
+                || value.contains("age-restricted") || value.contains("age restricted")) {
+            return "login_required";
+        }
+        if (value.contains("private video") || value.contains("this video is private")) return "private";
+        if (value.contains("geo-restricted") || value.contains("not available in your country")
+                || value.contains("country restriction")) return "geo_restricted";
+        if (value.contains("video unavailable") || value.contains("requested format is not available")) {
+            return "video_unavailable";
+        }
+        if (value.contains("timed out") || value.contains("network") || value.contains("connection")) {
+            return "network";
+        }
+        return "unknown";
+    }
+
+    private static VpTranslation failureTranslation(String classification) {
+        return switch (classification) {
+            case "login_required" -> VpTranslation.of("message.videoplayer.youtube_login_required",
+                    "YouTube requires login or valid cookies. Configure a cookies.txt file or browser profile.");
+            case "private" -> VpTranslation.of("message.videoplayer.youtube_private",
+                    "This YouTube video is private. Sign in with an account that can access it.");
+            case "geo_restricted" -> VpTranslation.of("message.videoplayer.youtube_geo_restricted",
+                    "This YouTube video is unavailable in the configured network region.");
+            case "video_unavailable" -> VpTranslation.of("message.videoplayer.youtube_video_unavailable",
+                    "YouTube did not provide a playable format for this video.");
+            case "network" -> VpTranslation.of("message.videoplayer.youtube_network_failed",
+                    "yt-dlp could not reach YouTube. Check the proxy and network connection.");
+            default -> VpTranslation.of("message.videoplayer.youtube_metadata_failed",
+                    "Failed to resolve YouTube metadata. Update yt-dlp and verify the URL, cookies, and proxy.");
+        };
+    }
+
+    private static void replyFailure(IProviderSource source, String classification) {
+        if (source == null) return;
+        source.reply(failureTranslation(classification));
     }
 
     @FunctionalInterface
@@ -678,6 +855,11 @@ public class YouTubeProvider implements IVideoProvider {
         default Process start(List<String> command, Map<String, String> environment) throws IOException {
             return start(command);
         }
+    }
+
+    @FunctionalInterface
+    public interface MissingYtDlpHandler {
+        String ensure();
     }
 
     private static final class DefaultProcessStarter implements ProcessStarter {

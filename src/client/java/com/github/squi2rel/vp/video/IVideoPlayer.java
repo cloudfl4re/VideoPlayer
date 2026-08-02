@@ -53,6 +53,17 @@ public interface IVideoPlayer {
     default void setVolume(int volume) {
     }
 
+    default void setOutputVolume(int volume) {
+        setVolume(volume);
+    }
+
+    default void clearOutputVolume() {
+    }
+
+    default AudioLevelSnapshot audioLevel() {
+        return AudioLevelSnapshot.unsupported();
+    }
+
     default boolean canSetProgress() {
         return false;
     }

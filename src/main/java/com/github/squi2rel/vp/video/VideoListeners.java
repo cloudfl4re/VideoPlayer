@@ -2,6 +2,7 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.bilibili.BiliBiliVideoProvider;
+import com.github.squi2rel.vp.provider.YouTubeProvider;
 
 public class VideoListeners {
     public static IVideoListener from(VideoInfo info) {
@@ -10,6 +11,9 @@ public class VideoListeners {
         }
         if (hasKnownDuration(info)) {
             return new DurationStreamListener(info.durationMs());
+        }
+        if (isYouTubeUnknownDuration(info)) {
+            return new ClientResolutionStreamListener();
         }
         if (isClientResolved(info) || isBilibiliClientPlayback(info)) {
             return null;
@@ -26,7 +30,16 @@ public class VideoListeners {
                 && !hasKnownDuration(info)
                 && !isClientResolved(info)
                 && !isBilibiliClientPlayback(info)
+                && !isYouTubeUnknownDuration(info)
                 && StreamListener.accept(info);
+    }
+
+    public static boolean awaitsClientPlaybackResolution(VideoInfo info) {
+        return info != null
+                && info.durationMs() <= 0
+                && info.seekable()
+                && isClientResolved(info)
+                && YouTubeProvider.isYouTubeRawPath(info.rawPath());
     }
 
     private static boolean hasKnownDuration(VideoInfo info) {
@@ -42,7 +55,15 @@ public class VideoListeners {
 
     private static boolean isBilibiliClientPlayback(VideoInfo info) {
         return info != null
+                && isClientResolved(info)
                 && info.rawPath() != null
                 && BiliBiliVideoProvider.isBiliVideoRawPath(info.rawPath());
+    }
+
+    private static boolean isYouTubeUnknownDuration(VideoInfo info) {
+        return info != null
+                && info.durationMs() <= 0
+                && YouTubeProvider.isYouTubeRawPath(info.rawPath())
+                && (!info.seekable() || isClientResolved(info));
     }
 }

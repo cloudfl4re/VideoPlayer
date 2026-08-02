@@ -8,14 +8,11 @@ import java.util.Objects;
 import java.util.Set;
 
 public final class VideoPermissions {
-    private static final Set<VideoPermissionAction> PUBLIC_ACTIONS = EnumSet.of(
-            VideoPermissionAction.PLAY,
+    private static final Set<VideoPermissionAction> PUBLIC_ACTIONS = EnumSet.complementOf(EnumSet.of(
             VideoPermissionAction.SEEK,
-            VideoPermissionAction.SYNC,
-            VideoPermissionAction.VOTE_SKIP,
-            VideoPermissionAction.AUTO_SYNC,
-            VideoPermissionAction.OPEN_MENU
-    );
+            VideoPermissionAction.REMOVE_AREA,
+            VideoPermissionAction.REMOVE_SCREEN
+    ));
     private static final GlobalPermissionChecker DEFAULT_GLOBAL = (player, action, context) ->
             player.opOrGameMaster() || PUBLIC_ACTIONS.contains(action);
     private static final AreaPermissionChecker ALLOW_AREA = (player, action, context) -> true;

@@ -5,6 +5,7 @@ import com.github.squi2rel.vp.provider.bilibili.BiliBiliLiveProvider;
 import com.github.squi2rel.vp.provider.bilibili.BiliBiliVideoProvider;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.net.URI;
 import java.util.Locale;
@@ -39,7 +40,11 @@ public class VideoProviders {
                     info.whenComplete((resolved, error) -> {
                         RESOLUTION_LIMIT.release();
                         if (error != null) {
-                            VideoPlayerMain.LOGGER.warn("Provider {} failed for {}", provider.getClass().getSimpleName(), redactedSource(str), error);
+                            if (error instanceof CancellationException || error.getCause() instanceof CancellationException) {
+                                VideoPlayerMain.LOGGER.debug("Provider {} cancelled for {}", provider.getClass().getSimpleName(), redactedSource(str));
+                            } else {
+                                VideoPlayerMain.LOGGER.warn("Provider {} failed for {}", provider.getClass().getSimpleName(), redactedSource(str), error);
+                            }
                         } else if (resolved == null) {
                             VideoPlayerMain.LOGGER.warn("Provider {} produced no playable result for {}", provider.getClass().getSimpleName(), redactedSource(str));
                         } else {

@@ -3,6 +3,7 @@ package com.github.squi2rel.vp.network;
 import com.github.squi2rel.vp.provider.PlayerProviderSource;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
+import com.github.squi2rel.vp.provider.VideoUrlNormalizer;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
 import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.i18n.MinecraftTexts;
@@ -57,7 +58,7 @@ public class ServerPacketHandler {
                 && !DataHolder.protocolActive(player.getUuid())) {
             return;
         }
-        LOGGER.info("server type: {}", type);
+        LOGGER.debug("server type: {}", type);
         switch (type) {
             case CONFIG -> {
                 String remoteToken = ByteBufUtils.readString(buf, 16);
@@ -66,31 +67,44 @@ public class ServerPacketHandler {
                         sendTo(player, VideoPackets.protocolReject(VideoPlayerMain.version));
                         reject(player, VpTranslation.of(
                                 "error.videoplayer.protocol_mismatch",
-                                "VideoPlayer client and server must use the same 2.0.1 build. Client: %s, server: %s",
+                                "VideoPlayer client and server must use the same release version. Client: %s, server: %s",
                                 VideoProtocol.displayVersion(remoteToken), VideoPlayerMain.version
                         ));
                     }
                     return;
                 }
+                DataHolder.recordHandshakeToken(player.getUuid(), remoteToken);
+                String responseToken = DataHolder.handshakeToken(player.getUuid());
                 VideoHandshakeState previous = DataHolder.handshakeState(player.getUuid());
                 if (previous == VideoHandshakeState.NEEDS_RESET) {
                     DataHolder.acceptHandshake(player.getUuid());
                     long nonce = DataHolder.issueHandshakeNonce(player.getUuid());
-                    sendTo(player, VideoPackets.resetClient(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config, nonce));
+                    sendTo(player, VideoPackets.resetClient(responseToken, DataHolder.config, nonce));
                 } else if (previous == VideoHandshakeState.RESET_SENT) {
                     long nonce = DataHolder.handshakeNonce(player.getUuid());
                     if (nonce == 0L) nonce = DataHolder.issueHandshakeNonce(player.getUuid());
-                    sendTo(player, VideoPackets.resetClient(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config, nonce));
+                    sendTo(player, VideoPackets.resetClient(responseToken, DataHolder.config, nonce));
                 } else if (previous == VideoHandshakeState.ACTIVE) {
-                    sendTo(player, VideoPackets.config(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config));
+                    sendTo(player, VideoPackets.config(responseToken, DataHolder.config));
                     sendGlobalPermissions(player);
                 }
             }
             case HANDSHAKE_ACK -> {
                 long nonce = buf.readLong();
                 if (DataHolder.acceptHandshakeAck(player.getUuid(), nonce)) {
-                    sendTo(player, VideoPackets.config(VideoProtocol.token(VideoPlayerMain.version), DataHolder.config));
+                    sendTo(player, VideoPackets.config(DataHolder.handshakeToken(player.getUuid()), DataHolder.config));
                     sendGlobalPermissions(player);
+                }
+            }
+            case CLIENT_PLAYBACK_RESOLVED -> {
+                ClientPlaybackResolutionRequest request = readClientPlaybackResolutionRequest(buf);
+                if (request.resolution() != null) {
+                    VideoArea area = getArea(player, request.areaName());
+                    VideoScreen screen = area == null ? null : area.getScreen(request.screenName());
+                    if (screen != null) {
+                        screen.acceptClientPlaybackResolution(player.getUuid(), request.generation(),
+                                request.reporterToken(), request.resolution(), request.durationMs());
+                    }
                 }
             }
             case REQUEST -> {
@@ -106,7 +120,11 @@ public class ServerPacketHandler {
                     return;
                 }
                 if (!requirePermission(player, requestId, VideoPermissionAction.PLAY, VideoPermissionContext.screen(screen))) return;
-                String url = ByteBufUtils.readString(buf, VideoScreen.MAX_PLAY_URL_LENGTH);
+                String url = VideoUrlNormalizer.normalizeSubmittedUrl(ByteBufUtils.readString(buf, VideoScreen.MAX_PLAY_URL_LENGTH));
+                if (!VideoScreen.validPlayUrl(url)) {
+                    requestError(player, requestId, VpTranslation.of("error.videoplayer.play_url_invalid_length", "Video URL is invalid"));
+                    return;
+                }
                 OrderedPlayAdmissions.Reservation reservation = screen.reservePlayAdmission(result -> {
                     if (result.success()) {
                         requestOk(player, requestId);
@@ -210,8 +228,9 @@ public class ServerPacketHandler {
                 VideoArea area = VideoArea.from(p1, p2, name, dim);
                 area.initServer();
                 map.put(area.name, area);
-                message(player, VpTranslation.of("message.videoplayer.area_created", "Created video area %s in world %s", area.name, player.getEntityWorld().getRegistryKey().getValue()));
-                requestOk(player, requestId);
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.area_created", "Created video area %s in world %s", area.name, player.getEntityWorld().getRegistryKey().getValue());
+                message(player, confirmation);
+                requestOk(player, requestId, confirmation);
                 sendAreaPermissions(player, area);
             }
             case REMOVE_AREA -> {
@@ -233,8 +252,9 @@ public class ServerPacketHandler {
                 }
                 removed.remove();
                 sendToPlayers(receivers, data);
-                message(player, VpTranslation.of("message.videoplayer.area_removed", "Removed video area %s from world %s", area.name, player.getEntityWorld().getRegistryKey().getValue()));
-                requestOk(player, requestId);
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.area_removed", "Removed video area %s from world %s", area.name, player.getEntityWorld().getRegistryKey().getValue());
+                message(player, confirmation);
+                requestOk(player, requestId, confirmation);
             }
             case CREATE_SCREEN -> {
                 int requestId = buf.readInt();
@@ -257,8 +277,9 @@ public class ServerPacketHandler {
                     receivers = players(player.getEntityWorld().getServer().getPlayerManager(), area.playerSnapshot());
                 }
                 sendToPlayers(receivers, data);
-                message(player, VpTranslation.of("message.videoplayer.screen_created", "Created screen %s in video area %s", screen.name, area.name));
-                requestOk(player, requestId);
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.screen_created", "Created screen %s in video area %s", screen.name, area.name);
+                message(player, confirmation);
+                requestOk(player, requestId, confirmation);
                 refreshPermissions(area);
             }
             case REMOVE_SCREEN -> {
@@ -287,8 +308,9 @@ public class ServerPacketHandler {
                 }
                 sendToPlayers(receivers, data);
                 if (screen != null) {
-                    message(player, VpTranslation.of("message.videoplayer.screen_removed", "Removed screen %s from video area %s", screen.name, area.name));
-                    requestOk(player, requestId);
+                    VpTranslation confirmation = VpTranslation.of("message.videoplayer.screen_removed", "Removed screen %s from video area %s", screen.name, area.name);
+                    message(player, confirmation);
+                    requestOk(player, requestId, confirmation);
                     refreshPermissions(area);
                 }
             }
@@ -345,8 +367,20 @@ public class ServerPacketHandler {
                 if (area == null) return;
                 VideoScreen screen = requireScreen(player, requestId, area, VideoPackets.readName(buf));
                 if (screen == null) return;
+                IdlePlayMutation mutation = VideoPackets.readIdlePlayMutation(buf);
                 if (!requirePermission(player, requestId, VideoPermissionAction.SET_IDLE_PLAY, VideoPermissionContext.screen(screen))) return;
-                VideoPackets.readIdlePlayConfig(buf, screen);
+                if (mutation.action() == IdlePlayAction.ADD) {
+                    mutation = IdlePlayMutation.add(VideoUrlNormalizer.normalizeSubmittedUrl(mutation.url()), mutation.priority());
+                    if (!VideoScreen.validIdlePlayUrl(mutation.url())) {
+                        requestError(player, requestId, VpTranslation.of("error.videoplayer.idle_play_url_invalid", "IdlePlay URL is invalid"));
+                        return;
+                    }
+                }
+                if (!screen.applyIdlePlayMutation(mutation, player.getUuid(), player.getName().getString())) {
+                    requestError(player, requestId, VpTranslation.of("error.videoplayer.idle_play_mutation_failed", "Unable to update IdlePlay entry"));
+                    return;
+                }
+                DataHolder.queueWorldSave(area.dim);
                 screen.idlePlayConfigChanged();
                 if (area.hasPlayer()) {
                     sendToPlayers(players(player.getEntityWorld().getServer().getPlayerManager(), area.playerSnapshot()), VideoPackets.idlePlay(screen));
@@ -385,6 +419,16 @@ public class ServerPacketHandler {
                 VideoScreen screen = requireScreen(player, requestId, area, VideoPackets.readName(buf));
                 if (screen == null) return;
                 if (!requirePermission(player, requestId, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
+                requestOk(player, requestId);
+            }
+            case DIAGNOSTICS_REQUEST -> {
+                int requestId = buf.readInt();
+                VideoArea area = requireArea(player, requestId, VideoPackets.readName(buf));
+                if (area == null) return;
+                VideoScreen screen = requireScreen(player, requestId, area, VideoPackets.readName(buf));
+                if (screen == null) return;
+                if (!requirePermission(player, requestId, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
+                sendTo(player, VideoPackets.diagnostics(screen, screen.diagnostics("SERVER")));
                 requestOk(player, requestId);
             }
             case SET_SCREEN_METADATA -> {
@@ -521,8 +565,9 @@ public class ServerPacketHandler {
                 if (area.hasPlayer()) {
                     sendToPlayers(players(player.getEntityWorld().getServer().getPlayerManager(), area.playerSnapshot()), VideoPackets.updateScreen(screen, screen.vertices, screen.source));
                 }
-                message(player, VpTranslation.of("message.videoplayer.screen_updated", "Updated screen %s", screen.name));
-                requestOk(player, requestId);
+                VpTranslation confirmation = VpTranslation.of("message.videoplayer.screen_updated", "Updated screen %s", screen.name);
+                message(player, confirmation);
+                requestOk(player, requestId, confirmation);
             }
             default -> player.networkHandler.disconnect(Text.of("Unknown packet type: " + type));
         }
@@ -542,6 +587,10 @@ public class ServerPacketHandler {
 
     private static void requestOk(ServerPlayerEntity player, int requestId) {
         sendTo(player, VideoPackets.requestResult(requestId, RequestResultStatus.OK, VpTranslation.EMPTY));
+    }
+
+    private static void requestOk(ServerPlayerEntity player, int requestId, VpTranslation message) {
+        sendTo(player, VideoPackets.requestResult(requestId, RequestResultStatus.OK, message));
     }
 
     private static void requestError(ServerPlayerEntity player, int requestId, VpTranslation message) {
@@ -710,7 +759,8 @@ public class ServerPacketHandler {
     private static boolean isUserMetadataOption(String key) {
         return switch (key) {
             case "mute", "interactable", "autoSync", ScreenMetadata.KEY_DANMAKU_ENABLED,
-                    ScreenMetadata.KEY_DEFAULT_VOLUME, ScreenMetadata.KEY_BILIBILI_QUALITY,
+                    ScreenMetadata.KEY_SHOW_IDLE_IMAGE, ScreenMetadata.KEY_DEFAULT_VOLUME,
+                    ScreenMetadata.KEY_BILIBILI_QUALITY,
                     ScreenMetadata.KEY_YOUTUBE_QUALITY -> true;
             default -> false;
         };
@@ -722,7 +772,8 @@ public class ServerPacketHandler {
 
     private static void validateBuiltInMetadata(VideoScreen screen, String key, MetaValue value) {
         switch (key) {
-            case "mute", "interactable", "autoSync", "debug", ScreenMetadata.KEY_DANMAKU_ENABLED -> requireType(key, value, MetaType.BOOL);
+            case "mute", "interactable", "autoSync", "debug", ScreenMetadata.KEY_DANMAKU_ENABLED,
+                    ScreenMetadata.KEY_SHOW_IDLE_IMAGE -> requireType(key, value, MetaType.BOOL);
             case ScreenMetadata.KEY_DEFAULT_VOLUME -> {
                 requireType(key, value, MetaType.INT);
                 int volume = value.intValue(-1);
@@ -847,6 +898,17 @@ public class ServerPacketHandler {
         return true;
     }
 
+    static ClientPlaybackResolutionRequest readClientPlaybackResolutionRequest(ByteBuf buf) {
+        return new ClientPlaybackResolutionRequest(
+                VideoPackets.readName(buf),
+                VideoPackets.readName(buf),
+                buf.readLong(),
+                buf.readLong(),
+                ClientPlaybackResolution.fromId(buf.readUnsignedByte()),
+                buf.readLong()
+        );
+    }
+
     private static boolean inside(VideoArea area, Vector3f point) {
         return point.x >= area.min.x - EPSILON && point.y >= area.min.y - EPSILON && point.z >= area.min.z - EPSILON
                 && point.x <= area.max.x + EPSILON && point.y <= area.max.y + EPSILON && point.z <= area.max.z + EPSILON;
@@ -893,5 +955,9 @@ public class ServerPacketHandler {
         for (ServerPlayerEntity target : players) {
             sendTo(target, bytes);
         }
+    }
+
+    record ClientPlaybackResolutionRequest(String areaName, String screenName, long generation, long reporterToken,
+                                           ClientPlaybackResolution resolution, long durationMs) {
     }
 }

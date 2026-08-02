@@ -47,17 +47,16 @@ public final class SelectionPreviewRenderer {
 
         Vec3d camera = MinecraftClient.getInstance().gameRenderer.getCamera().getCameraPos();
         matrices.push();
-        matrices.translate(-camera.x, -camera.y, -camera.z);
 
-        drawScreenPreviewTexture(editor, matrices, consumers);
+        drawScreenPreviewTexture(editor, matrices, consumers, camera);
 
         VertexConsumer consumer = consumers.getBuffer(RenderLayers.lines());
-        drawExistingAreas(matrices, consumer);
-        drawExistingScreens(editor, matrices, consumer);
-        drawAreaPreview(editor, matrices, consumer);
-        drawScreenPreview(editor, matrices, consumer);
-        drawSelectionPoints(editor, matrices, consumer);
-        drawGizmo(editor, matrices, consumer);
+        drawExistingAreas(matrices, consumer, camera);
+        drawExistingScreens(editor, matrices, consumer, camera);
+        drawAreaPreview(editor, matrices, consumer, camera);
+        drawScreenPreview(editor, matrices, consumer, camera);
+        drawSelectionPoints(editor, matrices, consumer, camera);
+        drawGizmo(editor, matrices, consumer, camera);
 
         matrices.pop();
     }
@@ -83,32 +82,33 @@ public final class SelectionPreviewRenderer {
         }
     }
 
-    private static void drawExistingAreas(MatrixStack matrices, VertexConsumer consumer) {
+    private static void drawExistingAreas(MatrixStack matrices, VertexConsumer consumer, Vec3d camera) {
         for (ClientVideoArea area : VideoPlayerClient.areas.values()) {
             drawBox(
                     matrices,
                     consumer,
                     area.min.x, area.min.y, area.min.z,
                     area.max.x, area.max.y, area.max.z,
-                    0xB32ED180
+                    0xB32ED180,
+                    camera
             );
         }
     }
 
-    private static void drawExistingScreens(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer) {
+    private static void drawExistingScreens(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer, Vec3d camera) {
         for (ClientVideoArea area : VideoPlayerClient.areas.values()) {
             for (VideoScreen screen : area.screens) {
                 if (screen.vertices != null && screen.vertices.size() >= ScreenGeometry.MIN_VERTICES) {
-                    drawPolygon(matrices, consumer, screen.vertices, SCREEN_COLOR);
+                    drawPolygon(matrices, consumer, screen.vertices, SCREEN_COLOR, camera);
                 }
                 if (editor.selectingSpherePreset() && screen.spherePreset) {
-                    drawSphere(matrices, consumer, screen.sphereCenter, screen.sphereRadius, SCREEN_COLOR, screen.stereo3d);
+                    drawSphere(matrices, consumer, screen.sphereCenter, screen.sphereRadius, SCREEN_COLOR, screen.stereo3d, camera);
                 }
             }
         }
     }
 
-    private static void drawAreaPreview(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer) {
+    private static void drawAreaPreview(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer, Vec3d camera) {
         Box box = editor.areaPreview();
         if (box == null) return;
         drawBox(
@@ -116,30 +116,31 @@ public final class SelectionPreviewRenderer {
                 consumer,
                 box.minX, box.minY, box.minZ,
                 box.maxX, box.maxY, box.maxZ,
-                PREVIEW_COLOR
+                PREVIEW_COLOR,
+                camera
         );
     }
 
-    private static void drawScreenPreviewTexture(VideoCreationEditor editor, MatrixStack matrices, VertexConsumerProvider consumers) {
+    private static void drawScreenPreviewTexture(VideoCreationEditor editor, MatrixStack matrices, VertexConsumerProvider consumers, Vec3d camera) {
         if (editor.selectingSpherePreset()) return;
         List<Vector3f> vertices = editor.previewVertices();
         if (vertices != null) {
-            drawPlaceholderPreview(matrices, consumers, vertices);
+            drawPlaceholderPreview(matrices, consumers, vertices, camera);
         }
     }
 
-    private static void drawScreenPreview(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer) {
+    private static void drawScreenPreview(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer, Vec3d camera) {
         Vector3f center = editor.spherePreviewCenter();
         float radius = editor.spherePreviewRadius();
         if (center != null && radius > ScreenGeometry.EPSILON) {
-            drawSphere(matrices, consumer, center, radius, PREVIEW_COLOR, editor.draft().stereo3d);
+            drawSphere(matrices, consumer, center, radius, PREVIEW_COLOR, editor.draft().stereo3d, camera);
         }
         if (editor.selectingSpherePreset()) {
             return;
         }
         List<Vector3f> vertices = editor.previewVertices();
         if (vertices != null) {
-            drawPolygon(matrices, consumer, vertices, PREVIEW_COLOR);
+            drawPolygon(matrices, consumer, vertices, PREVIEW_COLOR, camera);
             return;
         }
         if (editor.draft().target != VideoCreationEditor.Target.SCREEN) return;
@@ -147,26 +148,26 @@ public final class SelectionPreviewRenderer {
 
         Matrix4f matrix = matrices.peek().getPositionMatrix();
         for (int i = 1; i < editor.points().size(); i++) {
-            drawLine(matrix, consumer, editor.points().get(i - 1).point, editor.points().get(i).point, PREVIEW_COLOR);
+            drawWorldLine(matrix, consumer, editor.points().get(i - 1).point, editor.points().get(i).point, PREVIEW_COLOR, camera);
         }
         VideoCreationEditor.SelectionPoint current = editor.showCurrentTargetPoint() ? editor.currentTargetPoint() : null;
         if (current != null) {
-            drawLine(matrix, consumer, editor.points().getLast().point, current.point, PREVIEW_COLOR);
+            drawWorldLine(matrix, consumer, editor.points().getLast().point, current.point, PREVIEW_COLOR, camera);
         }
     }
 
-    private static void drawSelectionPoints(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer) {
+    private static void drawSelectionPoints(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer, Vec3d camera) {
         for (int i = 0; i < editor.points().size(); i++) {
             VideoCreationEditor.SelectionPoint point = editor.points().get(i);
-            drawPoint(matrices, consumer, point.point, i == editor.selectedPointIndex() ? SELECTED_POINT_COLOR : POINT_COLOR);
+            drawPoint(matrices, consumer, point.point, i == editor.selectedPointIndex() ? SELECTED_POINT_COLOR : POINT_COLOR, camera);
         }
         if (editor.selecting() && editor.showCurrentTargetPoint()) {
             VideoCreationEditor.SelectionPoint current = editor.currentTargetPoint();
-            if (current != null) drawPoint(matrices, consumer, current.point, PREVIEW_COLOR);
+            if (current != null) drawPoint(matrices, consumer, current.point, PREVIEW_COLOR, camera);
         }
     }
 
-    private static void drawGizmo(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer) {
+    private static void drawGizmo(VideoCreationEditor editor, MatrixStack matrices, VertexConsumer consumer, Vec3d camera) {
         if (!editor.screenGizmoVisible()) return;
         VideoCreationEditor.SelectionPoint selected = editor.selectedPoint();
         if (selected == null) return;
@@ -174,7 +175,7 @@ public final class SelectionPreviewRenderer {
         Matrix4f matrix = matrices.peek().getPositionMatrix();
         for (VideoCreationEditor.GizmoAxis axis : VideoCreationEditor.GizmoAxis.values()) {
             int color = axisColor(editor, axis);
-            drawAxis(matrix, consumer, selected.point, axis, editor.gizmoStart(), editor.gizmoLength(), color);
+            drawAxis(matrix, consumer, selected.point, axis, editor.gizmoStart(), editor.gizmoLength(), color, camera);
         }
     }
 
@@ -188,21 +189,21 @@ public final class SelectionPreviewRenderer {
     }
 
     private static void drawAxis(Matrix4f matrix, VertexConsumer consumer, Vector3f origin,
-                                 VideoCreationEditor.GizmoAxis axis, float startDistance, float length, int color) {
+                                 VideoCreationEditor.GizmoAxis axis, float startDistance, float length, int color, Vec3d camera) {
         Vector3f axisVector = axis.vector();
         Vector3f start = new Vector3f(origin).add(new Vector3f(axisVector).mul(startDistance));
         Vector3f end = new Vector3f(origin).add(new Vector3f(axisVector).mul(length));
-        drawLine(matrix, consumer, start, end, color);
+        drawWorldLine(matrix, consumer, start, end, color, camera);
 
         float headLength = 0.12f;
         float headWidth = 0.045f;
         Vector3f base = new Vector3f(end).sub(new Vector3f(axisVector).mul(headLength));
         Vector3f sideA = arrowSide(axis, true).mul(headWidth);
         Vector3f sideB = arrowSide(axis, false).mul(headWidth);
-        drawLine(matrix, consumer, end, new Vector3f(base).add(sideA), color);
-        drawLine(matrix, consumer, end, new Vector3f(base).sub(sideA), color);
-        drawLine(matrix, consumer, end, new Vector3f(base).add(sideB), color);
-        drawLine(matrix, consumer, end, new Vector3f(base).sub(sideB), color);
+        drawWorldLine(matrix, consumer, end, new Vector3f(base).add(sideA), color, camera);
+        drawWorldLine(matrix, consumer, end, new Vector3f(base).sub(sideA), color, camera);
+        drawWorldLine(matrix, consumer, end, new Vector3f(base).add(sideB), color, camera);
+        drawWorldLine(matrix, consumer, end, new Vector3f(base).sub(sideB), color, camera);
     }
 
     private static Vector3f arrowSide(VideoCreationEditor.GizmoAxis axis, boolean first) {
@@ -213,30 +214,37 @@ public final class SelectionPreviewRenderer {
         };
     }
 
-    private static void drawPoint(MatrixStack matrices, VertexConsumer consumer, Vector3f point, int color) {
+    private static void drawPoint(MatrixStack matrices, VertexConsumer consumer, Vector3f point, int color, Vec3d camera) {
         float size = 0.045f;
         drawBox(
                 matrices,
                 consumer,
                 point.x - size, point.y - size, point.z - size,
                 point.x + size, point.y + size, point.z + size,
-                color
+                color,
+                camera
         );
     }
 
     private static void drawBox(MatrixStack matrices, VertexConsumer consumer,
                                 double minX, double minY, double minZ,
                                 double maxX, double maxY, double maxZ,
-                                int color) {
+                                int color, Vec3d camera) {
         Matrix4f matrix = matrices.peek().getPositionMatrix();
-        Vector3f p000 = new Vector3f((float) minX, (float) minY, (float) minZ);
-        Vector3f p001 = new Vector3f((float) minX, (float) minY, (float) maxZ);
-        Vector3f p010 = new Vector3f((float) minX, (float) maxY, (float) minZ);
-        Vector3f p011 = new Vector3f((float) minX, (float) maxY, (float) maxZ);
-        Vector3f p100 = new Vector3f((float) maxX, (float) minY, (float) minZ);
-        Vector3f p101 = new Vector3f((float) maxX, (float) minY, (float) maxZ);
-        Vector3f p110 = new Vector3f((float) maxX, (float) maxY, (float) minZ);
-        Vector3f p111 = new Vector3f((float) maxX, (float) maxY, (float) maxZ);
+        float relativeMinX = (float) (minX - camera.x);
+        float relativeMinY = (float) (minY - camera.y);
+        float relativeMinZ = (float) (minZ - camera.z);
+        float relativeMaxX = (float) (maxX - camera.x);
+        float relativeMaxY = (float) (maxY - camera.y);
+        float relativeMaxZ = (float) (maxZ - camera.z);
+        Vector3f p000 = new Vector3f(relativeMinX, relativeMinY, relativeMinZ);
+        Vector3f p001 = new Vector3f(relativeMinX, relativeMinY, relativeMaxZ);
+        Vector3f p010 = new Vector3f(relativeMinX, relativeMaxY, relativeMinZ);
+        Vector3f p011 = new Vector3f(relativeMinX, relativeMaxY, relativeMaxZ);
+        Vector3f p100 = new Vector3f(relativeMaxX, relativeMinY, relativeMinZ);
+        Vector3f p101 = new Vector3f(relativeMaxX, relativeMinY, relativeMaxZ);
+        Vector3f p110 = new Vector3f(relativeMaxX, relativeMaxY, relativeMinZ);
+        Vector3f p111 = new Vector3f(relativeMaxX, relativeMaxY, relativeMaxZ);
         drawLine(matrix, consumer, p000, p001, color);
         drawLine(matrix, consumer, p001, p101, color);
         drawLine(matrix, consumer, p101, p100, color);
@@ -251,15 +259,19 @@ public final class SelectionPreviewRenderer {
         drawLine(matrix, consumer, p100, p110, color);
     }
 
-    private static void drawPolygon(MatrixStack matrices, VertexConsumer consumer, List<Vector3f> vertices, int color) {
+    private static void drawPolygon(MatrixStack matrices, VertexConsumer consumer, List<Vector3f> vertices, int color, Vec3d camera) {
         if (vertices == null || vertices.size() < 2) return;
         Matrix4f matrix = matrices.peek().getPositionMatrix();
         for (int i = 0; i < vertices.size(); i++) {
-            drawLine(matrix, consumer, vertices.get(i), vertices.get((i + 1) % vertices.size()), color);
+            drawWorldLine(matrix, consumer, vertices.get(i), vertices.get((i + 1) % vertices.size()), color, camera);
         }
         try {
             ScreenGeometry geometry = ScreenGeometry.create(vertices);
-            drawTriangleEdges(matrix, consumer, geometry.vertices(), geometry.triangles(), color);
+            Vector3f relativeOrigin = geometry.relativeOrigin(camera.x, camera.y, camera.z);
+            matrices.push();
+            matrices.translate(relativeOrigin.x, relativeOrigin.y, relativeOrigin.z);
+            drawTriangleEdges(matrices.peek().getPositionMatrix(), consumer, geometry.localVertices(), geometry.triangles(), color);
+            matrices.pop();
         } catch (IllegalArgumentException ignored) {
         }
     }
@@ -293,10 +305,26 @@ public final class SelectionPreviewRenderer {
         consumer.vertex(matrix, to.x, to.y, to.z).color(color).normal(normal.x, normal.y, normal.z).lineWidth(1.0f);
     }
 
-    private static void drawSphere(MatrixStack matrices, VertexConsumer consumer, Vector3f center, float radius, int color, boolean hemisphere) {
+    private static void drawWorldLine(Matrix4f matrix, VertexConsumer consumer, Vector3f from, Vector3f to, int color, Vec3d camera) {
+        drawLine(matrix, consumer, relative(from, camera), relative(to, camera), color);
+    }
+
+    private static Vector3f relative(Vector3f point, Vec3d camera) {
+        return new Vector3f(
+                (float) (point.x - camera.x),
+                (float) (point.y - camera.y),
+                (float) (point.z - camera.z)
+        );
+    }
+
+    private static void drawSphere(MatrixStack matrices, VertexConsumer consumer, Vector3f center, float radius, int color, boolean hemisphere, Vec3d camera) {
         if (center == null || !Float.isFinite(radius) || radius <= 0) return;
+        Vector3f relativeCenter = relative(center, camera);
+        matrices.push();
+        matrices.translate(relativeCenter.x, relativeCenter.y, relativeCenter.z);
         if (hemisphere) {
-            drawHemisphere(matrices, consumer, center, radius, color);
+            drawHemisphere(matrices, consumer, radius, color);
+            matrices.pop();
             return;
         }
         Matrix4f matrix = matrices.peek().getPositionMatrix();
@@ -305,45 +333,46 @@ public final class SelectionPreviewRenderer {
             float a = (float) (Math.PI * 2 * i / segments);
             float b = (float) (Math.PI * 2 * (i + 1) / segments);
             drawLine(matrix, consumer,
-                    new Vector3f(center.x + (float) Math.cos(a) * radius, center.y, center.z + (float) Math.sin(a) * radius),
-                    new Vector3f(center.x + (float) Math.cos(b) * radius, center.y, center.z + (float) Math.sin(b) * radius),
+                    new Vector3f((float) Math.cos(a) * radius, 0, (float) Math.sin(a) * radius),
+                    new Vector3f((float) Math.cos(b) * radius, 0, (float) Math.sin(b) * radius),
                     color);
             drawLine(matrix, consumer,
-                    new Vector3f(center.x + (float) Math.cos(a) * radius, center.y + (float) Math.sin(a) * radius, center.z),
-                    new Vector3f(center.x + (float) Math.cos(b) * radius, center.y + (float) Math.sin(b) * radius, center.z),
+                    new Vector3f((float) Math.cos(a) * radius, (float) Math.sin(a) * radius, 0),
+                    new Vector3f((float) Math.cos(b) * radius, (float) Math.sin(b) * radius, 0),
                     color);
             drawLine(matrix, consumer,
-                    new Vector3f(center.x, center.y + (float) Math.cos(a) * radius, center.z + (float) Math.sin(a) * radius),
-                    new Vector3f(center.x, center.y + (float) Math.cos(b) * radius, center.z + (float) Math.sin(b) * radius),
+                    new Vector3f(0, (float) Math.cos(a) * radius, (float) Math.sin(a) * radius),
+                    new Vector3f(0, (float) Math.cos(b) * radius, (float) Math.sin(b) * radius),
                     color);
         }
+        matrices.pop();
     }
 
-    private static void drawHemisphere(MatrixStack matrices, VertexConsumer consumer, Vector3f center, float radius, int color) {
+    private static void drawHemisphere(MatrixStack matrices, VertexConsumer consumer, float radius, int color) {
         Matrix4f matrix = matrices.peek().getPositionMatrix();
         int segments = 48;
         for (int i = 0; i < segments; i++) {
             float a = (float) (Math.PI * i / segments);
             float b = (float) (Math.PI * (i + 1) / segments);
             drawLine(matrix, consumer,
-                    new Vector3f(center.x + (float) Math.cos(a) * radius, center.y, center.z + (float) Math.sin(a) * radius),
-                    new Vector3f(center.x + (float) Math.cos(b) * radius, center.y, center.z + (float) Math.sin(b) * radius),
+                    new Vector3f((float) Math.cos(a) * radius, 0, (float) Math.sin(a) * radius),
+                    new Vector3f((float) Math.cos(b) * radius, 0, (float) Math.sin(b) * radius),
                     color);
             drawLine(matrix, consumer,
-                    new Vector3f(center.x, center.y + (float) Math.cos(a) * radius, center.z + (float) Math.sin(a) * radius),
-                    new Vector3f(center.x, center.y + (float) Math.cos(b) * radius, center.z + (float) Math.sin(b) * radius),
+                    new Vector3f(0, (float) Math.cos(a) * radius, (float) Math.sin(a) * radius),
+                    new Vector3f(0, (float) Math.cos(b) * radius, (float) Math.sin(b) * radius),
                     color);
 
             float rimA = (float) (Math.PI * 2 * i / segments);
             float rimB = (float) (Math.PI * 2 * (i + 1) / segments);
             drawLine(matrix, consumer,
-                    new Vector3f(center.x + (float) Math.cos(rimA) * radius, center.y + (float) Math.sin(rimA) * radius, center.z),
-                    new Vector3f(center.x + (float) Math.cos(rimB) * radius, center.y + (float) Math.sin(rimB) * radius, center.z),
+                    new Vector3f((float) Math.cos(rimA) * radius, (float) Math.sin(rimA) * radius, 0),
+                    new Vector3f((float) Math.cos(rimB) * radius, (float) Math.sin(rimB) * radius, 0),
                     color);
         }
     }
 
-    private static void drawPlaceholderPreview(MatrixStack matrices, VertexConsumerProvider consumers, List<Vector3f> vertices) {
+    private static void drawPlaceholderPreview(MatrixStack matrices, VertexConsumerProvider consumers, List<Vector3f> vertices, Vec3d camera) {
         if (vertices == null || vertices.size() < ScreenGeometry.MIN_VERTICES) return;
         ScreenGeometry geometry;
         try {
@@ -353,10 +382,13 @@ public final class SelectionPreviewRenderer {
         }
 
         int previewTextureId = ScreenRenderer.placeholderTextureId();
+        Vector3f relativeOrigin = geometry.relativeOrigin(camera.x, camera.y, camera.z);
+        matrices.push();
+        matrices.translate(relativeOrigin.x, relativeOrigin.y, relativeOrigin.z);
         Matrix4f matrix = matrices.peek().getPositionMatrix();
         float[] bounds = geometry.contentBounds(0, 0, 1, 1, false, 1, 1, 960, 540);
         int[] triangles = geometry.triangles();
-        List<Vector3f> geometryVertices = geometry.vertices();
+        List<Vector3f> geometryVertices = geometry.localVertices();
         Vector3f normal = geometry.normal();
         VertexConsumer backingConsumer = consumers.getBuffer(ScreenRenderer.getBackingLayer(previewTextureId));
         for (int i = 0; i < triangles.length; i += 3) {
@@ -368,6 +400,7 @@ public final class SelectionPreviewRenderer {
         for (int i = 0; i < triangles.length; i += 3) {
             drawPreviewTriangle(matrix, textureConsumer, geometry, geometryVertices, triangles, i, bounds, normal, (PREVIEW_ALPHA << 24) | 0x00FFFFFF);
         }
+        matrices.pop();
     }
 
     private static void drawPreviewTriangle(Matrix4f matrix, VertexConsumer consumer, ScreenGeometry geometry,

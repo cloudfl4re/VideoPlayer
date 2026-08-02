@@ -6,6 +6,7 @@ import com.github.squi2rel.mcng.core.NodeTypeRegistry;
 import com.github.squi2rel.mcng.core.PortTypeRegistry;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -326,8 +327,8 @@ public final class NodePaletteComponent {
 		context.drawText(
 			textRenderer,
 			state.open()
-				? GraphEditorTranslations.ui(i18nSupplier.get(), "palette.toggle_open", "Nodes [Tab]")
-				: GraphEditorTranslations.ui(i18nSupplier.get(), "palette.toggle_closed", "Open [Tab]"),
+				? GraphEditorTranslations.ui(i18nSupplier.get(), "palette.toggle_open", "Nodes [%s]", GraphInputText.key(GLFW.GLFW_KEY_TAB))
+				: GraphEditorTranslations.ui(i18nSupplier.get(), "palette.toggle_closed", "Open [%s]", GraphInputText.key(GLFW.GLFW_KEY_TAB)),
 			toggleX() + 8,
 			toggleY() + 6,
 			theme.primaryTextColor(),

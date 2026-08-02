@@ -1,6 +1,8 @@
 package com.github.squi2rel.vp;
 
 import com.github.squi2rel.vp.network.ByteBufUtils;
+import com.github.squi2rel.vp.network.ClientPlaybackResolution;
+import com.github.squi2rel.vp.network.IdlePlayMutation;
 import com.github.squi2rel.vp.network.RequestResultStatus;
 import com.github.squi2rel.vp.network.VideoPacketType;
 import com.github.squi2rel.vp.network.VideoPackets;
@@ -13,6 +15,7 @@ import com.github.squi2rel.vp.provider.LocalPlaybackInfo;
 import com.github.squi2rel.vp.provider.NamedProviderSource;
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
+import com.github.squi2rel.vp.provider.VideoUrlNormalizer;
 import com.github.squi2rel.vp.provider.YouTubeProvider;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
 import com.github.squi2rel.vp.provider.bilibili.BiliBiliVideoProvider;
@@ -20,9 +23,12 @@ import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.video.ClientVideoArea;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.IVideoPlayer;
+import com.github.squi2rel.vp.video.IdlePlayEntry;
 import com.github.squi2rel.vp.video.MetaValue;
+import com.github.squi2rel.vp.video.PlaybackDiagnostics;
 import com.github.squi2rel.vp.video.ScreenMetadata;
 import com.github.squi2rel.vp.video.VideoArea;
+import com.github.squi2rel.vp.video.VideoListeners;
 import com.github.squi2rel.vp.video.VideoScreen;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -50,8 +56,11 @@ import static com.github.squi2rel.vp.network.ByteBufUtils.writeString;
 
 public class ClientPacketHandler {
     private static final long REQUEST_TTL_MS = 60_000L;
+    private static final int MAX_PENDING_REPORTER_GRANTS = 256;
     private static int nextRequestId = 1;
     private static final Map<Integer, PendingRequest> pendingRequests = new HashMap<>();
+    private static final Map<ReporterGrantKey, PendingReporterGrant> pendingReporterGrants = new HashMap<>();
+    private static final Map<DiagnosticsKey, TimedDiagnostics> playbackDiagnostics = new HashMap<>();
 
     public static void handle(ByteBuf buf) {
         handle(buf, System.currentTimeMillis());
@@ -59,6 +68,7 @@ public class ClientPacketHandler {
 
     public static void handle(ByteBuf buf, long receivedAt) {
         cleanupPendingRequests();
+        cleanupPendingReporterGrants();
         VideoPacketType type = VideoPackets.readType(buf);
         if (type == null) {
             LOGGER.warn("Unknown packet type");
@@ -84,6 +94,7 @@ public class ClientPacketHandler {
                 String areaName = VideoPackets.readName(buf);
                 ClientVideoArea area = areas.remove(areaName);
                 ClientPermissionCache.removeArea(areaName);
+                removeDiagnosticsArea(areaName);
                 if (area != null) {
                     area.remove();
                 }
@@ -97,6 +108,7 @@ public class ClientPacketHandler {
                     area.remove(screenName);
                 }
                 ClientPermissionCache.removeScreen(areaName, screenName);
+                playbackDiagnostics.remove(new DiagnosticsKey(normalize(areaName), normalize(screenName)));
             }
             case LOAD_AREA -> handleLoadArea(buf, receivedAt);
             case UNLOAD_AREA -> {
@@ -192,6 +204,11 @@ public class ClientPacketHandler {
             case PERMISSIONS -> handlePermissions(buf);
             case RESET_CLIENT -> handleConfig(buf, true);
             case PROTOCOL_REJECT -> handleProtocolReject(buf);
+            case CLIENT_PLAYBACK_RESOLVED -> {
+            }
+            case CLIENT_PLAYBACK_REPORTER -> handleClientPlaybackReporter(buf);
+            case DIAGNOSTICS -> handleDiagnostics(buf);
+            case PLAYBACK_NOTICE -> handlePlaybackNotice(buf);
             default -> LOGGER.warn("Unknown packet type: {}", type);
         }
 
@@ -206,14 +223,47 @@ public class ClientPacketHandler {
         VpTranslation message = VideoPackets.readTranslation(buf);
         PendingRequest pending = pendingRequests.remove(requestId);
         if (pending == null) return;
-        if (status == RequestResultStatus.DENIED) {
-            ClientPermissionCache.setAllowed(pending.action(), pending.areaName(), pending.screenName(), false);
-        } else if (status == RequestResultStatus.OK) {
-            ClientPermissionCache.setAllowed(pending.action(), pending.areaName(), pending.screenName(), true);
+        if (cacheRequestPermission(pending.action())) {
+            if (status == RequestResultStatus.DENIED) {
+                ClientPermissionCache.setAllowed(pending.action(), pending.areaName(), pending.screenName(), false);
+            } else if (status == RequestResultStatus.OK) {
+                ClientPermissionCache.setAllowed(pending.action(), pending.areaName(), pending.screenName(), true);
+            }
+        }
+        if ((status == RequestResultStatus.ERROR || status == RequestResultStatus.DENIED)
+                && message != null && !message.isEmpty()) {
+            ClientPlayerEntity player = MinecraftClient.getInstance().player;
+            if (player != null) player.sendMessage(VpTexts.text(message).copy().formatted(Formatting.RED), false);
         }
         if (pending.callback() != null) {
             pending.callback().accept(new RequestResult(requestId, status, message));
         }
+    }
+
+    private static void handleDiagnostics(ByteBuf buf) {
+        String areaName = VideoPackets.readName(buf);
+        String screenName = VideoPackets.readName(buf);
+        PlaybackDiagnostics diagnostics = VideoPackets.readDiagnostics(buf);
+        playbackDiagnostics.put(new DiagnosticsKey(normalize(areaName), normalize(screenName)),
+                new TimedDiagnostics(diagnostics, System.currentTimeMillis()));
+    }
+
+    private static void handlePlaybackNotice(ByteBuf buf) {
+        VideoPackets.readName(buf);
+        VideoPackets.readName(buf);
+        boolean error = buf.readBoolean();
+        VpTranslation message = VideoPackets.readTranslation(buf);
+        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        if (player != null && message != null && !message.isEmpty()) {
+            player.sendMessage(VpTexts.text(message).copy().formatted(error ? Formatting.RED : Formatting.YELLOW), false);
+        }
+    }
+
+    private static boolean cacheRequestPermission(VideoPermissionAction action) {
+        return switch (action) {
+            case CREATE_AREA, CREATE_SCREEN, UPDATE_SCREEN -> false;
+            default -> true;
+        };
     }
 
     private static void handlePermissions(ByteBuf buf) {
@@ -230,7 +280,9 @@ public class ClientPacketHandler {
             VideoPlayerClient.rejectProtocol(VideoProtocol.displayVersion(remoteToken));
             return;
         }
+        String remoteVersion = VideoProtocol.displayVersion(remoteToken);
         VideoPlayerClient.acceptProtocol();
+        VideoPlayerClient.handshakeResponse(remoteVersion);
         VideoPlayerClient.remoteControlName = ByteBufUtils.readString(buf, 256);
         VideoPlayerClient.remoteControlId = buf.readFloat();
         VideoPlayerClient.remoteControlRange = buf.readFloat();
@@ -241,18 +293,40 @@ public class ClientPacketHandler {
                 VideoPlayerClient.rejectProtocol("invalid handshake reset");
                 return;
             }
+            VideoPlayerClient.serverHandshakeReset();
             VideoPlayerClient.setHandshakeNonce(nonce);
             handshakeAck(nonce);
+            config(VideoPlayerMain.version);
             VideoPlayerClient.connected = false;
         } else {
             VideoPlayerClient.setHandshakeNonce(0L);
             VideoPlayerClient.connected = true;
+            VideoPlayerClient.connectionEstablished(remoteVersion);
         }
     }
 
     private static void handleProtocolReject(ByteBuf buf) {
         String remoteToken = ByteBufUtils.readString(buf, 16);
         VideoPlayerClient.rejectProtocol(VideoProtocol.displayVersion(remoteToken));
+    }
+
+    private static void handleClientPlaybackReporter(ByteBuf buf) {
+        String areaName = VideoPackets.readName(buf);
+        String screenName = VideoPackets.readName(buf);
+        long generation = buf.readLong();
+        long reporterToken = buf.readLong();
+        ClientVideoArea area = areas.get(areaName);
+        ClientVideoScreen screen = area == null ? null : area.getScreen(screenName);
+        if (screen == null) {
+            storePendingReporterGrant(areaName, screenName, generation, reporterToken);
+            return;
+        }
+        screen.setServerPlaybackReporter(generation, reporterToken);
+        VideoInfo requested = screen.serverPlaybackRequestInfo(generation);
+        if (requested != null && screen.hasServerPlaybackResolution(generation)) {
+            reportClientPlaybackResolution(screen, requested, generation,
+                    screen.serverPlaybackResolutionInfo(generation));
+        }
     }
 
     private static void handleRequest(ByteBuf buf, long receivedAt) {
@@ -269,12 +343,16 @@ public class ClientPacketHandler {
         if (player == null) return;
         int playbackToken = screen.beginServerPlaybackRequest(generation);
         if (playbackToken < 0) return;
+        applyPendingReporterGrant(areaName, screenName, generation, screen);
+        screen.setServerPlaybackRequestInfo(generation, info);
         CompletableFuture<VideoInfo> video = resolveForLocalPlayback(screen, info);
         screen.trackPlaybackFuture(playbackToken, video);
         video.whenComplete((v, error) -> {
             if (error != null || v == null) {
                 MinecraftClient.getInstance().execute(() -> {
                     if (screen.canAcceptPlayback(playbackToken)) {
+                        screen.setServerPlaybackResolution(generation, null);
+                        reportClientPlaybackResolution(screen, info, generation, null);
                         screen.failPlaybackRequest(playbackToken);
                         player.sendMessage(VpTexts.tr("message.videoplayer.source_unresolved", "Unable to resolve video source"), false);
                     }
@@ -283,14 +361,39 @@ public class ClientPacketHandler {
             }
             MinecraftClient.getInstance().execute(() -> {
                 if (!screen.canAcceptPlayback(playbackToken)) return;
-                if (info.seekable() && progress >= 0) {
+                if (v.seekable() && progress >= 0) {
                     long transport = Math.max(0L, receivedAt - serverSentAt);
                     transport = Math.min(transport, 30_000L);
                     screen.setToSeek(progress + transport + Math.max(0L, System.currentTimeMillis() - receivedAt));
                 }
+                screen.setServerPlaybackResolution(generation, v);
                 screen.play(v, idle);
+                reportClientPlaybackResolution(screen, info, generation, v);
             });
         });
+    }
+
+    private static void reportClientPlaybackResolution(ClientVideoScreen screen, VideoInfo requested,
+                                                        long generation, VideoInfo resolved) {
+        if (screen == null || screen.serverPlaybackGeneration() != generation
+                || !VideoListeners.awaitsClientPlaybackResolution(requested)) {
+            return;
+        }
+        long reporterToken = screen.serverPlaybackReporterToken(generation);
+        if (reporterToken == 0L) return;
+        ClientPlaybackResolution resolution;
+        long durationMs = 0L;
+        if (resolved == null) {
+            resolution = ClientPlaybackResolution.FAILED;
+        } else if (!resolved.seekable()) {
+            resolution = ClientPlaybackResolution.LIVE;
+        } else if (resolved.durationMs() > 0) {
+            resolution = ClientPlaybackResolution.FINITE;
+            durationMs = resolved.durationMs();
+        } else {
+            resolution = ClientPlaybackResolution.FAILED;
+        }
+        send(VideoPackets.clientPlaybackResolved(screen, generation, reporterToken, resolution, durationMs));
     }
 
     static CompletableFuture<VideoInfo> resolveForLocalPlayback(ClientVideoScreen screen, VideoInfo info) {
@@ -300,7 +403,11 @@ public class ClientPacketHandler {
         if (video == null) return CompletableFuture.completedFuture(LocalPlaybackInfo.select(info, null));
         CompletableFuture<VideoInfo> selected = new CompletableFuture<>();
         video.whenComplete((resolved, error) -> {
-            if (error != null) LOGGER.warn("Failed to resolve local playback source {}", VideoProviders.redactedSource(info.rawPath()), error);
+            if (error != null
+                    && !(error instanceof java.util.concurrent.CancellationException)
+                    && !(error.getCause() instanceof java.util.concurrent.CancellationException)) {
+                LOGGER.warn("Failed to resolve local playback source {}", VideoProviders.redactedSource(info.rawPath()), error);
+            }
             if (!selected.isCancelled()) selected.complete(LocalPlaybackInfo.select(info, resolved));
         });
         selected.whenComplete((resolved, error) -> {
@@ -381,7 +488,8 @@ public class ClientPacketHandler {
     }
 
     private static void handleLoadArea(ByteBuf buf, long receivedAt) {
-        ClientVideoArea area = areaOrNull(VideoPackets.readName(buf));
+        String areaName = VideoPackets.readName(buf);
+        ClientVideoArea area = areaOrNull(areaName);
         while (buf.readableBytes() != 0) {
             String screenName = VideoPackets.readName(buf);
             long generation = buf.readLong();
@@ -393,20 +501,31 @@ public class ClientPacketHandler {
             if (screen == null) continue;
             int playbackToken = screen.beginServerPlaybackRequest(generation);
             if (playbackToken < 0) continue;
+            applyPendingReporterGrant(areaName, screenName, generation, screen);
+            screen.setServerPlaybackRequestInfo(generation, info);
             CompletableFuture<VideoInfo> video = resolveForLocalPlayback(screen, info);
             screen.trackPlaybackFuture(playbackToken, video);
             video.whenComplete((resolved, error) -> {
                 if (error != null || resolved == null) {
-                    MinecraftClient.getInstance().execute(() -> screen.failPlaybackRequest(playbackToken));
+                    MinecraftClient.getInstance().execute(() -> {
+                        if (!screen.isPlaybackRequestCurrent(playbackToken)) return;
+                        screen.setServerPlaybackResolution(generation, null);
+                        reportClientPlaybackResolution(screen, info, generation, null);
+                        screen.failPlaybackRequest(playbackToken);
+                    });
                     return;
                 }
                 MinecraftClient.getInstance().execute(() -> {
                     if (!screen.isPlaybackRequestCurrent(playbackToken)) return;
-                    if (info.seekable() && seek >= 0) {
+                    if (resolved.seekable() && seek >= 0) {
                         screen.setToSeek(seek + Math.max(0L, System.currentTimeMillis() - receivedAt));
                     }
+                    screen.setServerPlaybackResolution(generation, resolved);
                     screen.setToPlay(resolved, idle);
-                    if (screen.canAcceptPlayback(playbackToken)) screen.play(resolved, idle);
+                    if (screen.canAcceptPlayback(playbackToken)) {
+                        screen.play(resolved, idle);
+                        reportClientPlaybackResolution(screen, info, generation, resolved);
+                    }
                 });
             });
         }
@@ -511,7 +630,40 @@ public class ClientPacketHandler {
         }
     }
 
+    private static void storePendingReporterGrant(String areaName, String screenName, long generation, long reporterToken) {
+        if (generation < 0 || reporterToken == 0L) return;
+        cleanupPendingReporterGrants();
+        if (pendingReporterGrants.size() >= MAX_PENDING_REPORTER_GRANTS) return;
+        ReporterGrantKey key = new ReporterGrantKey(normalize(areaName), normalize(screenName), generation);
+        pendingReporterGrants.put(key, new PendingReporterGrant(reporterToken, System.currentTimeMillis()));
+    }
+
+    private static void applyPendingReporterGrant(String areaName, String screenName, long generation,
+                                                   ClientVideoScreen screen) {
+        if (screen == null) return;
+        ReporterGrantKey key = new ReporterGrantKey(normalize(areaName), normalize(screenName), generation);
+        PendingReporterGrant grant = pendingReporterGrants.remove(key);
+        if (grant != null) screen.setServerPlaybackReporter(generation, grant.token());
+    }
+
+    private static void cleanupPendingReporterGrants() {
+        long now = System.currentTimeMillis();
+        pendingReporterGrants.entrySet().removeIf(entry -> now - entry.getValue().createdAt() > REQUEST_TTL_MS);
+    }
+
+    private static void cleanupPlaybackDiagnostics() {
+        long now = System.currentTimeMillis();
+        playbackDiagnostics.entrySet().removeIf(entry -> now - entry.getValue().receivedAt() > REQUEST_TTL_MS);
+    }
+
+    private static void removeDiagnosticsArea(String areaName) {
+        String normalized = normalize(areaName);
+        playbackDiagnostics.keySet().removeIf(key -> key.areaName().equals(normalized));
+    }
+
     public static void resetPendingRequests() {
+        pendingReporterGrants.clear();
+        playbackDiagnostics.clear();
         if (pendingRequests.isEmpty()) return;
         ArrayList<Map.Entry<Integer, PendingRequest>> pending = new ArrayList<>(pendingRequests.entrySet());
         pendingRequests.clear();
@@ -526,6 +678,8 @@ public class ClientPacketHandler {
 
     public static void tickPendingRequests() {
         cleanupPendingRequests();
+        cleanupPendingReporterGrants();
+        cleanupPlaybackDiagnostics();
     }
 
     private static String normalize(String value) {
@@ -555,7 +709,7 @@ public class ClientPacketHandler {
     }
 
     public static void request(VideoScreen screen, String path, Consumer<RequestResult> callback) {
-        String normalized = path == null ? "" : path.trim();
+        String normalized = VideoUrlNormalizer.normalizeSubmittedUrl(path);
         if (!VideoScreen.validPlayUrl(normalized)) {
             localError(callback, VpTranslation.of(
                     "error.videoplayer.play_url_invalid_length",
@@ -675,26 +829,43 @@ public class ClientPacketHandler {
         send(VideoPackets.toByteArray(buf));
     }
 
-    public static void setIdlePlay(VideoScreen screen, List<String> urls, boolean random) {
-        setIdlePlay(screen, urls, random, null);
-    }
-
-    public static void setIdlePlay(VideoScreen screen, List<String> urls, boolean random, Consumer<RequestResult> callback) {
-        if (!VideoScreen.validIdlePlayConfig(urls)) {
-            localError(callback, VpTranslation.of(
-                    "error.videoplayer.idle_play_payload_invalid",
-                    "IdlePlay must contain at most %s URLs, each at most %s UTF-8 bytes and %s bytes in total",
-                    VideoScreen.MAX_IDLE_PLAY_ITEMS,
-                    VideoScreen.MAX_IDLE_PLAY_URL_BYTES,
-                    VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES
-            ));
+    public static void addIdlePlay(VideoScreen screen, String url, int priority, Consumer<RequestResult> callback) {
+        String normalized = VideoUrlNormalizer.normalizeSubmittedUrl(url);
+        if (!VideoScreen.validIdlePlayUrl(normalized)
+                || priority < IdlePlayEntry.MIN_PRIORITY || priority > IdlePlayEntry.MAX_PRIORITY) {
+            localError(callback, VpTranslation.of("error.videoplayer.idle_play_url_invalid", "IdlePlay URL or priority is invalid"));
             return;
         }
+        mutateIdlePlay(screen, IdlePlayMutation.add(normalized, priority), callback);
+    }
+
+    public static void removeIdlePlay(VideoScreen screen, java.util.UUID entryId, Consumer<RequestResult> callback) {
+        mutateIdlePlay(screen, IdlePlayMutation.remove(entryId), callback);
+    }
+
+    public static void setIdlePlayPriority(VideoScreen screen, java.util.UUID entryId, int priority, Consumer<RequestResult> callback) {
+        mutateIdlePlay(screen, IdlePlayMutation.setPriority(entryId, priority), callback);
+    }
+
+    public static void adjustIdlePlayPriority(VideoScreen screen, java.util.UUID entryId, int delta, Consumer<RequestResult> callback) {
+        mutateIdlePlay(screen, IdlePlayMutation.adjustPriority(entryId, delta), callback);
+    }
+
+    public static void clearIdlePlay(VideoScreen screen, Consumer<RequestResult> callback) {
+        mutateIdlePlay(screen, IdlePlayMutation.clear(), callback);
+    }
+
+    public static void setIdlePlayMode(VideoScreen screen, boolean random, Consumer<RequestResult> callback) {
+        mutateIdlePlay(screen, IdlePlayMutation.setMode(random), callback);
+    }
+
+    private static void mutateIdlePlay(VideoScreen screen, IdlePlayMutation mutation, Consumer<RequestResult> callback) {
+        if (screen == null || screen.area == null) return;
         ByteBuf buf = controlled(VideoPacketType.IDLE_PLAY, VideoPermissionAction.SET_IDLE_PLAY, screen.area.name, screen.name, callback);
         if (buf == null) return;
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
-        VideoPackets.writeIdlePlayConfig(buf, urls, random);
+        VideoPackets.writeIdlePlayMutation(buf, mutation);
         send(VideoPackets.toByteArray(buf));
     }
 
@@ -728,6 +899,30 @@ public class ClientPacketHandler {
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
         send(VideoPackets.toByteArray(buf));
+    }
+
+    public static boolean requestDiagnostics(VideoScreen screen) {
+        return requestDiagnostics(screen, null);
+    }
+
+    public static boolean requestDiagnostics(VideoScreen screen, Consumer<RequestResult> callback) {
+        if (screen == null || screen.area == null) return false;
+        ByteBuf buf = controlled(VideoPacketType.DIAGNOSTICS_REQUEST, VideoPermissionAction.OPEN_MENU,
+                screen.area.name, screen.name, callback);
+        if (buf == null) return false;
+        writeString(buf, screen.area.name);
+        writeString(buf, screen.name);
+        send(VideoPackets.toByteArray(buf));
+        return true;
+    }
+
+    public static PlaybackDiagnostics diagnostics(VideoScreen screen) {
+        if (screen == null || screen.area == null) return null;
+        cleanupPlaybackDiagnostics();
+        TimedDiagnostics stored = playbackDiagnostics.get(new DiagnosticsKey(
+                normalize(screen.area.name), normalize(screen.name)
+        ));
+        return stored == null ? null : stored.snapshot();
     }
 
     public static void setMetadata(VideoScreen screen, String key, MetaValue value) {
@@ -815,6 +1010,18 @@ public class ClientPacketHandler {
 
     private record PendingRequest(VideoPermissionAction action, String areaName, String screenName,
                                   Consumer<RequestResult> callback, long createdAt) {
+    }
+
+    private record ReporterGrantKey(String areaName, String screenName, long generation) {
+    }
+
+    private record PendingReporterGrant(long token, long createdAt) {
+    }
+
+    private record DiagnosticsKey(String areaName, String screenName) {
+    }
+
+    private record TimedDiagnostics(PlaybackDiagnostics snapshot, long receivedAt) {
     }
 
     private static ClientVideoArea areaOrNull(String areaName) {

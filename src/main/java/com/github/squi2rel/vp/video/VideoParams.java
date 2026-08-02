@@ -14,6 +14,7 @@ import java.util.Set;
 
 public final class VideoParams {
     public static final String PARAM_YOUTUBE = "videoplayer-youtube";
+    public static final String PARAM_YOUTUBE_LIVE_CHAT = "videoplayer-youtube-live-chat";
     public static final String PARAM_SUBTITLE = "videoplayer-subtitle";
     public static final String PARAM_AUDIO_ONLY = "videoplayer-audio-only";
     public static final String PARAM_VIDEO_ONLY = "videoplayer-video-only";
@@ -75,7 +76,7 @@ public final class VideoParams {
         if (rtspTcp && optionKeys.add("rtsp-transport")) {
             options.add("rtsp-transport=" + mpvSubValue("tcp"));
         }
-        String proxy = normalizeHttpProxy(configuredProxy);
+        String proxy = youtube ? normalizeHttpProxy(configuredProxy) : "";
         String ytdlProxy = youtube ? proxyWithoutCredentials(proxy) : "";
         if (!proxy.isBlank()) {
             if (!optionKeys.contains("http-proxy")) {
@@ -122,6 +123,17 @@ public final class VideoParams {
         return false;
     }
 
+    public static boolean hasYouTubeLiveChat(String[] params) {
+        if (params == null || params.length == 0) return false;
+        for (String raw : params) {
+            ParsedParam param = parse(raw);
+            if (param != null && PARAM_YOUTUBE_LIVE_CHAT.equals(param.key) && truthy(param.value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean isAudioOnly(String[] params) {
         if (params == null || params.length == 0) return false;
         for (String raw : params) {
@@ -149,8 +161,15 @@ public final class VideoParams {
         for (String raw : params) {
             ParsedParam param = parse(raw);
             if (param == null) continue;
-            if (!"audio-file".equals(param.key) && !"input-slave".equals(param.key)) continue;
-            if (param.value == null || !MediaAddressPolicy.isAllowed(param.value)) return true;
+            if ("audio-file".equals(param.key) || "input-slave".equals(param.key)) {
+                if (param.value == null || !MediaAddressPolicy.isAllowed(param.value)) return true;
+                continue;
+            }
+            if (!PARAM_SUBTITLE.equals(param.key) || param.value == null || param.value.isBlank()) continue;
+            String[] parts = param.value.split("\t", -1);
+            if (parts.length < 6) continue;
+            String url = decodeField(parts[3]);
+            if (url == null || url.isBlank() || !MediaAddressPolicy.isAllowed(url)) return true;
         }
         return false;
     }
@@ -194,7 +213,7 @@ public final class VideoParams {
             String url = decodeField(parts[3]);
             String referer = decodeField(parts[4]);
             boolean automatic = "1".equals(parts[5]) || "true".equalsIgnoreCase(parts[5]);
-            if (key.isBlank() || url.isBlank()) continue;
+            if (key.isBlank() || url.isBlank() || language.equalsIgnoreCase("live_chat")) continue;
             result.add(new SubtitleParam(key, label, language, url, referer, automatic));
         }
         return List.copyOf(result);
@@ -270,7 +289,7 @@ public final class VideoParams {
             }
         }
         if (isRtspTcp(rawPath) && !hasRtspTcp) options.add(":rtsp-tcp");
-        String proxy = isHttpPath(rawPath) ? normalizeHttpProxy(configuredProxy) : "";
+        String proxy = youtube && isHttpPath(rawPath) ? normalizeHttpProxy(configuredProxy) : "";
         if (!proxy.isBlank()) options.add(":http-proxy=" + proxy);
         return options.toArray(String[]::new);
     }

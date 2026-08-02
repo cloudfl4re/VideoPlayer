@@ -3,7 +3,9 @@ package com.github.squi2rel.vp.video;
 import com.github.squi2rel.vp.provider.VideoInfo;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.UUID;
 
 public class PlaybackQueue {
@@ -18,7 +20,20 @@ public class PlaybackQueue {
 
     public boolean add(VideoInfo info) {
         if (info == null || infos.size() >= MAX_ITEMS) return false;
-        return infos.offer(info);
+        boolean added = infos.offer(info);
+        if (added) screen.queueChanged();
+        return added;
+    }
+
+    public int addAll(List<VideoInfo> values) {
+        if (values == null || values.isEmpty()) return 0;
+        int added = 0;
+        for (VideoInfo value : values) {
+            if (value == null || infos.size() >= MAX_ITEMS) continue;
+            if (infos.offer(value)) added++;
+        }
+        if (added > 0) screen.queueChanged();
+        return added;
     }
 
     public VideoInfo peek() {
@@ -26,12 +41,16 @@ public class PlaybackQueue {
     }
 
     public VideoInfo poll() {
-        return infos.poll();
+        VideoInfo info = infos.poll();
+        if (info != null) screen.queueChanged();
+        return info;
     }
 
     public void clear() {
+        boolean changed = !infos.isEmpty();
         infos.clear();
         skipped.clear();
+        if (changed) screen.queueChanged();
     }
 
     public int size() {
@@ -44,6 +63,20 @@ public class PlaybackQueue {
 
     public ArrayDeque<VideoInfo> rawInfos() {
         return infos;
+    }
+
+    public List<VideoInfo> snapshot() {
+        return new ArrayList<>(infos);
+    }
+
+    public void restore(List<VideoInfo> values) {
+        infos.clear();
+        skipped.clear();
+        if (values == null) return;
+        for (VideoInfo value : values) {
+            if (value == null || infos.size() >= MAX_ITEMS) continue;
+            infos.offer(value);
+        }
     }
 
     public void clearVotes() {

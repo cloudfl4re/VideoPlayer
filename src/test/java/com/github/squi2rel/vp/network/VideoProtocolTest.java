@@ -5,31 +5,35 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VideoProtocolTest {
     @Test
-    void createsAndMatchesTheExactWireToken() {
-        assertEquals("2.0.1|vp2", VideoProtocol.token("2.0.1"));
+    void createsAndMatchesTheCurrentWireToken() {
+        assertEquals("2.0.1|vp5", VideoProtocol.token("2.0.1"));
+        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp5"));
+        assertTrue(VideoProtocol.compatible("2.0.1", " 2.0.1|vp5"));
+        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp5 "));
+    }
+
+    @Test
+    void acceptsEveryWireRevisionForTheSameRelease() {
+        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp5"));
+        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1"));
         assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp2"));
-        assertFalse(VideoProtocol.compatible("2.0.1", " 2.0.1|vp2"));
-        assertFalse(VideoProtocol.compatible("2.0.1", "2.0.1|vp2 "));
+        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|custom-build"));
     }
 
     @Test
-    void rejectsThePlainReleaseVersion() {
-        assertFalse(VideoProtocol.compatible("2.0.1", "2.0.1"));
-    }
-
-    @Test
-    void enforcesTheVersionAndWireRevisionMatrix() {
+    void enforcesTheReleaseVersionMatrix() {
         List<CompatibilityCase> cases = List.of(
-                new CompatibilityCase("2.0.1", "2.0.1|vp2", true),
-                new CompatibilityCase("2.0.1", "2.0.0|vp2", false),
-                new CompatibilityCase("2.0.1", "2.0.10|vp2", false),
-                new CompatibilityCase("2.0.1", "2.0.1|vp1", false),
-                new CompatibilityCase("2.0.1", "2.0.1|vp2-extra", false),
+                new CompatibilityCase("2.0.1", "2.0.1|vp5", true),
+                new CompatibilityCase("2.0.1", "2.0.2|vp5", false),
+                new CompatibilityCase("2.0.1", "2.0.10|vp5", false),
+                new CompatibilityCase("2.0.1", "2.0.1|vp1", true),
+                new CompatibilityCase("2.0.1", "2.0.1|vp5-extra", true),
+                new CompatibilityCase("2.0.1", "2.0.1|", true),
+                new CompatibilityCase("2.0.1", "2.0.1", true),
                 new CompatibilityCase("2.0.1", "", false),
                 new CompatibilityCase("2.0.1", null, false)
         );
@@ -44,10 +48,21 @@ class VideoProtocolTest {
     }
 
     @Test
-    void allowsOnlyTheExplicitRejectPacketAfterClientRejection() {
+    void respondsWithTheLocalTokenUnlessThePeerTokenIsCompatible() {
+        assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", "2.0.1|vp5"));
+        assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", " 2.0.1|vp5 "));
+        assertEquals("2.0.1|vp2", VideoProtocol.responseToken("2.0.1", "2.0.1|vp2"));
+        assertEquals("2.0.1", VideoProtocol.responseToken("2.0.1", "2.0.1"));
+        assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", "2.0.2|vp5"));
+    }
+
+    @Test
+    void allowsHandshakePacketsAfterClientRejection() {
         for (VideoPacketType type : VideoPacketType.values()) {
             assertEquals(
-                    type == VideoPacketType.PROTOCOL_REJECT,
+                    type == VideoPacketType.PROTOCOL_REJECT
+                            || type == VideoPacketType.RESET_CLIENT
+                            || type == VideoPacketType.CONFIG,
                     VideoProtocol.allowedForRejectedClient(type),
                     type.name()
             );

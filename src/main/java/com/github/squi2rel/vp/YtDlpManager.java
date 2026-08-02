@@ -127,6 +127,50 @@ public final class YtDlpManager {
         return downloadAndInstall(config, platform, proxy, listener, ALWAYS_ACTIVE);
     }
 
+    public static EnsureResult ensureAvailable(String configured, NativeDownloadConfig config, String platform,
+                                               String proxy, NativePackageManager.ProgressListener listener) {
+        return ensureAvailable(configured, config, platform, proxy, listener, ALWAYS_ACTIVE);
+    }
+
+    public static EnsureResult ensureAvailable(String configured, NativeDownloadConfig config, String platform,
+                                               String proxy, NativePackageManager.ProgressListener listener,
+                                               BooleanSupplier active) {
+        BooleanSupplier guard = active == null ? ALWAYS_ACTIVE : active;
+        NativeDownloadConfig downloads = config == null ? NativeDownloadConfig.load() : config;
+        String selectedPlatform = platform == null || platform.isBlank()
+                ? NativeDownloadConfig.platformKey()
+                : NativeDownloadConfig.normalizeKnownPlatform(platform);
+        Detection current = detect(configured, guard);
+        if (current.available()) return new EnsureResult(current, null);
+
+        String explicit = configured == null ? "" : configured.trim();
+        if (!explicit.isBlank() && !isManagedExecutable(explicit)) {
+            return new EnsureResult(current, NativePackageManager.DownloadResult.fail(VpTranslation.of(
+                    "error.videoplayer.ytdlp.configured_unavailable",
+                    "Configured yt-dlp executable is unavailable"
+            ), current.error()));
+        }
+        if (!isSupported(downloads, selectedPlatform)) {
+            return new EnsureResult(current, NativePackageManager.DownloadResult.fail(VpTranslation.of(
+                    "error.videoplayer.ytdlp.unsupported_platform",
+                    "yt-dlp automatic installation is not supported on %s", selectedPlatform
+            ), current.error()));
+        }
+
+        NativePackageManager.DownloadResult installation = downloadAndInstall(
+                downloads, selectedPlatform, proxy, listener, guard
+        );
+        if (!installation.success()) return new EnsureResult(current, installation);
+        Detection installed = detect("", guard);
+        if (!installed.available()) {
+            return new EnsureResult(installed, NativePackageManager.DownloadResult.fail(VpTranslation.of(
+                    "error.videoplayer.ytdlp.install_unavailable",
+                    "yt-dlp 已安装，但可执行文件仍不可用"
+            ), installed.error()));
+        }
+        return new EnsureResult(installed, installation);
+    }
+
     public static NativePackageManager.DownloadResult downloadAndInstall(NativeDownloadConfig config, String platform,
                                                                          String proxy, NativePackageManager.ProgressListener listener,
                                                                          BooleanSupplier active) {
@@ -143,6 +187,12 @@ public final class YtDlpManager {
             checkActive(guard);
             while (!(locked = DOWNLOAD_LOCK.tryLock(100, TimeUnit.MILLISECONDS))) {
                 checkActive(guard);
+            }
+            if (validManagedExecutable(destination, tool.version, platform, guard)) {
+                rejectedManagedExecutable = null;
+                return NativePackageManager.DownloadResult.ok(VpTranslation.of(
+                        "message.videoplayer.native.install_complete", "安装完成"
+                ), "managed");
             }
             NativePackageManager.DownloadResult result = NativePackageManager.downloadAndInstallFile(
                     TOOL_NAME, platform, tool.sources(platform), proxy, destination, !platform.startsWith("windows_"),
@@ -232,6 +282,22 @@ public final class YtDlpManager {
         }
     }
 
+    private static boolean validManagedExecutable(Path executable, String expectedVersion, String platform,
+                                                  BooleanSupplier active) {
+        boolean executableFile = platform != null && platform.startsWith("windows_")
+                ? Files.isRegularFile(executable)
+                : Files.isRegularFile(executable) && Files.isExecutable(executable);
+        if (!executableFile) return false;
+        try {
+            verifyVersion(executable, expectedVersion, active);
+            return true;
+        } catch (CancellationException cancelled) {
+            throw cancelled;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private static void checkActive(BooleanSupplier active) {
         if (Thread.currentThread().isInterrupted() || !active.getAsBoolean()) {
             throw new CancellationException("yt-dlp installation cancelled");
@@ -285,5 +351,15 @@ public final class YtDlpManager {
     }
 
     public record Detection(boolean available, String executable, String version, Source source, Throwable error) {
+    }
+
+    public record EnsureResult(Detection detection, NativePackageManager.DownloadResult installation) {
+        public boolean available() {
+            return detection != null && detection.available();
+        }
+
+        public String executable() {
+            return available() && detection.source() != Source.PATH ? detection.executable() : "";
+        }
     }
 }

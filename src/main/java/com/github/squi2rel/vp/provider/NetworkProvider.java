@@ -8,11 +8,14 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.net.InetAddress;
 
 public class NetworkProvider implements IVideoProvider {
+    static final long STREAM_PROBE_TIMEOUT_SECONDS = 35L;
     private final Function<VideoInfo, IVideoListener> listenerFactory;
     private final MediaAddressPolicy.HostResolver hostResolver;
 
@@ -82,9 +85,11 @@ public class NetworkProvider implements IVideoProvider {
             listener.errored(() -> lock.complete(null));
             listener.playing(lock::complete);
             listener.listen();
-            Boolean b = lock.get();
+            Boolean b = lock.get(STREAM_PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
             if (future.isCancelled() || b == null) return null;
             return new StreamInfo(getName(mrl), b);
+        } catch (TimeoutException timeout) {
+            return null;
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             return null;

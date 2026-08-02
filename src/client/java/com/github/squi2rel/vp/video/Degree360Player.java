@@ -52,8 +52,11 @@ public final class Degree360Player {
             ScreenRenderer.skybox = true;
         } else {
             Vector3f center = screen.sphereCenter == null ? new Vector3f() : screen.sphereCenter;
-            matrices.translate(-ScreenRenderer.cameraX, -ScreenRenderer.cameraY, -ScreenRenderer.cameraZ);
-            matrices.translate(center.x, center.y, center.z);
+            matrices.translate(
+                    center.x - ScreenRenderer.preciseCameraX,
+                    center.y - ScreenRenderer.preciseCameraY,
+                    center.z - ScreenRenderer.preciseCameraZ
+            );
         }
         applySphereRotation(matrices, screen.sphereRotX, screen.sphereRotY, screen.sphereRotZ);
         Matrix4f matrix = new Matrix4f(matrices.peek().getPositionMatrix());

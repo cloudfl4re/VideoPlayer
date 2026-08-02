@@ -40,6 +40,7 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
     private VpButtonWidget applyButton;
     private VpButtonWidget autoApplyButton;
     private String status = "";
+    private boolean statusError;
     private long autoApplyAt = -1L;
 
     public MpvFilterGraphScreen(Screen parent) {
@@ -63,7 +64,8 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
 
     @Override
     protected void init() {
-        applyButton = new VpButtonWidget(width - 176, 5, 72, 18, Text.literal("Apply"), button -> applyNow(), THEME);
+        applyButton = new VpButtonWidget(width - 176, 5, 72, 18,
+                VpTexts.tr("button.videoplayer.apply_filter", "Apply"), button -> applyNow(), THEME);
         autoApplyButton = new VpButtonWidget(width - 96, 5, 88, 18, autoApplyText(), button -> toggleAutoApply(), THEME)
                 .selected(MpvFilterGraphManager.autoApply());
         addDrawableChild(applyButton);
@@ -166,6 +168,7 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
     @Override
     public void showMessage(String message) {
         status = message == null ? "" : message;
+        statusError = false;
     }
 
     @Override
@@ -180,42 +183,56 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
             autoApplyButton.setMessage(autoApplyText());
             autoApplyButton.selected(MpvFilterGraphManager.autoApply());
         }
-        status = MpvFilterGraphManager.autoApply() ? "Auto apply enabled" : "Auto apply disabled";
+        setStatus(
+                MpvFilterGraphManager.autoApply() ? "message.videoplayer.mpv_auto_apply_enabled" : "message.videoplayer.mpv_auto_apply_disabled",
+                MpvFilterGraphManager.autoApply() ? "Automatic filter application enabled" : "Automatic filter application disabled"
+        );
     }
 
     private void applyNow() {
         MpvFilterGraphManager.ApplyResult result = MpvFilterGraphManager.applyToActivePlayers();
         if (result.success()) {
-            status = result.message() + " (" + result.playerCount() + ")";
+            setStatus("message.videoplayer.mpv_filter_applied", "%1$s (%2$s active players)", result.message(), result.playerCount());
         } else {
-            status = result.message();
+            setStatus("error.videoplayer.mpv_filter_apply_failed", "MPV filter graph could not be applied: %s", result.message());
         }
     }
 
     private void syncStatusFromCompile() {
         MpvLavfiFilterCatalog.Catalog catalog = MpvLavfiFilterCatalog.get();
         if (!catalog.usable()) {
-            status = catalog.available()
-                    ? "MPV filter API returned no lavfi filters."
-                    : "MPV filter API unavailable: " + catalog.error();
+            if (catalog.available()) {
+                setStatus("error.videoplayer.mpv_filter_api_no_filters", "MPV filter API returned no lavfi filters.");
+            } else {
+                setStatus("error.videoplayer.mpv_filter_api_unavailable", "MPV filter API unavailable: %s", catalog.error());
+            }
             return;
         }
         MpvFilterGraphCompiler.CompileResult compiled = MpvFilterGraphManager.compileCurrent();
         if (compiled.success()) {
-            status = compiled.graph().isBlank() ? "Saved. No active graph." : "Saved. Graph ready.";
+            setStatus(
+                    compiled.graph().isBlank() ? "message.videoplayer.mpv_filter_saved_empty" : "message.videoplayer.mpv_filter_saved_ready",
+                    compiled.graph().isBlank() ? "Saved. No active graph." : "Saved. Graph ready."
+            );
         } else {
-            status = "Compile error: " + compiled.error();
+            setStatus("error.videoplayer.mpv_filter_compile", "Filter graph compile error: %s", compiled.error());
         }
     }
 
     private int statusColor() {
-        return status != null && (status.startsWith("Compile error") || status.startsWith("MPV filter API"))
-                ? THEME.errorColor()
-                : THEME.secondaryTextColor();
+        return statusError ? THEME.errorColor() : THEME.secondaryTextColor();
     }
 
     private Text autoApplyText() {
-        return Text.literal(MpvFilterGraphManager.autoApply() ? "Auto: On" : "Auto: Off");
+        return VpTexts.tr("label.videoplayer.mpv_auto_apply", "Auto: %s",
+                MpvFilterGraphManager.autoApply()
+                        ? VpTexts.tr("label.videoplayer.on", "On")
+                        : VpTexts.tr("label.videoplayer.off", "Off"));
+    }
+
+    private void setStatus(String key, String fallback, Object... args) {
+        status = VpTexts.tr(key, fallback, args).getString();
+        statusError = key.startsWith("error.");
     }
 
     private GraphEditorBounds editorBounds() {

@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.video;
 
 import org.joml.Vector2f;
+import org.joml.Vector3d;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -13,6 +14,7 @@ public final class ScreenGeometry {
     public static final float EPSILON = 0.02f;
 
     private final List<Vector3f> vertices;
+    private final List<Vector3f> localVertices;
     private final Vector3f origin;
     private final Vector3f uAxis;
     private final Vector3f vAxis;
@@ -29,11 +31,13 @@ public final class ScreenGeometry {
     private final float textureMinV;
     private final float textureMaxV;
 
-    private ScreenGeometry(List<Vector3f> vertices, Vector3f origin, Vector3f uAxis, Vector3f vAxis, Vector3f normal,
+    private ScreenGeometry(List<Vector3f> vertices, List<Vector3f> localVertices, Vector3f origin,
+                           Vector3f uAxis, Vector3f vAxis, Vector3f normal,
                            List<Vector2f> points2d, List<Vector2f> editPoints2d, int[] triangles,
                            float minU, float maxU, float minV, float maxV,
                            float textureMinU, float textureMaxU, float textureMinV, float textureMaxV) {
         this.vertices = vertices;
+        this.localVertices = localVertices;
         this.origin = origin;
         this.uAxis = uAxis;
         this.vAxis = vAxis;
@@ -65,8 +69,14 @@ public final class ScreenGeometry {
         }
 
         Vector3f origin = new Vector3f(vertices.getFirst());
-        Vector3f normal = findProjectionNormal(vertices);
-        Vector3f uAxis = findAxis(vertices, origin, normal);
+        ArrayList<Vector3f> localVertices = new ArrayList<>(vertices.size());
+        for (Vector3f vertex : vertices) {
+            localVertices.add(new Vector3f(vertex).sub(origin));
+        }
+
+        Vector3f normal = findProjectionNormal(localVertices);
+        Vector3f localOrigin = localVertices.getFirst();
+        Vector3f uAxis = findAxis(localVertices, localOrigin, normal);
         Vector3f vAxis = new Vector3f(normal).cross(uAxis).normalize();
 
         ArrayList<Vector2f> points2d = new ArrayList<>(vertices.size());
@@ -75,10 +85,9 @@ public final class ScreenGeometry {
         float minV = Float.POSITIVE_INFINITY;
         float maxV = Float.NEGATIVE_INFINITY;
 
-        for (Vector3f vertex : vertices) {
-            Vector3f relative = new Vector3f(vertex).sub(origin);
-            float u = relative.dot(uAxis);
-            float v = relative.dot(vAxis);
+        for (Vector3f vertex : localVertices) {
+            float u = vertex.dot(uAxis);
+            float v = vertex.dot(vAxis);
             points2d.add(new Vector2f(u, v));
             minU = Math.min(minU, u);
             maxU = Math.max(maxU, u);
@@ -98,7 +107,7 @@ public final class ScreenGeometry {
         if (triangles.length < 3) {
             throw new IllegalArgumentException("Screen polygon cannot be triangulated");
         }
-        List<Vector2f> editPoints = triangulation.stripRotation() >= 0 ? unfoldStrip(vertices, triangulation.stripRotation()) : null;
+        List<Vector2f> editPoints = triangulation.stripRotation() >= 0 ? unfoldStrip(localVertices, triangulation.stripRotation()) : null;
         if (editPoints == null) editPoints = points2d;
         float textureMinU = Float.POSITIVE_INFINITY;
         float textureMaxU = Float.NEGATIVE_INFINITY;
@@ -113,6 +122,7 @@ public final class ScreenGeometry {
 
         return new ScreenGeometry(
                 Collections.unmodifiableList(vertices),
+                Collections.unmodifiableList(localVertices),
                 origin,
                 uAxis,
                 vAxis,
@@ -135,8 +145,24 @@ public final class ScreenGeometry {
         return vertices;
     }
 
+    public List<Vector3f> localVertices() {
+        return localVertices;
+    }
+
+    public Vector3f origin() {
+        return new Vector3f(origin);
+    }
+
+    public Vector3f relativeOrigin(double cameraX, double cameraY, double cameraZ) {
+        return new Vector3f(
+                (float) (origin.x - cameraX),
+                (float) (origin.y - cameraY),
+                (float) (origin.z - cameraZ)
+        );
+    }
+
     public Vector3f firstVertex() {
-        return vertices.getFirst();
+        return new Vector3f(origin);
     }
 
     public Vector3f normal() {
@@ -169,7 +195,11 @@ public final class ScreenGeometry {
 
     public Vector2f project(Vector3f point) {
         Vector3f relative = new Vector3f(point).sub(origin);
-        return new Vector2f(relative.dot(uAxis), relative.dot(vAxis));
+        return projectLocal(relative);
+    }
+
+    public Vector2f projectLocal(Vector3f point) {
+        return new Vector2f(point.dot(uAxis), point.dot(vAxis));
     }
 
     public Vector2f projectedPoint(int index) {
@@ -181,8 +211,11 @@ public final class ScreenGeometry {
     }
 
     public Vector3f unproject(float u, float v) {
-        return new Vector3f(origin)
-                .add(new Vector3f(uAxis).mul(u))
+        return unprojectLocal(u, v).add(origin);
+    }
+
+    public Vector3f unprojectLocal(float u, float v) {
+        return new Vector3f(uAxis).mul(u)
                 .add(new Vector3f(vAxis).mul(v));
     }
 
@@ -238,22 +271,30 @@ public final class ScreenGeometry {
     }
 
     public boolean intersectsRay(Vector3f lineStart, Vector3f lineEnd, Vector3f intersection) {
-        Vector3f lineDir = new Vector3f(lineEnd).sub(lineStart);
-        float length = lineDir.length();
+        Vector3d preciseIntersection = new Vector3d();
+        boolean hit = intersectsRay(new Vector3d(lineStart), new Vector3d(lineEnd), preciseIntersection);
+        if (hit) intersection.set(preciseIntersection);
+        return hit;
+    }
+
+    public boolean intersectsRay(Vector3d lineStart, Vector3d lineEnd, Vector3d intersection) {
+        Vector3d localStart = new Vector3d(lineStart).sub(origin.x, origin.y, origin.z);
+        Vector3d lineDir = new Vector3d(lineEnd).sub(lineStart);
+        double length = lineDir.length();
         if (length <= EPSILON) return false;
         lineDir.div(length);
 
         boolean hit = false;
-        float nearest = Float.POSITIVE_INFINITY;
+        double nearest = Double.POSITIVE_INFINITY;
         for (int i = 0; i < triangles.length; i += 3) {
-            Float distance = intersectTriangle(
-                    lineStart,
+            double distance = intersectTriangle(
+                    localStart,
                     lineDir,
-                    vertices.get(triangles[i]),
-                    vertices.get(triangles[i + 1]),
-                    vertices.get(triangles[i + 2])
+                    localVertices.get(triangles[i]),
+                    localVertices.get(triangles[i + 1]),
+                    localVertices.get(triangles[i + 2])
             );
-            if (distance == null || distance < 0 || distance > length || distance >= nearest) continue;
+            if (!Double.isFinite(distance) || distance < 0 || distance > length || distance >= nearest) continue;
             nearest = distance;
             hit = true;
         }
@@ -311,21 +352,21 @@ public final class ScreenGeometry {
         throw new IllegalArgumentException("Screen polygon is degenerate");
     }
 
-    private static Float intersectTriangle(Vector3f origin, Vector3f direction, Vector3f a, Vector3f b, Vector3f c) {
-        Vector3f edge1 = new Vector3f(b).sub(a);
-        Vector3f edge2 = new Vector3f(c).sub(a);
-        Vector3f h = new Vector3f(direction).cross(edge2);
-        float det = edge1.dot(h);
-        if (Math.abs(det) < 0.000001f) return null;
+    private static double intersectTriangle(Vector3d origin, Vector3d direction, Vector3f a, Vector3f b, Vector3f c) {
+        Vector3d edge1 = new Vector3d(b).sub(a);
+        Vector3d edge2 = new Vector3d(c).sub(a);
+        Vector3d h = new Vector3d(direction).cross(edge2);
+        double det = edge1.dot(h);
+        if (Math.abs(det) < 0.000001) return Double.NaN;
 
-        float invDet = 1.0f / det;
-        Vector3f s = new Vector3f(origin).sub(a);
-        float u = invDet * s.dot(h);
-        if (u < -EPSILON || u > 1.0f + EPSILON) return null;
+        double invDet = 1.0 / det;
+        Vector3d s = new Vector3d(origin).sub(a);
+        double u = invDet * s.dot(h);
+        if (u < -EPSILON || u > 1.0 + EPSILON) return Double.NaN;
 
-        Vector3f q = s.cross(edge1);
-        float v = invDet * direction.dot(q);
-        if (v < -EPSILON || u + v > 1.0f + EPSILON) return null;
+        Vector3d q = s.cross(edge1);
+        double v = invDet * direction.dot(q);
+        if (v < -EPSILON || u + v > 1.0 + EPSILON) return Double.NaN;
 
         return invDet * edge2.dot(q);
     }

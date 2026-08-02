@@ -21,12 +21,17 @@ final class PaperNativeConfig {
     private final String platform;
     private final String downloadProxy;
     private final String mpvYtdlPath;
+    private final String youtubeCookiesFile;
+    private final String youtubeCookiesFromBrowser;
 
-    private PaperNativeConfig(String backend, String platform, String downloadProxy, String mpvYtdlPath) {
+    private PaperNativeConfig(String backend, String platform, String downloadProxy, String mpvYtdlPath,
+                              String youtubeCookiesFile, String youtubeCookiesFromBrowser) {
         this.backend = backend;
         this.platform = platform;
         this.downloadProxy = downloadProxy == null ? "" : downloadProxy.trim();
         this.mpvYtdlPath = mpvYtdlPath == null ? "" : mpvYtdlPath.trim();
+        this.youtubeCookiesFile = setting(youtubeCookiesFile);
+        this.youtubeCookiesFromBrowser = setting(youtubeCookiesFromBrowser);
     }
 
     static PaperNativeConfig load(VideoPlayerPaperPlugin plugin) {
@@ -45,17 +50,30 @@ final class PaperNativeConfig {
         }
         String proxy = config.getString("native.download-proxy", "");
         String ytdlPath = config.getString("native.mpv-ytdl-path", "");
-        return new PaperNativeConfig(backend, platform, proxy, ytdlPath);
+        String cookiesFile = firstNonBlank(
+                config.getString("youtube.cookies-file", ""),
+                config.getString("native.youtube-cookies-file", ""),
+                config.getString("native.youtube.cookies-file", "")
+        );
+        String cookiesFromBrowser = firstNonBlank(
+                config.getString("youtube.cookies-from-browser", ""),
+                config.getString("native.youtube-cookies-from-browser", ""),
+                config.getString("native.youtube.cookies-from-browser", "")
+        );
+        return new PaperNativeConfig(backend, platform, proxy, ytdlPath, cookiesFile, cookiesFromBrowser);
     }
 
     void apply() {
-        NativePackageManager.selectPlatform(backend, platform);
+        NativePackageManager.selectPlatform(NativePackageManager.BACKEND_MPV, platform);
+        NativePackageManager.selectPlatform(NativePackageManager.BACKEND_VLC, platform);
         StreamListener.configurePreferredBackend(backend);
         StreamListener.configureProxy(downloadProxy);
         String effectiveYtdlPath = YtDlpManager.effectiveExecutable(mpvYtdlPath);
         StreamListener.configureYtdlPath(effectiveYtdlPath);
         YouTubeProvider.configureProxy(downloadProxy);
         YouTubeProvider.configureYtdlPath(effectiveYtdlPath);
+        YouTubeProvider.configureCookies(youtubeCookiesFile, youtubeCookiesFromBrowser);
+        YouTubeProvider.configureMissingYtdlHandler(this::ensureYtdlForResolution);
         validateYtdlPath();
         StreamListener.resetLoadState();
         VideoPlayerMain.LOGGER.info("VideoPlayer native backend={} platform={} dataDir={}",
@@ -105,6 +123,23 @@ final class PaperNativeConfig {
         String executable = detection.source() == YtDlpManager.Source.PATH ? "" : detection.executable();
         StreamListener.configureYtdlPath(executable);
         YouTubeProvider.configureYtdlPath(executable);
+    }
+
+    private String ensureYtdlForResolution() {
+        try {
+            YtDlpManager.EnsureResult result = YtDlpManager.ensureAvailable(
+                    mpvYtdlPath, NativeDownloadConfig.load(), platform, downloadProxy, null
+            );
+            if (result == null || !result.available() || result.detection() == null) return "";
+            String executable = result.detection().executable();
+            if (executable == null || executable.isBlank()) return "";
+            StreamListener.configureYtdlPath(executable);
+            YouTubeProvider.configureYtdlPath(executable);
+            return executable;
+        } catch (RuntimeException error) {
+            VideoPlayerMain.LOGGER.warn("Unable to make yt-dlp available for YouTube resolution", error);
+            return "";
+        }
     }
 
     private void validateYtdlPath() {
@@ -167,6 +202,31 @@ final class PaperNativeConfig {
                 backend, platform, message(result.message()), result.error());
     }
 
+    void downloadVlcFallbackIfMissing(BooleanSupplier active) {
+        if (!active.getAsBoolean() || !NativeDownloadConfig.BACKEND_MPV.equals(backend)) return;
+        if (!NativeDownloadConfig.isSupportedBackendPlatform(NativeDownloadConfig.BACKEND_VLC, platform)) return;
+        if (NativePackageManager.isInstalled(NativeDownloadConfig.BACKEND_VLC, platform)) return;
+
+        NativeDownloadConfig downloads = NativeDownloadConfig.load();
+        List<NativeDownloadConfig.DownloadSource> sources = downloads.sources(NativeDownloadConfig.BACKEND_VLC, platform);
+        if (sources.isEmpty()) {
+            VideoPlayerMain.LOGGER.warn("No VLC fallback runtime download sources are configured for {}", platform);
+            return;
+        }
+
+        VideoPlayerMain.LOGGER.info("Downloading VLC fallback runtime for {} after MPV could not load", platform);
+        NativePackageManager.DownloadResult result = NativePackageManager.downloadAndInstall(
+                NativeDownloadConfig.BACKEND_VLC, platform, sources, downloadProxy, null, active
+        );
+        if (!active.getAsBoolean()) return;
+        if (result.success()) {
+            VideoPlayerMain.LOGGER.info("Installed VLC fallback runtime for {} from {}", platform, result.sourceName());
+            return;
+        }
+        VideoPlayerMain.LOGGER.warn("Failed to download VLC fallback runtime for {}: {}",
+                platform, message(result.message()), result.error());
+    }
+
     private static String backend(String raw) {
         String value = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
         if (value.isBlank()) {
@@ -205,6 +265,21 @@ final class PaperNativeConfig {
 
     private static String sanitize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return "";
+        for (String value : values) {
+            String normalized = setting(value);
+            if (!normalized.isBlank()) return normalized;
+        }
+        return "";
+    }
+
+    private static String setting(String value) {
+        if (value == null || value.isBlank()) return "";
+        String normalized = value.trim().replace("\r", "").replace("\n", "").replace("\u0000", "");
+        return normalized.length() > 4096 ? normalized.substring(0, 4096) : normalized;
     }
 
     private static String message(com.github.squi2rel.vp.i18n.VpTranslation translation) {

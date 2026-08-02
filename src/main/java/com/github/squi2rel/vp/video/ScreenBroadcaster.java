@@ -1,6 +1,9 @@
 package com.github.squi2rel.vp.video;
 
+import com.github.squi2rel.vp.DataHolder;
+import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.network.ServerPacketHandler;
+import com.github.squi2rel.vp.network.VideoPackets;
 import net.minecraft.server.PlayerManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 
@@ -16,6 +19,7 @@ public class ScreenBroadcaster {
     }
 
     public void send(byte[] data) {
+        if (server == null) return;
         PlayerManager pm = server.getPlayerManager();
         for (var uuid : screen.area.playerSnapshot()) {
             ServerPlayerEntity player = pm.getPlayer(uuid);
@@ -25,7 +29,22 @@ public class ScreenBroadcaster {
         }
     }
 
+    public void sendTo(java.util.UUID uuid, byte[] data) {
+        if (uuid == null || data == null) return;
+        if (server == null) return;
+        ServerPlayerEntity player = server.getPlayerManager().getPlayer(uuid);
+        if (player != null) {
+            ServerPacketHandler.sendTo(player, data);
+        }
+    }
+
     public void syncPlaylist() {
-        send(com.github.squi2rel.vp.network.VideoPackets.updatePlaylist(List.of(screen)));
+        send(VideoPackets.updatePlaylist(List.of(screen)));
+    }
+
+    public void playbackNotice(VpTranslation message, boolean error) {
+        for (var uuid : screen.area.playerSnapshot()) {
+            DataHolder.message(uuid, screen.serverPluginEpoch(), message);
+        }
     }
 }

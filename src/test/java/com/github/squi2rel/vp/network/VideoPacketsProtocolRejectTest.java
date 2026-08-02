@@ -14,7 +14,7 @@ class VideoPacketsProtocolRejectTest {
         ByteBuf buf = Unpooled.wrappedBuffer(VideoPackets.protocolReject("2.0.1"));
         try {
             assertEquals(VideoPacketType.PROTOCOL_REJECT, VideoPackets.readType(buf));
-            assertEquals("2.0.1|vp2", ByteBufUtils.readString(buf, 16));
+            assertEquals("2.0.1|vp5", ByteBufUtils.readString(buf, 16));
             assertFalse(buf.isReadable());
         } finally {
             buf.release();

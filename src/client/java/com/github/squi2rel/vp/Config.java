@@ -2,16 +2,20 @@ package com.github.squi2rel.vp;
 
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
 import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
+import com.github.squi2rel.vp.video.AudioChannelMode;
 
 public class Config {
     public int volume = 100;
     public int brightness = 100;
     public boolean alwaysConnected = false;
     public String videoBackend = "vlc";
+    public String audioChannelMode = AudioChannelMode.STEREO.configValue();
     public String nativeVlcPlatform = "";
     public String nativeMpvPlatform = "";
     public String nativeDownloadProxy = "";
     public String mpvYtdlPath = "";
+    public String youtubeCookiesFile = "";
+    public String youtubeCookiesFromBrowser = "";
     public Boolean startupGuideShown = null;
     public transient NativeDownloadConfig nativeDownloadUrls = NativeDownloadConfig.load();
     public boolean danmakuDefaultEnabled = true;

@@ -308,7 +308,7 @@ final class BiliLiveDanmakuClient {
         int fontSize = attr(attrs, 2, 25);
         int color = attr(attrs, 3, 0xFFFFFF);
         DanmakuEntry entry = DanmakuEntry.live(mode, fontSize, color, content);
-        if (entry.renderable()) receiver.accept(entry);
+        if (!stopped && entry.renderable()) receiver.accept(entry);
     }
 
     private int attr(JsonArray attrs, int index, int fallback) {

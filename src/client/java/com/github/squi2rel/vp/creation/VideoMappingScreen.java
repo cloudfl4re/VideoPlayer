@@ -4,6 +4,7 @@ import com.github.squi2rel.vp.ClientPacketHandler;
 import com.github.squi2rel.vp.ClientPermissionCache;
 import com.github.squi2rel.vp.ScreenRenderer;
 import com.github.squi2rel.vp.VideoPlayerClient;
+import com.github.squi2rel.vp.i18n.VpInputTexts;
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.permission.VideoPermissionAction;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
@@ -21,6 +22,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.function.Consumer;
+
+import org.lwjgl.glfw.GLFW;
 
 public class VideoMappingScreen extends Screen implements ServerStateScreen {
     private static final int HANDLE_SIZE = 3;
@@ -118,6 +121,14 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         drawCenteredLabel(context, title, width / 2, 18, THEME.primaryTextColor());
         drawLabel(context, VpTexts.tr("label.videoplayer.preview", "Preview"), previewX, previewY - 14, THEME.secondaryTextColor());
         drawLabel(context, Text.literal(screen.name), imageX, imageY - 14, THEME.secondaryTextColor());
+        Text controls = Text.translatableWithFallback(
+                "hint.videoplayer.mapping_controls",
+                "%1$s drag/select vertices; %2$s rotate; %3$s + %1$s multi-select",
+                VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_LEFT),
+                VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_RIGHT),
+                VpInputTexts.key(GLFW.GLFW_KEY_LEFT_CONTROL)
+        );
+        drawLabel(context, Text.literal(textRenderer.trimToWidth(controls, Math.max(1, width - 36)).getString()), 18, height - 46, THEME.secondaryTextColor());
 
         drawFrame(context, previewX, previewY, previewW, previewH);
         drawPreview(context);
@@ -480,7 +491,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
     }
 
     private ArrayList<PreviewVertex3d> projectPreviewVertices(ScreenGeometry geometry) {
-        List<Vector3f> vertices = geometry.vertices();
+        List<Vector3f> vertices = geometry.localVertices();
         if (vertices.isEmpty()) return null;
 
         Vector3f center = previewCenter(vertices);

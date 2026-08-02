@@ -26,6 +26,7 @@ final class VlcStreamListener implements IVideoListener {
     private static Pointer instance;
     private static Throwable loadError;
     private static boolean loadAttempted;
+    private static boolean shutDown;
     private static final Set<VlcStreamListener> ACTIVE = ConcurrentHashMap.newKeySet();
 
     private final VideoInfo info;
@@ -52,6 +53,7 @@ final class VlcStreamListener implements IVideoListener {
     }
 
     static synchronized boolean load() {
+        if (shutDown) return false;
         if (instance != null) return true;
         if (loadAttempted && loadError != null) return false;
         loadAttempted = true;
@@ -97,13 +99,18 @@ final class VlcStreamListener implements IVideoListener {
 
     static synchronized void resetLoadState() {
         if (instance != null) return;
+        shutDown = false;
         loadError = null;
         loadAttempted = false;
         VlcLibrary.resetLoadState();
     }
 
-    static synchronized void shutdown() {
-        List<VlcStreamListener> listeners = List.copyOf(ACTIVE);
+    static void shutdown() {
+        List<VlcStreamListener> listeners;
+        synchronized (VlcStreamListener.class) {
+            shutDown = true;
+            listeners = List.copyOf(ACTIVE);
+        }
         for (VlcStreamListener listener : listeners) {
             listener.cancel();
         }
@@ -117,10 +124,13 @@ final class VlcStreamListener implements IVideoListener {
                 break;
             }
         }
-        Pointer loadedInstance = instance;
-        instance = null;
-        loadError = null;
-        loadAttempted = false;
+        Pointer loadedInstance;
+        synchronized (VlcStreamListener.class) {
+            loadedInstance = instance;
+            instance = null;
+            loadError = null;
+            loadAttempted = false;
+        }
         if (loadedInstance != null) {
             try {
                 VlcLibrary.releaseInstance(loadedInstance);

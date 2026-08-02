@@ -45,6 +45,10 @@ public interface VideoBackend {
 
     void cleanup();
 
+    default AudioLevelSnapshot audioLevel() {
+        return AudioLevelSnapshot.unsupported();
+    }
+
     default boolean flippedX() {
         return false;
     }

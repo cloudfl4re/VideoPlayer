@@ -7,6 +7,7 @@ import com.google.gson.JsonParseException;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 final class LegacyConfigMigrator {
@@ -99,6 +100,27 @@ final class LegacyConfigMigrator {
             changed = true;
         }
 
+        if (!screen.has("idlePlayEntries") || screen.get("idlePlayEntries").isJsonNull()) {
+            JsonArray entries = new JsonArray();
+            JsonElement urlsElement = screen.get("idlePlayUrls");
+            if (urlsElement != null && urlsElement.isJsonArray()) {
+                for (JsonElement element : urlsElement.getAsJsonArray()) {
+                    String url = nonBlankString(element);
+                    if (url == null) continue;
+                    JsonObject entry = new JsonObject();
+                    entry.addProperty("id", UUID.randomUUID().toString());
+                    entry.addProperty("url", url);
+                    entry.addProperty("addedBy", new UUID(0L, 0L).toString());
+                    entry.addProperty("addedByName", "");
+                    entry.addProperty("priority", 0);
+                    entries.add(entry);
+                }
+            }
+            screen.add("idlePlayEntries", entries);
+            screen.remove("idlePlayUrls");
+            changed = true;
+        }
+
         if (screen.has("meta")) {
             JsonObject metadata = objectOrNew(screen.get("metadata"));
             JsonObject values = objectOrNew(metadata.get("values"));
@@ -166,7 +188,7 @@ final class LegacyConfigMigrator {
         addNumber(screen, "sphereRotY", 0);
         addNumber(screen, "sphereRotZ", 0);
         addBoolean(screen, "sphereSkybox", false);
-        if (!screen.has("idlePlayUrls") || screen.get("idlePlayUrls").isJsonNull()) screen.add("idlePlayUrls", new JsonArray());
+        if (!screen.has("idlePlayEntries") || screen.get("idlePlayEntries").isJsonNull()) screen.add("idlePlayEntries", new JsonArray());
         addBoolean(screen, "idlePlayRandom", false);
         if (!screen.has("metadata") || screen.get("metadata").isJsonNull()) {
             JsonObject metadata = new JsonObject();

@@ -12,9 +12,13 @@ import com.sun.jna.Pointer;
 import com.sun.jna.ptr.PointerByReference;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 final class VlcLibrary {
@@ -50,11 +54,12 @@ final class VlcLibrary {
             Optional<NativePackageManager.PreparedNativePackage> prepared = NativePackageManager.prepareForLoad(NativePackageManager.BACKEND_VLC);
             if (prepared.isPresent()) {
                 NativePackageManager.PreparedNativePackage nativePackage = prepared.get();
-                pluginPath = nativePackage.pluginPath();
                 NativeLibraryLoader.prepareWindowsDllDirectory(nativePackage.root());
                 if (nativePackage.library() != null) {
                     try {
-                        lib = loadByPath(nativePackage.library());
+                        LibVlc loadedLibrary = loadByPath(nativePackage.library());
+                        pluginPath = nativePackage.pluginPath();
+                        lib = loadedLibrary;
                         return lib;
                     } catch (Throwable t) {
                         last = t;
@@ -67,6 +72,24 @@ final class VlcLibrary {
             if (VideoPlayerMain.android) {
                 loadError = last == null ? new IllegalStateException("Bundled Android VLC runtime could not be prepared") : last;
                 throw unavailable(loadError);
+            }
+            if ("windows".equals(NativeDownloadConfig.osKey())) {
+                for (Path root : windowsInstallRoots(System.getenv())) {
+                    Path library = root.resolve("libvlc.dll");
+                    if (!Files.isRegularFile(library)) continue;
+                    try {
+                        LibVlc loadedLibrary = loadByPath(library);
+                        Path plugins = root.resolve("plugins");
+                        pluginPath = Files.isDirectory(plugins) ? plugins : null;
+                        lib = loadedLibrary;
+                        return lib;
+                    } catch (Throwable t) {
+                        if (last != null) t.addSuppressed(last);
+                        last = t;
+                    } finally {
+                        NativeLibraryLoader.clearWindowsDllDirectory();
+                    }
+                }
             }
             for (String name : libraryCandidates()) {
                 try {
@@ -187,6 +210,58 @@ final class VlcLibrary {
             return List.of("vlc", "libvlc", "libvlc.dylib");
         }
         return List.of("vlc", "libvlc", "libvlc.so");
+    }
+
+    static List<Path> windowsInstallRoots(Map<String, String> environment) {
+        if (environment == null || environment.isEmpty()) return List.of();
+        LinkedHashSet<Path> roots = new LinkedHashSet<>();
+        addEnvironmentRoot(roots, environment, "VIDEOPLAYER_VLC_HOME", false);
+        addEnvironmentRoot(roots, environment, "VLC_HOME", false);
+        addEnvironmentRoot(roots, environment, "ProgramW6432", true);
+        addEnvironmentRoot(roots, environment, "ProgramFiles", true);
+        addEnvironmentRoot(roots, environment, "ProgramFiles(x86)", true);
+        String localAppData = environmentValue(environment, "LOCALAPPDATA");
+        addRoot(roots, localAppData, "Programs", "VideoLAN", "VLC");
+        addRoot(roots, localAppData, "VideoLAN", "VLC");
+        return List.copyOf(roots);
+    }
+
+    private static void addEnvironmentRoot(LinkedHashSet<Path> roots, Map<String, String> environment, String name, boolean appendVlc) {
+        String value = environmentValue(environment, name);
+        if (appendVlc) {
+            addRoot(roots, value, "VideoLAN", "VLC");
+        } else {
+            addRoot(roots, value);
+        }
+    }
+
+    private static String environmentValue(Map<String, String> environment, String name) {
+        String value = environment.get(name);
+        if (value != null) return value;
+        for (Map.Entry<String, String> entry : environment.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(name)) return entry.getValue();
+        }
+        return null;
+    }
+
+    private static void addRoot(LinkedHashSet<Path> roots, String value, String... children) {
+        if (value == null || value.isBlank()) return;
+        String normalizedValue = value.trim();
+        if (normalizedValue.length() >= 2 && normalizedValue.startsWith("\"") && normalizedValue.endsWith("\"")) {
+            normalizedValue = normalizedValue.substring(1, normalizedValue.length() - 1);
+        }
+        try {
+            Path root = Path.of(normalizedValue);
+            for (String child : children) {
+                root = root.resolve(child);
+            }
+            Path fileName = root.getFileName();
+            if (fileName != null && (fileName.toString().equalsIgnoreCase("libvlc.dll") || fileName.toString().equalsIgnoreCase("vlc.exe"))) {
+                root = root.getParent();
+            }
+            if (root != null) roots.add(root.toAbsolutePath().normalize());
+        } catch (InvalidPathException ignored) {
+        }
     }
 
     private static LibVlc loadByPath(Path path) {

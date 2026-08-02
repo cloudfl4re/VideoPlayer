@@ -15,8 +15,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
 import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
 
@@ -25,6 +25,8 @@ public final class ClientDanmakuController {
     public static final float VIRTUAL_HEIGHT = 360.0f;
     private static final int SEGMENT_MS = 360_000;
     private static final int MAX_ACTIVE = 512;
+    private static final int MAX_LIVE_INCOMING = 1024;
+    private static final int MAX_LIVE_DRAIN_PER_TICK = 128;
     private static final int FIXED_LANES = 4;
     private static final float LANE_HEIGHT = 18.0f;
     private static final long FIXED_DURATION_MS = 4000;
@@ -40,7 +42,7 @@ public final class ClientDanmakuController {
     private static final Random RANDOM = new Random();
 
     private final ClientVideoScreen screen;
-    private final ConcurrentLinkedQueue<DanmakuEntry> liveIncoming = new ConcurrentLinkedQueue<>();
+    private final ArrayBlockingQueue<LiveIncoming> liveIncoming = new ArrayBlockingQueue<>(MAX_LIVE_INCOMING);
     private final ArrayList<ActiveDanmaku> active = new ArrayList<>();
     private final ArrayList<DanmakuEntry> vodEntries = new ArrayList<>();
     private final Set<String> vodEntryKeys = new HashSet<>();
@@ -54,6 +56,9 @@ public final class ClientDanmakuController {
     private BiliBiliSourceInfo sourceInfo;
     private CompletableFuture<BiliBiliSourceInfo> sourceTask;
     private BiliLiveDanmakuClient liveClient;
+    private YouTubeLiveChatClient youtubeLiveClient;
+    private boolean youtubeLiveClientUnavailable;
+    private volatile long liveGeneration;
     private int nextVodIndex;
     private long lastProgress = -1;
     private long animationTime;
@@ -70,7 +75,8 @@ public final class ClientDanmakuController {
         ClientVideoScreen playback = displayScreen.getScreen();
         return playback != null
                 && playback.surface != ScreenSurface.SPHERE_360
-                && BiliBiliSourceRegistry.canResolve(playback.currentPlaybackInfo());
+                && (BiliBiliSourceRegistry.canResolve(playback.currentPlaybackInfo())
+                    || YouTubeLiveChatClient.canResolve(playback.currentPlaybackInfo()));
     }
 
     public static boolean isEnabledOn(ClientVideoScreen displayScreen) {
@@ -138,10 +144,22 @@ public final class ClientDanmakuController {
 
         advanceAnimationClock();
         updateActive();
-        if (screen.surface == ScreenSurface.SPHERE_360 || info == null || !enabled() || !BiliBiliSourceRegistry.canResolve(info)) {
+        boolean biliSource = BiliBiliSourceRegistry.canResolve(info);
+        boolean youtubeLiveSource = YouTubeLiveChatClient.canResolve(info);
+        if (screen.surface == ScreenSurface.SPHERE_360 || info == null || !enabled()
+                || (!biliSource && !youtubeLiveSource)) {
             stopNetworkAndClear();
             return;
         }
+
+        if (youtubeLiveSource) {
+            stopLiveClient();
+            ensureYouTubeLiveClient(info);
+            drainLiveIncoming();
+            return;
+        }
+
+        stopYouTubeLiveClient();
 
         updateSourceTask(info);
         if (sourceInfo == null) return;
@@ -203,12 +221,15 @@ public final class ClientDanmakuController {
     }
 
     private void resetForInfo(VideoInfo info, String infoKey) {
+        liveGeneration++;
         currentInfo = info;
         currentInfoKey = infoKey;
         sourceInfo = null;
         if (sourceTask != null) sourceTask.cancel(true);
         sourceTask = null;
         stopLiveClient();
+        stopYouTubeLiveClient();
+        youtubeLiveClientUnavailable = false;
         active.clear();
         liveIncoming.clear();
         vodEntries.clear();
@@ -312,14 +333,34 @@ public final class ClientDanmakuController {
 
     private void ensureLiveClient() {
         if (liveClient != null) return;
-        liveClient = new BiliLiveDanmakuClient(sourceInfo, liveIncoming::offer);
+        long generation = liveGeneration;
+        liveClient = new BiliLiveDanmakuClient(sourceInfo, entry -> offerLive(generation, entry));
         liveClient.start();
     }
 
     private void drainLiveIncoming() {
-        DanmakuEntry entry;
-        while ((entry = liveIncoming.poll()) != null) {
-            enqueue(entry);
+        LiveIncoming incoming;
+        int drained = 0;
+        while (drained++ < MAX_LIVE_DRAIN_PER_TICK && (incoming = liveIncoming.poll()) != null) {
+            if (incoming.generation() == liveGeneration) enqueue(incoming.entry());
+        }
+    }
+
+    private void ensureYouTubeLiveClient(VideoInfo info) {
+        if (youtubeLiveClient != null || youtubeLiveClientUnavailable) return;
+        try {
+            long generation = liveGeneration;
+            youtubeLiveClient = new YouTubeLiveChatClient(info, entry -> offerLive(generation, entry));
+            youtubeLiveClient.start();
+        } catch (RuntimeException e) {
+            youtubeLiveClientUnavailable = true;
+            LOGGER.warn("Failed to prepare YouTube live chat", e);
+        }
+    }
+
+    private void offerLive(long generation, DanmakuEntry entry) {
+        if (entry != null && generation == liveGeneration) {
+            liveIncoming.offer(new LiveIncoming(generation, entry));
         }
     }
 
@@ -479,7 +520,8 @@ public final class ClientDanmakuController {
         }
         long delta = Math.clamp(now - lastWallTime, 0, 100);
         lastWallTime = now;
-        if (screen.player == null || !screen.player.isPaused() || sourceInfo != null && sourceInfo.live()) {
+        if (screen.player == null || !screen.player.isPaused()
+                || (sourceInfo != null && sourceInfo.live()) || youtubeLiveClient != null) {
             animationTime += delta;
         }
     }
@@ -509,7 +551,9 @@ public final class ClientDanmakuController {
     }
 
     private void stopNetworkAndClear() {
+        liveGeneration++;
         stopLiveClient();
+        stopYouTubeLiveClient();
         if (sourceTask != null) {
             sourceTask.cancel(true);
             sourceTask = null;
@@ -522,6 +566,13 @@ public final class ClientDanmakuController {
         if (liveClient != null) {
             liveClient.stop();
             liveClient = null;
+        }
+    }
+
+    private void stopYouTubeLiveClient() {
+        if (youtubeLiveClient != null) {
+            youtubeLiveClient.stop();
+            youtubeLiveClient = null;
         }
     }
 
@@ -550,5 +601,8 @@ public final class ClientDanmakuController {
         boolean fixedBottom() {
             return mode == 4;
         }
+    }
+
+    private record LiveIncoming(long generation, DanmakuEntry entry) {
     }
 }

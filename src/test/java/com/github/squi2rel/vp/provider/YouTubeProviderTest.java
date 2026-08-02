@@ -1,5 +1,6 @@
 package com.github.squi2rel.vp.provider;
 
+import com.github.squi2rel.vp.video.VideoParams;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -15,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -28,6 +30,8 @@ class YouTubeProviderTest {
     void resetConfiguration() {
         YouTubeProvider.configureProxy("");
         YouTubeProvider.configureYtdlPath("");
+        YouTubeProvider.configureCookies("", "");
+        YouTubeProvider.configureMissingYtdlHandler(null);
     }
 
     @Test
@@ -135,7 +139,155 @@ class YouTubeProviderTest {
         assertNotNull(info);
         assertEquals(0L, info.durationMs());
         assertFalse(info.seekable());
+        assertTrue(VideoParams.hasYouTubeLiveChat(info.params()));
         assertTrue(replies.isEmpty());
+    }
+
+    @Test
+    void marksOnlyActiveLiveStreamsForChat() {
+        JsonObject upcoming = new JsonObject();
+        upcoming.addProperty("live_status", "is_upcoming");
+        JsonObject active = new JsonObject();
+        active.addProperty("live_status", "is_live");
+        JsonObject booleanLive = new JsonObject();
+        booleanLive.addProperty("is_live", true);
+
+        assertFalse(YouTubeProvider.hasLiveChat(upcoming));
+        assertTrue(YouTubeProvider.hasLiveChat(active));
+        assertTrue(YouTubeProvider.hasLiveChat(booleanLive));
+    }
+
+    @Test
+    void excludesLiveChatFromSubtitleParameters() {
+        JsonObject metadata = JsonParser.parseString("""
+                {
+                  "id": "vp-live-chat-subtitle-test",
+                  "duration": 60,
+                  "requested_formats": [
+                    {
+                      "url": "https://video.example/test",
+                      "vcodec": "avc1",
+                      "acodec": "mp4a"
+                    }
+                  ],
+                  "subtitles": {
+                    "en": [
+                      {
+                        "ext": "vtt",
+                        "name": "English",
+                        "url": "https://subtitle.example/en.vtt"
+                      }
+                    ],
+                    "live_chat": [
+                      {
+                        "ext": "json",
+                        "protocol": "youtube_live_chat",
+                        "url": "https://www.youtube.com/watch?v=vp-live-chat-subtitle-test"
+                      }
+                    ]
+                  },
+                  "automatic_captions": {
+                    "zh-Hans": [
+                      {
+                        "ext": "vtt",
+                        "name": "Chinese",
+                        "url": "https://subtitle.example/zh.vtt"
+                      }
+                    ],
+                    "live_chat": [
+                      {
+                        "ext": "json",
+                        "protocol": "youtube_live_chat",
+                        "url": "https://www.youtube.com/watch?v=vp-live-chat-subtitle-test"
+                      }
+                    ]
+                  }
+                }
+                """).getAsJsonObject();
+
+        VideoInfo info = YouTubeProvider.videoInfo(metadata,
+                "https://www.youtube.com/watch?v=vp-live-chat-subtitle-test", source(new ArrayList<>()));
+        List<VideoParams.SubtitleParam> subtitles = VideoParams.subtitleParams(info.params());
+
+        assertEquals(2, subtitles.size());
+        assertTrue(subtitles.stream().anyMatch(option -> option.language().equals("en") && !option.automatic()));
+        assertTrue(subtitles.stream().anyMatch(option -> option.language().equals("zh-Hans") && option.automatic()));
+        assertFalse(subtitles.stream().anyMatch(option -> option.language().equalsIgnoreCase("live_chat")));
+    }
+
+    @Test
+    void returnsClientFallbackWhenMetadataHasNoDurationOrStream() {
+        JsonObject metadata = new JsonObject();
+        metadata.addProperty("id", "vp-fallback-test");
+        metadata.addProperty("title", "Fallback test");
+        metadata.addProperty("duration", 0);
+        List<String> replies = new ArrayList<>();
+
+        VideoInfo info = YouTubeProvider.videoInfo(metadata,
+                "https://www.youtube.com/watch?v=vp-fallback-test", source(replies));
+
+        assertNotNull(info);
+        assertEquals("", info.path());
+        assertEquals("https://www.youtube.com/watch?v=vp-fallback-test", info.rawPath());
+        assertTrue(info.seekable());
+        assertTrue(replies.stream().anyMatch(value -> value.contains("duration")));
+    }
+
+    @Test
+    void usesCookieFileBeforeBrowserProfile() throws Exception {
+        List<List<String>> commands = new ArrayList<>();
+        YouTubeProvider.configureYtdlPath("yt-dlp");
+        YouTubeProvider.configureCookies("C:\\private\\cookies.txt", "chrome:Default");
+        YouTubeProvider provider = jsonProvider(commands);
+
+        VideoInfo info = provider.from("https://www.youtube.com/watch?v=vp-cookie-file", source(new ArrayList<>()))
+                .get(5, TimeUnit.SECONDS);
+
+        assertNotNull(info);
+        assertEquals(1, commands.size());
+        List<String> command = commands.get(0);
+        int cookieFlag = command.indexOf("--cookies");
+        assertTrue(cookieFlag >= 0);
+        assertEquals("C:\\private\\cookies.txt", command.get(cookieFlag + 1));
+        assertFalse(command.contains("--cookies-from-browser"));
+    }
+
+    @Test
+    void usesBrowserCookiesWhenFileIsNotConfigured() throws Exception {
+        List<List<String>> commands = new ArrayList<>();
+        YouTubeProvider.configureYtdlPath("yt-dlp");
+        YouTubeProvider.configureCookies("", "firefox:default-release");
+        YouTubeProvider provider = jsonProvider(commands);
+
+        assertNotNull(provider.from("https://www.youtube.com/watch?v=vp-cookie-browser", source(new ArrayList<>()))
+                .get(5, TimeUnit.SECONDS));
+        List<String> command = commands.get(0);
+        int cookieFlag = command.indexOf("--cookies-from-browser");
+        assertTrue(cookieFlag >= 0);
+        assertEquals("firefox:default-release", command.get(cookieFlag + 1));
+        assertFalse(command.contains("--cookies"));
+    }
+
+    @Test
+    void retriesOnceAfterMissingYtdlpUsingInstallerCallback() throws Exception {
+        AtomicInteger starts = new AtomicInteger();
+        AtomicInteger installs = new AtomicInteger();
+        YouTubeProvider.configureMissingYtdlHandler(() -> {
+            installs.incrementAndGet();
+            return "installed-yt-dlp";
+        });
+        YouTubeProvider provider = new YouTubeProvider(command -> {
+            int attempt = starts.incrementAndGet();
+            if (attempt < 3) throw new java.io.IOException("missing");
+            return jsonProcess();
+        });
+
+        VideoInfo info = provider.from("https://www.youtube.com/watch?v=vp-installer", source(new ArrayList<>()))
+                .get(5, TimeUnit.SECONDS);
+
+        assertNotNull(info);
+        assertEquals(1, installs.get());
+        assertEquals(3, starts.get());
     }
 
     @Test
@@ -238,6 +390,23 @@ class YouTubeProviderTest {
         };
     }
 
+    private static YouTubeProvider jsonProvider(List<List<String>> commands) {
+        return new YouTubeProvider(command -> {
+            commands.add(List.copyOf(command));
+            return jsonProcess();
+        });
+    }
+
+    private static Process jsonProcess() throws java.io.IOException {
+        try {
+            String helperClasspath = Path.of(YtDlpJsonProcess.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI()).toString();
+            return new ProcessBuilder(javaExecutable(), "-cp", helperClasspath, YtDlpJsonProcess.class.getName()).start();
+        } catch (java.net.URISyntaxException error) {
+            throw new java.io.IOException(error);
+        }
+    }
+
     private static String javaExecutable() {
         String executable = System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java";
         return Path.of(System.getProperty("java.home"), "bin", executable).toString();
@@ -257,5 +426,11 @@ class YouTubeProviderTest {
             Thread.sleep(10L);
         }
         return condition.getAsBoolean();
+    }
+
+    public static final class YtDlpJsonProcess {
+        public static void main(String[] args) {
+            System.out.println("{\"id\":\"vp-test\",\"title\":\"Test video\",\"duration\":1,\"requested_formats\":[{\"url\":\"https://video.example/test\",\"vcodec\":\"avc1\",\"acodec\":\"mp4a\"}]}" );
+        }
     }
 }

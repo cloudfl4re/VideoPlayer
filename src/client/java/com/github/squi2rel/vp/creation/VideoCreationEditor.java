@@ -2,7 +2,9 @@ package com.github.squi2rel.vp.creation;
 
 import com.github.squi2rel.vp.ClientPacketHandler;
 import com.github.squi2rel.vp.VideoPlayerClient;
+import com.github.squi2rel.vp.i18n.VpInputTexts;
 import com.github.squi2rel.vp.i18n.VpTexts;
+import com.github.squi2rel.vp.network.RequestResultStatus;
 import com.github.squi2rel.vp.video.ClientVideoArea;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.ScreenGeometry;
@@ -33,6 +35,7 @@ import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
@@ -149,6 +152,10 @@ public final class VideoCreationEditor {
         return selecting || CLIENT.currentScreen instanceof VideoManagementScreen || !points.isEmpty();
     }
 
+    public Text openKeyText() {
+        return Text.keybind(openKey.getId());
+    }
+
     public Text status() {
         return status;
     }
@@ -248,9 +255,10 @@ public final class VideoCreationEditor {
         selecting = true;
         selectingSpherePreset = false;
         if (target() == Target.SCREEN && draft.screenMode == ScreenMode.FREE) {
-            setStatus("status.videoplayer.add_vertices", "Left-click to add vertices, at least 3. Right-click undo, V returns to confirm", false);
+            setStatusWithOpenKey("status.videoplayer.add_vertices", "%1$s to add vertices, at least 3. %2$s undo, %3$s returns to confirm", false,
+                    leftMouseText(), rightMouseText());
         } else {
-            setStatus("status.videoplayer.select_point", "Left-click to select point %s", false, 1);
+            setStatusWithInput("status.videoplayer.select_point", "%1$s to select point %2$s", false, leftMouseText(), 1);
         }
         CLIENT.setScreen(null);
     }
@@ -262,7 +270,7 @@ public final class VideoCreationEditor {
         resetGizmoState();
         selecting = true;
         selectingSpherePreset = true;
-        setStatus("status.videoplayer.select_sphere_center", "Left-click to select sphere center, then select radius point", false);
+        setStatusWithInput("status.videoplayer.select_sphere_center", "%1$s to select sphere center, then select radius point", false, leftMouseText());
         CLIENT.setScreen(null);
     }
 
@@ -306,7 +314,6 @@ public final class VideoCreationEditor {
                     draft.name.trim(),
                     result -> handleSubmitResult(result, callback)
             );
-            setStatus("status.videoplayer.create_area_sent", "Sent create Area request: %s", false, draft.name.trim());
             return true;
         }
 
@@ -337,7 +344,6 @@ public final class VideoCreationEditor {
             );
             applyDraftDisplay(screen);
             ClientPacketHandler.createScreen(screen, result -> handleSubmitResult(result, callback));
-            setStatus("status.videoplayer.create_screen_sent", "Sent create Screen request: %s", false, draft.name.trim());
         } else {
             ClientVideoScreen screen = area.getScreen(draft.name.trim());
             if (screen == null) {
@@ -347,18 +353,26 @@ public final class VideoCreationEditor {
             VideoScreen displayConfig = new VideoScreen(area, screen.name, vertices, draft.source.trim());
             applyDraftDisplay(displayConfig);
             ClientPacketHandler.updateScreen(screen, vertices, draft.source.trim(), displayConfig, result -> handleSubmitResult(result, callback));
-            setStatus("status.videoplayer.update_screen_sent", "Sent update Screen request: %s", false, draft.name.trim());
         }
         return true;
     }
 
     private void handleSubmitResult(ClientPacketHandler.RequestResult result, Consumer<ClientPacketHandler.RequestResult> callback) {
-        if (ClientPacketHandler.denied(result)) {
-            setStatus("error.videoplayer.permission_denied", "Permission denied", true);
-            if (callback != null) callback.accept(result);
-            return;
+        if (result == null) {
+            setStatus("error.videoplayer.request_incomplete", "Request did not complete", true);
+        } else {
+            boolean ok = result.status() == RequestResultStatus.OK;
+            if (result.message() != null && !result.message().isEmpty()) {
+                setStatus(VpTexts.text(result.message()), !ok);
+            } else if (ok) {
+                setStatus("status.videoplayer.request_completed", "Request completed", false);
+            } else if (result.status() == RequestResultStatus.DENIED) {
+                setStatus("error.videoplayer.permission_denied", "Permission denied", true);
+            } else {
+                setStatus("error.videoplayer.request_incomplete", "Request did not complete", true);
+            }
         }
-        if (result != null && result.status() == com.github.squi2rel.vp.network.RequestResultStatus.OK) {
+        if (result != null && result.status() == RequestResultStatus.OK) {
             clearAfterSubmit();
         }
         if (callback != null) callback.accept(result);
@@ -590,16 +604,18 @@ public final class VideoCreationEditor {
     private void selectCurrentTarget() {
         if (selectionPointLimitReached()) {
             if (target() == Target.SCREEN && !selectingSpherePreset) {
-                setStatus("status.videoplayer.vertex_limit_reached", "Vertex limit reached. Drag arrows to adjust, press V to return and confirm, right-click undo to keep selecting", false);
+                setStatusWithOpenKey("status.videoplayer.vertex_limit_reached", "Vertex limit reached. Drag arrows to adjust, press %2$s to return and confirm, %1$s undo to keep selecting", false,
+                        rightMouseText());
             } else {
-                setStatus("status.videoplayer.selection_complete_adjustable", "Selection complete. Press V to return and confirm, right-click undo to adjust", false);
+                setStatusWithOpenKey("status.videoplayer.selection_complete_adjustable", "Selection complete. Press %2$s to return and confirm, %1$s undo to adjust", false,
+                        rightMouseText());
                 openConfigScreen();
             }
             return;
         }
         BlockHitResult target = currentBlockHit();
         if (target == null) {
-            setStatus("error.videoplayer.look_at_block", "Look at a block, then left-click to select a point", true);
+            setStatusWithInput("error.videoplayer.look_at_block", "Look at a block, then %1$s to select a point", true, leftMouseText());
             return;
         }
         SelectionPoint point = selectionPointFrom(target);
@@ -621,39 +637,41 @@ public final class VideoCreationEditor {
                 openConfigScreen();
                 return;
             }
-            setStatus("status.videoplayer.select_radius_point", "Left-click to select radius point", false);
+            setStatusWithInput("status.videoplayer.select_radius_point", "%1$s to select radius point", false, leftMouseText());
             return;
         }
         if (target() == Target.SCREEN && draft.screenMode == ScreenMode.FREE) {
             List<Vector3f> vertices = completeVerticesForSubmit();
             if (points.size() < ScreenGeometry.MIN_VERTICES) {
-                setStatus("status.videoplayer.select_free_point_min", "Left-click to select point %s. At least %s points are required. Current point can be adjusted with arrows", false, points.size() + 1, ScreenGeometry.MIN_VERTICES);
+                setStatusWithInput("status.videoplayer.select_free_point_min", "%1$s to select point %2$s. At least %3$s points are required. Current point can be adjusted with arrows", false,
+                        leftMouseText(), points.size() + 1, ScreenGeometry.MIN_VERTICES);
                 return;
             }
             if (vertices == null) {
                 return;
             }
             if (points.size() >= ScreenGeometry.MAX_VERTICES) {
-                setStatus("status.videoplayer.selection_complete_drag", "Selection complete. Drag arrows to adjust, press V to return and confirm", false);
+                setStatusWithOpenKey("status.videoplayer.selection_complete_drag", "Selection complete. Drag arrows to adjust, press %1$s to return and confirm", false);
                 return;
             }
-            setStatus("status.videoplayer.free_points_selected", "Selected %s vertices. Press V to return and confirm, keep left-clicking to add points. Current point can be adjusted with arrows", false, points.size());
+            setStatusWithOpenKey("status.videoplayer.free_points_selected", "Selected %1$s vertices. Press %2$s to return and confirm, keep %3$s to add points. Current point can be adjusted with arrows", false,
+                    points.size(), leftMouseText());
             return;
         }
         if (points.size() >= requiredPoints()) {
             if (target() == Target.SCREEN && completeVerticesForSubmit() == null) {
-                setStatus("error.videoplayer.screen_points_invalid_adjust", "Screen points are invalid. Drag arrows to adjust or right-click undo", true);
+                setStatusWithInput("error.videoplayer.screen_points_invalid_adjust", "Screen points are invalid. Drag arrows to adjust or %1$s undo", true, rightMouseText());
                 return;
             }
             if (target() == Target.SCREEN) {
-                setStatus("status.videoplayer.selection_complete_drag", "Selection complete. Drag arrows to adjust, press V to return and confirm", false);
+                setStatusWithOpenKey("status.videoplayer.selection_complete_drag", "Selection complete. Drag arrows to adjust, press %1$s to return and confirm", false);
             } else {
-                setStatus("status.videoplayer.selection_complete", "Selection complete. Press V to return and confirm", false);
+                setStatusWithOpenKey("status.videoplayer.selection_complete", "Selection complete. Press %1$s to return and confirm", false);
                 openConfigScreen();
             }
             return;
         }
-        setStatus("status.videoplayer.select_point", "Left-click to select point %s", false, points.size() + 1);
+        setStatusWithInput("status.videoplayer.select_point", "%1$s to select point %2$s", false, leftMouseText(), points.size() + 1);
     }
 
     private boolean selectionPointLimitReached() {
@@ -677,14 +695,15 @@ public final class VideoCreationEditor {
         }
         if (selectingSpherePreset) {
             updateSphereDraftFromPoints();
-            setStatus("status.videoplayer.undo_select_point", "Undone. Left-click to select point %s", false, points.size() + 1);
+            setStatusWithInput("status.videoplayer.undo_select_point", "Undone. %1$s to select point %2$s", false, leftMouseText(), points.size() + 1);
             return;
         }
         if (target() == Target.SCREEN && draft.screenMode == ScreenMode.FREE) {
-            setStatus("status.videoplayer.undo_free_points", "Undone. Current vertices: %s. Left-click to continue, V to return", false, points.size());
+            setStatusWithOpenKey("status.videoplayer.undo_free_points", "Undone. Current vertices: %1$s. %2$s to continue, %3$s to return", false,
+                    points.size(), leftMouseText());
             return;
         }
-        setStatus("status.videoplayer.undo_select_point", "Undone. Left-click to select point %s", false, points.size() + 1);
+        setStatusWithInput("status.videoplayer.undo_select_point", "Undone. %1$s to select point %2$s", false, leftMouseText(), points.size() + 1);
     }
 
     private BlockHitResult currentBlockHit() {
@@ -817,7 +836,7 @@ public final class VideoCreationEditor {
             }
             return;
         }
-        setStatus("status.videoplayer.point_position", "Point %s %s. Press V to return and confirm", false, selectedPointIndex + 1, points.get(selectedPointIndex).format());
+        setStatusWithOpenKey("status.videoplayer.point_position", "Point %1$s %2$s. Press %3$s to return and confirm", false, selectedPointIndex + 1, points.get(selectedPointIndex).format());
     }
 
     private void stopDragging() {
@@ -1152,6 +1171,24 @@ public final class VideoCreationEditor {
 
     private void setStatus(String key, String fallback, boolean error, Object... args) {
         setStatus(VpTexts.tr(key, fallback, args), error);
+    }
+
+    private void setStatusWithInput(String key, String fallback, boolean error, Object... args) {
+        setStatus(Text.translatableWithFallback(key, fallback, args), error);
+    }
+
+    private void setStatusWithOpenKey(String key, String fallback, boolean error, Object... args) {
+        Object[] translatedArgs = Arrays.copyOf(args, args.length + 1);
+        translatedArgs[args.length] = openKeyText();
+        setStatus(Text.translatableWithFallback(key, fallback, translatedArgs), error);
+    }
+
+    Text leftMouseText() {
+        return VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_LEFT);
+    }
+
+    Text rightMouseText() {
+        return VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_RIGHT);
     }
 
     private Target target() {

@@ -25,8 +25,19 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class DataHolder {
+    static final long WORLD_SAVE_DEBOUNCE_MILLIS = 1_000L;
+    static final long WORLD_SAVE_RETRY_MILLIS = 5_000L;
+    static final long STOP_PERSISTENCE_TIMEOUT_MILLIS = 15_000L;
+    static final long FILE_LOCK_TIMEOUT_MILLIS = 5_000L;
     public static ServerConfig config = new ServerConfig();
     public static HashSet<UUID> allPlayers = new HashSet<>();
     public static HashMap<UUID, String> playerDim = new HashMap<>();
@@ -38,14 +49,25 @@ public class DataHolder {
     private static final HashSet<String> invalidWorldConfigs = new HashSet<>();
     private static final HashMap<UUID, VideoHandshakeState> handshakes = new HashMap<>();
     private static final HashMap<UUID, Long> handshakeNonces = new HashMap<>();
+    private static final HashMap<UUID, String> handshakeTokens = new HashMap<>();
     private static final java.util.concurrent.ConcurrentHashMap<String, UUID> onlinePlayerNames = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Object persistenceLock = new Object();
+    private static final HashMap<String, ScheduledSave> scheduledWorldSaves = new HashMap<>();
+    private static final HashMap<CompletableFuture<Void>, String> pendingWorldWrites = new HashMap<>();
+    private static final HashMap<String, Long> failedWorldWrites = new HashMap<>();
+    private static final ReentrantLock worldFileLock = new ReentrantLock();
+    private static final AtomicInteger persistenceThreadIds = new AtomicInteger();
+    private static ScheduledExecutorService persistenceExecutor;
+    private static long nextSaveGeneration;
     private static volatile long lifecycleEpoch;
     private static volatile boolean running;
 
     public static volatile MinecraftServer server;
 
     public static void update() {
-        PlayerManager pm = server.getPlayerManager();
+        MinecraftServer current = server;
+        if (!running || current == null) return;
+        PlayerManager pm = current.getPlayerManager();
         ArrayList<Runnable> notifications = new ArrayList<>();
         for (Map.Entry<UUID, String> entry : new ArrayList<>(playerDim.entrySet())) {
             ServerPlayerEntity player = pm.getPlayer(entry.getKey());
@@ -67,7 +89,7 @@ public class DataHolder {
             String dim = player.getEntityWorld().getRegistryKey().getValue().toString();
             HashMap<String, VideoArea> all = areas.get(dim);
             if (all == null) {
-                loadWorld(server, player.getEntityWorld());
+                loadWorld(current, player.getEntityWorld());
                 all = areas.get(dim);
             }
             if (all == null || all.isEmpty()) continue;
@@ -95,7 +117,7 @@ public class DataHolder {
                 }
             }
         }
-        for (ServerPlayerEntity player : PlayerLookup.all(server)) {
+        for (ServerPlayerEntity player : PlayerLookup.all(current)) {
             playerDim.put(player.getUuid(), player.getEntityWorld().getRegistryKey().getValue().toString());
         }
         notifications.forEach(Runnable::run);
@@ -112,8 +134,10 @@ public class DataHolder {
     }
 
     public static void playerJoin(ServerPlayerEntity player) {
+        if (!running || player == null) return;
         handshakes.put(player.getUuid(), VideoHandshakeState.NEEDS_RESET);
         handshakeNonces.remove(player.getUuid());
+        handshakeTokens.remove(player.getUuid());
         onlinePlayerNames.put(player.getGameProfile().name().toLowerCase(Locale.ROOT), player.getUuid());
     }
 
@@ -122,6 +146,7 @@ public class DataHolder {
         playerDim.remove(uuid);
         handshakes.remove(uuid);
         handshakeNonces.remove(uuid);
+        handshakeTokens.remove(uuid);
         onlinePlayerNames.entrySet().removeIf(entry -> entry.getValue().equals(uuid));
         if (server != null) {
             server.execute(() -> {
@@ -137,7 +162,16 @@ public class DataHolder {
     public static void stop(MinecraftServer server) {
         running = false;
         lifecycleEpoch++;
-        save();
+        cancelScheduledWorldSaves();
+        for (String dim : new ArrayList<>(areas.keySet())) {
+            submitFinalWorldSave(dim);
+        }
+        boolean flushed = flushWorldWrites(STOP_PERSISTENCE_TIMEOUT_MILLIS);
+        Set<String> unsaved = unsavedWorlds();
+        if (!flushed || !unsaved.isEmpty()) {
+            VideoPlayerMain.LOGGER.warn("Fabric VideoPlayer shutdown left unsaved worlds: {}", unsaved);
+        }
+        shutdownPersistenceExecutor();
         unload(server);
         areas.clear();
         worldFiles.clear();
@@ -146,19 +180,29 @@ public class DataHolder {
         playerDim.clear();
         handshakes.clear();
         handshakeNonces.clear();
+        handshakeTokens.clear();
         onlinePlayerNames.clear();
+        if (DataHolder.server == server) DataHolder.server = null;
+        if (VideoPlayerMain.server == server) VideoPlayerMain.server = null;
     }
 
     public static void save() {
         for (String dim : new ArrayList<>(areas.keySet())) {
-            saveWorld(dim);
+            try {
+                saveWorld(dim);
+            } catch (RuntimeException error) {
+                recordFailedWorld(dim, nextSaveGeneration);
+                VideoPlayerMain.LOGGER.error("Failed to capture VideoPlayer world save for {}", dim, error);
+            }
         }
     }
 
     public static void load(MinecraftServer server) {
+        resetPersistenceExecutor();
         DataHolder.server = server;
         running = true;
         lifecycleEpoch++;
+        nextSaveGeneration = Math.max(nextSaveGeneration + 1L, System.currentTimeMillis());
         config = new ServerConfig();
         areas.clear();
         worldFiles.clear();
@@ -167,6 +211,7 @@ public class DataHolder {
         playerDim.clear();
         handshakes.clear();
         handshakeNonces.clear();
+        handshakeTokens.clear();
         onlinePlayerNames.clear();
         for (ServerWorld world : server.getWorlds()) {
             loadWorld(server, world);
@@ -174,8 +219,7 @@ public class DataHolder {
     }
 
     public static void loadWorld(MinecraftServer server, ServerWorld world) {
-        if (server == null || world == null) return;
-        DataHolder.server = server;
+        if (!running || server == null || world == null || DataHolder.server != server) return;
         String dim = world.getRegistryKey().getValue().toString();
         if (areas.containsKey(dim)) return;
 
@@ -194,6 +238,7 @@ public class DataHolder {
             return;
         }
         if (existingConfig) applySharedConfig(loaded);
+        nextSaveGeneration = Math.max(nextSaveGeneration, Math.max(0L, loaded.saveGeneration));
 
         HashMap<String, VideoArea> map = new HashMap<>();
         if (loaded.areas != null) {
@@ -211,7 +256,12 @@ public class DataHolder {
     public static void unloadWorld(MinecraftServer server, ServerWorld world) {
         if (world == null) return;
         String dim = world.getRegistryKey().getValue().toString();
-        saveWorld(dim);
+        try {
+            saveWorld(dim);
+        } catch (RuntimeException error) {
+            recordFailedWorld(dim, nextSaveGeneration);
+            VideoPlayerMain.LOGGER.error("Failed to capture final VideoPlayer world save for {}", dim, error);
+        }
         HashMap<String, VideoArea> map = areas.remove(dim);
         if (map != null) {
             PlayerManager pm = server == null ? null : server.getPlayerManager();
@@ -227,6 +277,12 @@ public class DataHolder {
     }
 
     public static void saveWorld(String dim) {
+        cancelScheduledWorldSave(dim);
+        submitWorldSave(dim, true, false);
+    }
+
+    private static void submitWorldSave(String dim, boolean allowRetry, boolean allowStopped) {
+        if (!allowStopped && !running) return;
         if (invalidWorldConfigs.contains(dim)) {
             VideoPlayerMain.LOGGER.warn("Skipped saving VideoPlayer world {} because its loaded config was invalid", dim);
             return;
@@ -234,13 +290,219 @@ public class DataHolder {
         Path path = worldFiles.get(dim);
         HashMap<String, VideoArea> map = areas.get(dim);
         if (path == null || map == null) return;
-        ServerConfig saved = new ServerConfig();
-        saved.remoteControlName = config.remoteControlName;
-        saved.remoteControlId = config.remoteControlId;
-        saved.remoteControlRange = config.remoteControlRange;
-        saved.noControlRange = config.noControlRange;
-        saved.areas = new ArrayList<>(map.values());
-        writeString(path, gson.toJson(saved));
+        long generation = ++nextSaveGeneration;
+        long epoch = lifecycleEpoch;
+        WorldConfigSnapshot snapshot = WorldConfigSnapshot.capture(config, map.values(), generation);
+        submitWorldWrite(dim, path, generation, epoch, snapshot, allowRetry);
+    }
+
+    private static void submitFinalWorldSave(String dim) {
+        try {
+            submitWorldSave(dim, false, true);
+        } catch (RuntimeException error) {
+            recordFailedWorld(dim, nextSaveGeneration);
+            VideoPlayerMain.LOGGER.error("Failed to capture final VideoPlayer world save for {}", dim, error);
+        }
+    }
+
+    public static void queueWorldSave(String dim) {
+        scheduleWorldSave(dim, WORLD_SAVE_DEBOUNCE_MILLIS, true, true);
+    }
+
+    private static void scheduleWorldSave(String dim, long delayMillis, boolean allowRetry, boolean replaceExisting) {
+        if (!running || dim == null || dim.isBlank()) return;
+        synchronized (persistenceLock) {
+            if (persistenceExecutor == null || persistenceExecutor.isShutdown()) return;
+            ScheduledSave previous = scheduledWorldSaves.remove(dim);
+            if (previous != null && !replaceExisting) {
+                scheduledWorldSaves.put(dim, previous);
+                return;
+            }
+            if (previous != null && previous.future != null) previous.future.cancel(false);
+            ScheduledSave scheduled = new ScheduledSave(lifecycleEpoch, allowRetry);
+            scheduledWorldSaves.put(dim, scheduled);
+            try {
+                scheduled.future = persistenceExecutor.schedule(
+                        () -> dispatchScheduledWorldSave(dim, scheduled),
+                        Math.max(0L, delayMillis),
+                        TimeUnit.MILLISECONDS
+                );
+            } catch (RuntimeException error) {
+                scheduledWorldSaves.remove(dim, scheduled);
+                VideoPlayerMain.LOGGER.error("Failed to schedule VideoPlayer world save for {}", dim, error);
+            }
+        }
+    }
+
+    private static void dispatchScheduledWorldSave(String dim, ScheduledSave scheduled) {
+        synchronized (persistenceLock) {
+            if (scheduledWorldSaves.get(dim) != scheduled) return;
+            scheduledWorldSaves.remove(dim);
+        }
+        MinecraftServer target = server;
+        if (target == null) return;
+        target.execute(() -> {
+            if (!running || server != target || lifecycleEpoch != scheduled.epoch) return;
+            try {
+                submitWorldSave(dim, scheduled.allowRetry, false);
+            } catch (RuntimeException error) {
+                recordFailedWorld(dim, nextSaveGeneration);
+                VideoPlayerMain.LOGGER.error("Failed to capture VideoPlayer world save for {}", dim, error);
+            }
+        });
+    }
+
+    private static void cancelScheduledWorldSave(String dim) {
+        if (dim == null) return;
+        ScheduledSave scheduled;
+        synchronized (persistenceLock) {
+            scheduled = scheduledWorldSaves.remove(dim);
+        }
+        if (scheduled != null && scheduled.future != null) scheduled.future.cancel(false);
+    }
+
+    private static void cancelScheduledWorldSaves() {
+        ArrayList<ScheduledFuture<?>> tasks = new ArrayList<>();
+        synchronized (persistenceLock) {
+            for (ScheduledSave scheduled : scheduledWorldSaves.values()) {
+                if (scheduled.future != null) tasks.add(scheduled.future);
+            }
+            scheduledWorldSaves.clear();
+        }
+        for (ScheduledFuture<?> task : tasks) task.cancel(false);
+    }
+
+    private static void submitWorldWrite(String dim, Path path, long generation, long epoch,
+                                         WorldConfigSnapshot snapshot, boolean allowRetry) {
+        CompletableFuture<Void> write;
+        ScheduledExecutorService executor;
+        synchronized (persistenceLock) {
+            if (persistenceExecutor == null || persistenceExecutor.isShutdown()) {
+                failedWorldWrites.merge(dim, generation, Math::max);
+                return;
+            }
+            executor = persistenceExecutor;
+            try {
+                write = CompletableFuture.runAsync(
+                        () -> writeWorldSnapshot(path, generation, snapshot.serialize(gson)),
+                        executor
+                );
+            } catch (RuntimeException error) {
+                failedWorldWrites.merge(dim, generation, Math::max);
+                VideoPlayerMain.LOGGER.error("Failed to submit VideoPlayer world save for {}", dim, error);
+                return;
+            }
+            pendingWorldWrites.put(write, dim);
+        }
+        write.whenComplete((ignored, error) -> {
+            boolean active;
+            synchronized (persistenceLock) {
+                pendingWorldWrites.remove(write);
+                active = persistenceExecutor == executor && lifecycleEpoch == epoch;
+                if (active) {
+                    if (error == null) {
+                        Long failedGeneration = failedWorldWrites.get(dim);
+                        if (failedGeneration != null && failedGeneration <= generation) failedWorldWrites.remove(dim);
+                    } else {
+                        failedWorldWrites.merge(dim, generation, Math::max);
+                    }
+                }
+                persistenceLock.notifyAll();
+            }
+            if (error == null) return;
+            VideoPlayerMain.LOGGER.error("Failed to persist VideoPlayer world {} to {}", dim, path, error);
+            if (!allowRetry || !active) return;
+            MinecraftServer target = server;
+            if (target == null) return;
+            target.execute(() -> {
+                if (!running || server != target || lifecycleEpoch != epoch || !areas.containsKey(dim)) return;
+                scheduleWorldSave(dim, WORLD_SAVE_RETRY_MILLIS, false, false);
+            });
+        });
+    }
+
+    private static boolean flushWorldWrites(long timeoutMillis) {
+        long deadline = System.nanoTime() + Math.max(0L, timeoutMillis) * 1_000_000L;
+        synchronized (persistenceLock) {
+            while (!pendingWorldWrites.isEmpty()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0L) return false;
+                try {
+                    long millis = Math.max(1L, remaining / 1_000_000L);
+                    persistenceLock.wait(millis);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    private static Set<String> unsavedWorlds() {
+        synchronized (persistenceLock) {
+            HashSet<String> worlds = new HashSet<>(pendingWorldWrites.values());
+            worlds.addAll(failedWorldWrites.keySet());
+            return Set.copyOf(worlds);
+        }
+    }
+
+    private static void recordFailedWorld(String dim, long generation) {
+        if (dim == null) return;
+        synchronized (persistenceLock) {
+            failedWorldWrites.merge(dim, generation, Math::max);
+        }
+    }
+
+    private static void resetPersistenceExecutor() {
+        shutdownPersistenceExecutor();
+        synchronized (persistenceLock) {
+            persistenceExecutor = Executors.newSingleThreadScheduledExecutor(task -> {
+                Thread thread = new Thread(task, "VideoPlayer-world-save-" + persistenceThreadIds.incrementAndGet());
+                thread.setDaemon(true);
+                return thread;
+            });
+        }
+    }
+
+    private static void shutdownPersistenceExecutor() {
+        cancelScheduledWorldSaves();
+        ScheduledExecutorService executor;
+        synchronized (persistenceLock) {
+            executor = persistenceExecutor;
+            persistenceExecutor = null;
+            pendingWorldWrites.clear();
+            failedWorldWrites.clear();
+            persistenceLock.notifyAll();
+        }
+        if (executor != null) executor.shutdownNow();
+    }
+
+    private static void writeWorldSnapshot(Path path, long generation, String serialized) {
+        boolean acquired;
+        try {
+            acquired = worldFileLock.tryLock(FILE_LOCK_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while acquiring Fabric VideoPlayer world lock", interrupted);
+        }
+        if (!acquired) throw new IllegalStateException("Timed out acquiring Fabric VideoPlayer world lock");
+        try {
+            if (persistedGeneration(path) > generation) return;
+            writeString(path, serialized);
+        } finally {
+            worldFileLock.unlock();
+        }
+    }
+
+    private static long persistedGeneration(Path path) {
+        try {
+            if (!Files.isRegularFile(path)) return 0L;
+            ServerConfig persisted = gson.fromJson(Files.readString(path), ServerConfig.class);
+            return persisted == null ? 0L : Math.max(0L, persisted.saveGeneration);
+        } catch (Exception ignored) {
+            return 0L;
+        }
     }
 
     public static boolean worldConfigValid(String dim) {
@@ -275,7 +537,7 @@ public class DataHolder {
             for (Map.Entry<String, com.github.squi2rel.vp.video.MetaValue> entry : screen.metadata.entries().entrySet()) {
                 ServerPacketHandler.sendTo(player, VideoPackets.setMetadata(screen, entry.getKey(), entry.getValue()));
             }
-            if (!screen.idlePlayUrls.isEmpty() || screen.idlePlayRandom) {
+            if (!screen.idlePlayEntries.isEmpty() || screen.idlePlayRandom) {
                 ServerPacketHandler.sendTo(player, VideoPackets.idlePlay(screen));
             }
         }
@@ -378,6 +640,15 @@ public class DataHolder {
         return handshakeNonces.getOrDefault(uuid, 0L);
     }
 
+    public static void recordHandshakeToken(UUID uuid, String remoteToken) {
+        if (uuid == null) return;
+        handshakeTokens.put(uuid, com.github.squi2rel.vp.network.VideoProtocol.responseToken(VideoPlayerMain.version, remoteToken));
+    }
+
+    public static String handshakeToken(UUID uuid) {
+        return handshakeTokens.getOrDefault(uuid, com.github.squi2rel.vp.network.VideoProtocol.token(VideoPlayerMain.version));
+    }
+
     public static boolean acceptHandshakeAck(UUID uuid, long nonce) {
         if (nonce == 0L || handshakeNonces.getOrDefault(uuid, 0L) != nonce) return false;
         if (handshakes.get(uuid) != VideoHandshakeState.RESET_SENT) return false;
@@ -394,6 +665,7 @@ public class DataHolder {
     public static boolean rejectHandshake(UUID uuid) {
         VideoHandshakeState previous = handshakes.put(uuid, VideoHandshakeState.REJECTED);
         allPlayers.remove(uuid);
+        handshakeTokens.remove(uuid);
         return previous != VideoHandshakeState.REJECTED;
     }
 
@@ -448,5 +720,16 @@ public class DataHolder {
         if (world == null) return null;
         VideoArea area = world.get(key.areaName());
         return area == null ? null : area.getScreen(key.screenName());
+    }
+
+    private static final class ScheduledSave {
+        private final long epoch;
+        private final boolean allowRetry;
+        private ScheduledFuture<?> future;
+
+        private ScheduledSave(long epoch, boolean allowRetry) {
+            this.epoch = epoch;
+            this.allowRetry = allowRetry;
+        }
     }
 }

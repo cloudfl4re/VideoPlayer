@@ -50,4 +50,20 @@ class VideoPermissionContextTest {
 
         assertEquals(new VideoPermissionContext.Position(3, 4, 5), context.anchor());
     }
+
+    @Test
+    void boundsContextCopiesCandidateCoordinates() {
+        Vector3f first = new Vector3f(8, 9, 10);
+        Vector3f second = new Vector3f(1, 2, 3);
+
+        VideoPermissionContext context = VideoPermissionContext.bounds("world", "candidate", first, second);
+        first.set(20, 21, 22);
+        second.set(30, 31, 32);
+
+        assertEquals("world", context.dimension());
+        assertEquals("candidate", context.areaName());
+        assertEquals(new VideoPermissionContext.Position(8, 9, 10), context.areaMin());
+        assertEquals(new VideoPermissionContext.Position(1, 2, 3), context.areaMax());
+        assertEquals(true, context.hasBounds());
+    }
 }

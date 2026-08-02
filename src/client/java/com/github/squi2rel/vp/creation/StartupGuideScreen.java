@@ -8,6 +8,7 @@ import com.github.squi2rel.vp.YtDlpManager;
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.i18n.VpTranslations;
+import com.github.squi2rel.vp.video.AudioChannelMode;
 import com.github.squi2rel.vp.video.MpvVideoBackend;
 import com.github.squi2rel.vp.video.VideoBackends;
 import com.github.squi2rel.vp.video.VlcDecoder;
@@ -66,6 +67,7 @@ public class StartupGuideScreen extends Screen {
     private VpButtonWidget ytdlpDownload;
     private VpButtonWidget ytdlpCopyLink;
     private VpButtonWidget ytdlpPlatform;
+    private VpButtonWidget audioChannelMode;
     private VpButtonWidget done;
     private VpButtonWidget skip;
     private VpTextFieldWidget proxyField;
@@ -124,6 +126,9 @@ public class StartupGuideScreen extends Screen {
         ytdlPathField.setMaxLength(4096);
         ytdlPathField.setText(currentYtdlPath());
 
+        audioChannelMode = button("", contentRight - audioChannelModeButtonWidth(), contentTop + 37,
+                audioChannelModeButtonWidth(), this::cycleAudioChannelMode);
+
         ytdlpPlatform = button("", buttonX, contentTop + YTDLP_START_Y, buttonW, () -> {});
         ytdlpDownload = button(VpTexts.tr("button.videoplayer.download", "Download"), buttonX + (buttonW + GAP) * 2,
                 contentTop + YTDLP_START_Y, buttonW, this::startYtdlpDownload);
@@ -144,6 +149,7 @@ public class StartupGuideScreen extends Screen {
 
         addDrawableChild(proxyField);
         addDrawableChild(ytdlPathField);
+        addDrawableChild(audioChannelMode);
         addDrawableChild(ytdlpPlatform);
         addDrawableChild(ytdlpDownload);
         addDrawableChild(ytdlpCopyLink);
@@ -258,7 +264,7 @@ public class StartupGuideScreen extends Screen {
     }
 
     private void layoutWidgets() {
-        if (proxyField == null || ytdlPathField == null || ytdlpPlatform == null || mpvPlatform == null || skip == null || done == null) {
+        if (proxyField == null || ytdlPathField == null || audioChannelMode == null || ytdlpPlatform == null || mpvPlatform == null || skip == null || done == null) {
             return;
         }
 
@@ -272,6 +278,10 @@ public class StartupGuideScreen extends Screen {
         ytdlPathField.setX(inputRow.ytdlFieldX());
         ytdlPathField.setY(y + 4);
         ytdlPathField.clip(contentLeft, contentTop, contentRight, contentBottom);
+
+        audioChannelMode.setX(contentRight - audioChannelModeButtonWidth());
+        audioChannelMode.setY(y + 37);
+        audioChannelMode.clip(contentLeft, contentTop, contentRight, contentBottom);
 
         ytdlpPlatform.setX(buttonX);
         ytdlpPlatform.setY(y + YTDLP_START_Y);
@@ -321,7 +331,10 @@ public class StartupGuideScreen extends Screen {
         int infoW = Math.max(40, (contentRight - contentLeft - GAP) / 2);
         drawText(context, trimToWidth(VpTexts.tr("label.videoplayer.system", "System: %s", NativeDownloadConfig.osKey()), infoW), contentLeft, infoY, THEME.secondaryTextColor());
         drawText(context, trimToWidth(VpTexts.tr("label.videoplayer.recommended", "Recommended: %s", platformLabel(NativePackageManager.platformKey())), infoW), contentLeft + infoW + GAP, infoY, THEME.secondaryTextColor());
-        drawText(context, trimToWidth(VpTexts.tr("label.videoplayer.current_backend", "Current backend: %s", VideoBackends.normalize(VideoPlayerClient.config.videoBackend)), contentRight - contentLeft), contentLeft, infoY + 14, THEME.secondaryTextColor());
+        int audioButtonWidth = audioChannelModeButtonWidth();
+        int backendInfoWidth = Math.max(40, contentRight - contentLeft - audioButtonWidth - GAP);
+        drawText(context, trimToWidth(VpTexts.tr("label.videoplayer.current_backend", "Current backend: %s", VideoBackends.normalize(VideoPlayerClient.config.videoBackend)), backendInfoWidth), contentLeft, infoY + 14, THEME.secondaryTextColor());
+        renderWidget(audioChannelMode, context, mouseX, mouseY, delta);
 
         drawYtdlp(context, contentLeft, y + YTDLP_START_Y);
         renderWidget(ytdlpPlatform, context, mouseX, mouseY, delta);
@@ -420,6 +433,10 @@ public class StartupGuideScreen extends Screen {
         return Math.max(34, (groupW - GAP * (BACKEND_BUTTON_COUNT - 1)) / BACKEND_BUTTON_COUNT);
     }
 
+    private int audioChannelModeButtonWidth() {
+        return Math.min(132, Math.max(88, (contentRight - contentLeft) / 3));
+    }
+
     private void renderWidget(Drawable widget, DrawContext context, int mouseX, int mouseY, float delta) {
         if (widget != null) {
             widget.render(context, mouseX, mouseY, delta);
@@ -476,6 +493,17 @@ public class StartupGuideScreen extends Screen {
             syncBackendButtons(VideoBackends.MPV, mpvPlatform, mpvSelect, mpvDownload, mpvCopyLink, idle);
         }
         syncBackendButtons(VideoBackends.VLC, vlcPlatform, vlcSelect, vlcDownload, vlcCopyLink, idle);
+        AudioChannelMode configuredAudioChannelMode = AudioChannelMode.normalize(VideoPlayerClient.config.audioChannelMode);
+        boolean audioRestartRequired = configuredAudioChannelMode != VideoPlayerClient.activeAudioChannelMode();
+        audioChannelMode.active = idle;
+        audioChannelMode.selected(audioRestartRequired);
+        audioChannelMode.setMessage(VpTexts.tr(
+                audioRestartRequired
+                        ? "button.videoplayer.audio_channel_mode_restart_required"
+                        : "button.videoplayer.audio_channel_mode",
+                audioRestartRequired ? "Restart: %s" : "Audio: %s",
+                audioChannelModeLabel(configuredAudioChannelMode).getString()
+        ));
         int ytdlpCount = ytdlpSources().size();
         ytdlpPlatform.active = false;
         ytdlpPlatform.selected(false);
@@ -555,10 +583,10 @@ public class StartupGuideScreen extends Screen {
                     BackendRefreshResult refreshResult = refreshBackendAfterRuntimeChange(backend);
                     if (refreshResult == BackendRefreshResult.RESTART_REQUIRED) {
                         status = VpTranslation.of("message.videoplayer.native.restart_required",
-                                "%s runtime installed. Restart Minecraft to use the new runtime.", backendName(backend));
+                                "%s 运行库已安装。重启 Minecraft 后使用新运行库。", backendName(backend));
                     } else if (refreshResult == BackendRefreshResult.RETRY_FAILED) {
                         status = VpTranslation.of("error.videoplayer.native.load_failed_after_install",
-                                "%s runtime installed but could not be loaded. Restart Minecraft or check the game log.", backendName(backend));
+                                "%s 运行库已安装但加载失败。请重启 Minecraft 或检查游戏日志。", backendName(backend));
                     }
                     if (!backendAvailable(VideoPlayerClient.config.videoBackend) && backendAvailable(backend)) {
                         VideoPlayerClient.config.videoBackend = VideoBackends.normalize(backend);
@@ -652,6 +680,30 @@ public class StartupGuideScreen extends Screen {
             status = VpTranslation.of("message.videoplayer.backend_set", "Playback backend set to %s. Only newly started videos are affected.", normalized);
         }
         syncButtons();
+    }
+
+    private void cycleAudioChannelMode() {
+        if (VideoPlayerClient.config == null) return;
+        AudioChannelMode configured = AudioChannelMode.normalize(VideoPlayerClient.config.audioChannelMode);
+        AudioChannelMode next = configured == AudioChannelMode.STEREO ? AudioChannelMode.AUTO : AudioChannelMode.STEREO;
+        VideoPlayerClient.config.audioChannelMode = next.configValue();
+        VideoPlayerClient.saveConfig();
+        boolean restartRequired = next != VideoPlayerClient.activeAudioChannelMode();
+        status = VpTranslation.of(
+                restartRequired ? "message.videoplayer.audio_channel_mode_restart_required" : "message.videoplayer.audio_channel_mode_set",
+                restartRequired
+                        ? "Audio channel mode saved as %s. Restart Minecraft to apply."
+                        : "Audio channel mode saved as %s and is already active.",
+                audioChannelModeLabel(next).getString()
+        );
+        syncButtons();
+    }
+
+    private Text audioChannelModeLabel(AudioChannelMode mode) {
+        return VpTexts.tr(
+                "label.videoplayer.audio_channel_mode." + mode.configValue(),
+                mode == AudioChannelMode.AUTO ? "Auto" : "Stereo"
+        );
     }
 
     private int sourceCount(String backend) {

@@ -62,6 +62,14 @@ public final class ClientPermissionCache {
         return !isDenied(action, screen);
     }
 
+    public static boolean allowedForScreen(VideoPermissionAction action, VideoScreen screen) {
+        if (screen == null || screen.area == null) return false;
+        Map<String, Long> screens = screenMasks.get(normalize(screen.area.name));
+        if (screens == null) return false;
+        Long mask = screens.get(normalize(screen.name));
+        return mask != null && (mask & action.bit()) != 0L;
+    }
+
     public static boolean allowedOrUnknown(VideoPermissionAction action, String areaName, String screenName) {
         return !isDenied(action, areaName, screenName);
     }
