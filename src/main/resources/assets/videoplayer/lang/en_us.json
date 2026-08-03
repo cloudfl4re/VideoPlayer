@@ -147,7 +147,7 @@
   "error.videoplayer.permission_denied": "Permission denied",
   "error.videoplayer.playback_stale": "Playback control request is stale",
   "error.videoplayer.progress_unavailable": "Playback progress is unavailable",
-  "error.videoplayer.protocol_mismatch": "VideoPlayer client and server must use the same release version. Client: %s, server: %s",
+  "error.videoplayer.protocol_mismatch": "VideoPlayer client version %s is not compatible with server %s",
   "error.videoplayer.queue_full": "Video queue is full",
   "error.videoplayer.request_failed": "Request failed: %s",
   "error.videoplayer.request_incomplete": "Request did not complete",

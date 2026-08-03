@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp.network;
 
 import com.github.squi2rel.vp.DataHolder;
+import com.github.squi2rel.vp.VideoPlayerMain;
 import com.github.squi2rel.vp.permission.AreaPermissionDecision;
 import com.github.squi2rel.vp.permission.VideoPermissionContext;
 import com.github.squi2rel.vp.permission.VideoPermissions;
@@ -285,6 +286,40 @@ class ServerPacketHandlerEarlyReturnTest {
             assertFalse(screen.idlePlayRandom);
         } finally {
             buf.release();
+        }
+    }
+
+    @Test
+    void legacyIdlePlaySnapshotIsConsumedWithoutDisconnectingAndPreservesExistingEntries() {
+        IdlePlayEntry existing = IdlePlayEntry.create(
+                "https://example.invalid/existing", UUID.randomUUID(), "original", 75
+        );
+        screen.setIdlePlayEntries(List.of(existing), false);
+        String previousVersion = VideoPlayerMain.version;
+        VideoPlayerMain.version = "2.0.2";
+        DataHolder.recordHandshakeToken(playerId, "2.0.1|vp2");
+        ByteBuf buf = controlled(VideoPacketType.IDLE_PLAY, screen.name);
+        try {
+            VideoPackets.writeLegacyIdlePlayConfig(buf, List.of(
+                    existing.url(), "https://example.invalid/new"
+            ), true);
+
+            try (MockedStatic<DataHolder> dataHolder = mockStatic(DataHolder.class, CALLS_REAL_METHODS)) {
+                ServerPacketHandler.handle(player, buf);
+
+                dataHolder.verify(() -> DataHolder.disconnect(eq(player), anyString()), never());
+            }
+
+            assertFalse(buf.isReadable());
+            assertTrue(screen.idlePlayRandom);
+            assertEquals(2, screen.idlePlayEntries.size());
+            assertEquals(existing, screen.idlePlayEntries.getFirst());
+            assertEquals(playerId, screen.idlePlayEntries.getLast().addedBy());
+            assertEquals("tester", screen.idlePlayEntries.getLast().addedByName());
+            assertEquals(IdlePlayEntry.MIN_PRIORITY, screen.idlePlayEntries.getLast().priority());
+        } finally {
+            buf.release();
+            VideoPlayerMain.version = previousVersion;
         }
     }
 

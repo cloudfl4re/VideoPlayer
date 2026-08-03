@@ -538,7 +538,9 @@ public class DataHolder {
                 ServerPacketHandler.sendTo(player, VideoPackets.setMetadata(screen, entry.getKey(), entry.getValue()));
             }
             if (!screen.idlePlayEntries.isEmpty() || screen.idlePlayRandom) {
-                ServerPacketHandler.sendTo(player, VideoPackets.idlePlay(screen));
+                ServerPacketHandler.sendTo(player, VideoPackets.idlePlay(
+                        screen, supportsIdlePlayMutations(player.getUuid())
+                ));
             }
         }
         boolean loadedPlayback = false;
@@ -640,9 +642,11 @@ public class DataHolder {
         return handshakeNonces.getOrDefault(uuid, 0L);
     }
 
-    public static void recordHandshakeToken(UUID uuid, String remoteToken) {
-        if (uuid == null) return;
-        handshakeTokens.put(uuid, com.github.squi2rel.vp.network.VideoProtocol.responseToken(VideoPlayerMain.version, remoteToken));
+    public static boolean recordHandshakeToken(UUID uuid, String remoteToken) {
+        if (uuid == null) return false;
+        String token = com.github.squi2rel.vp.network.VideoProtocol.responseToken(VideoPlayerMain.version, remoteToken);
+        String previous = handshakeTokens.put(uuid, token);
+        return previous == null || !previous.equals(token);
     }
 
     public static String handshakeToken(UUID uuid) {
@@ -671,6 +675,33 @@ public class DataHolder {
 
     public static boolean protocolActive(UUID uuid) {
         return handshakes.get(uuid) == VideoHandshakeState.ACTIVE;
+    }
+
+    public static boolean supportsClientPlaybackReporting(UUID uuid) {
+        return protocolActive(uuid)
+                && com.github.squi2rel.vp.network.VideoProtocol.supportsClientPlaybackReporting(handshakeToken(uuid));
+    }
+
+    public static boolean supportsIdlePlayMutations(UUID uuid) {
+        return protocolActive(uuid)
+                && com.github.squi2rel.vp.network.VideoProtocol.supportsIdlePlayMutations(handshakeToken(uuid));
+    }
+
+    public static void refreshPlayerProtocol(ServerPlayerEntity player) {
+        if (player == null || !protocolActive(player.getUuid())) return;
+        UUID uuid = player.getUuid();
+        boolean mutations = supportsIdlePlayMutations(uuid);
+        for (HashMap<String, VideoArea> world : areas.values()) {
+            for (VideoArea area : world.values()) {
+                if (!area.containsPlayer(uuid)) continue;
+                for (VideoScreen screen : area.screens) {
+                    screen.addPlayer(uuid);
+                    if (!screen.idlePlayEntries.isEmpty() || screen.idlePlayRandom) {
+                        ServerPacketHandler.sendTo(player, VideoPackets.idlePlay(screen, mutations));
+                    }
+                }
+            }
+        }
     }
 
     public static long lifecycleEpoch() {

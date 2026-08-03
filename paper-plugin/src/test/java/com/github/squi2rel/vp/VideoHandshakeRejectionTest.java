@@ -21,4 +21,20 @@ class VideoHandshakeRejectionTest {
             DataHolder.playerLeave(uuid);
         }
     }
+
+    @Test
+    void reportsOnlyActualHandshakeTokenChanges() {
+        UUID uuid = UUID.randomUUID();
+        String previousVersion = VideoPlayerMain.version;
+        try {
+            VideoPlayerMain.version = "2.0.2";
+            assertTrue(DataHolder.recordHandshakeToken(uuid, "2.0.1|vp2"));
+            assertFalse(DataHolder.recordHandshakeToken(uuid, "2.0.1|vp2"));
+            assertTrue(DataHolder.recordHandshakeToken(uuid, "2.0.2|vp5"));
+            assertFalse(DataHolder.recordHandshakeToken(uuid, "2.0.2|vp5"));
+        } finally {
+            VideoPlayerMain.version = previousVersion;
+            DataHolder.playerLeave(uuid);
+        }
+    }
 }

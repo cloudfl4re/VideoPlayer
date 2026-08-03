@@ -61,6 +61,7 @@ public class ClientPacketHandler {
     private static final Map<Integer, PendingRequest> pendingRequests = new HashMap<>();
     private static final Map<ReporterGrantKey, PendingReporterGrant> pendingReporterGrants = new HashMap<>();
     private static final Map<DiagnosticsKey, TimedDiagnostics> playbackDiagnostics = new HashMap<>();
+    private static String serverProtocolToken = "";
 
     public static void handle(ByteBuf buf) {
         handle(buf, System.currentTimeMillis());
@@ -132,12 +133,21 @@ public class ClientPacketHandler {
                 String areaName = VideoPackets.readName(buf);
                 String screenName = VideoPackets.readName(buf);
                 ClientVideoScreen screen = screenOrNull(areaName, screenName);
-                if (screen == null) {
-                    VideoScreen discard = new VideoScreen(null, screenName, List.of(), "");
-                    VideoPackets.readIdlePlayConfig(buf, discard);
-                    return;
+                if (VideoProtocol.supportsIdlePlayMutations(serverProtocolToken)) {
+                    if (screen == null) {
+                        VideoScreen discard = new VideoScreen(null, screenName, List.of(), "");
+                        VideoPackets.readIdlePlayConfig(buf, discard);
+                        return;
+                    }
+                    VideoPackets.readIdlePlayConfig(buf, screen);
+                } else {
+                    VideoPackets.LegacyIdlePlayConfig legacy = VideoPackets.readLegacyIdlePlayConfig(buf);
+                    if (screen != null) {
+                        screen.replaceLegacyIdlePlayConfig(
+                                legacy.urls(), legacy.random(), IdlePlayEntry.UNKNOWN_UUID, ""
+                        );
+                    }
                 }
-                VideoPackets.readIdlePlayConfig(buf, screen);
             }
             case SET_UV -> {
                 String areaName = VideoPackets.readName(buf);
@@ -282,6 +292,7 @@ public class ClientPacketHandler {
         }
         String remoteVersion = VideoProtocol.displayVersion(remoteToken);
         VideoPlayerClient.acceptProtocol();
+        serverProtocolToken = remoteToken;
         VideoPlayerClient.handshakeResponse(remoteVersion);
         VideoPlayerClient.remoteControlName = ByteBufUtils.readString(buf, 256);
         VideoPlayerClient.remoteControlId = buf.readFloat();
@@ -664,6 +675,7 @@ public class ClientPacketHandler {
     public static void resetPendingRequests() {
         pendingReporterGrants.clear();
         playbackDiagnostics.clear();
+        serverProtocolToken = "";
         if (pendingRequests.isEmpty()) return;
         ArrayList<Map.Entry<Integer, PendingRequest>> pending = new ArrayList<>(pendingRequests.entrySet());
         pendingRequests.clear();

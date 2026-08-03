@@ -75,13 +75,13 @@ public class ServerPacketHandler {
                         sendTo(player, VideoPackets.protocolReject(VideoPlayerMain.version));
                         reject(player, VpTranslation.of(
                                 "error.videoplayer.protocol_mismatch",
-                                "VideoPlayer client and server must use the same release version. Client: %s, server: %s",
+                                "VideoPlayer client version %s is not compatible with server %s",
                                 VideoProtocol.displayVersion(remoteToken), VideoPlayerMain.version
                         ));
                     }
                     return;
                 }
-                DataHolder.recordHandshakeToken(player.getUniqueId(), remoteToken);
+                boolean protocolChanged = DataHolder.recordHandshakeToken(player.getUniqueId(), remoteToken);
                 String responseToken = DataHolder.handshakeToken(player.getUniqueId());
                 VideoHandshakeState previous = DataHolder.handshakeState(player.getUniqueId());
                 if (previous == VideoHandshakeState.NEEDS_RESET) {
@@ -93,8 +93,14 @@ public class ServerPacketHandler {
                     if (nonce == 0L) nonce = DataHolder.issueHandshakeNonce(player.getUniqueId());
                     sendTo(player, VideoPackets.resetClient(responseToken, DataHolder.config, nonce));
                 } else if (previous == VideoHandshakeState.ACTIVE) {
-                    sendTo(player, VideoPackets.config(responseToken, DataHolder.config));
+                    byte[] config = VideoPackets.config(responseToken, DataHolder.config);
+                    if (protocolChanged) {
+                        DataHolder.sendToCurrentThread(player, config);
+                    } else {
+                        sendTo(player, config);
+                    }
                     sendGlobalPermissions(player);
+                    if (protocolChanged) DataHolder.refreshPlayerProtocol(player);
                     Throwable backendError = PaperNativeRuntime.currentError();
                     if (backendError != null) {
                         message(player, nativeBackendUnavailableMessage(backendError));
@@ -104,7 +110,9 @@ public class ServerPacketHandler {
             case HANDSHAKE_ACK -> {
                 long nonce = buf.readLong();
                 if (DataHolder.acceptHandshakeAck(player.getUniqueId(), nonce)) {
-                    sendTo(player, VideoPackets.config(DataHolder.handshakeToken(player.getUniqueId()), DataHolder.config));
+                    DataHolder.sendToCurrentThread(player, VideoPackets.config(
+                            DataHolder.handshakeToken(player.getUniqueId()), DataHolder.config
+                    ));
                     sendGlobalPermissions(player);
                     Throwable backendError = PaperNativeRuntime.currentError();
                     if (backendError != null) {
@@ -444,7 +452,9 @@ public class ServerPacketHandler {
             case IDLE_PLAY -> handleRequest(player, buf, reply -> {
                 String areaName = VideoPackets.readName(buf);
                 String screenName = VideoPackets.readName(buf);
-                IdlePlayMutation mutation = VideoPackets.readIdlePlayMutation(buf);
+                boolean mutations = DataHolder.supportsIdlePlayMutations(player.getUniqueId());
+                IdlePlayMutation mutation = mutations ? VideoPackets.readIdlePlayMutation(buf) : null;
+                VideoPackets.LegacyIdlePlayConfig legacy = mutations ? null : VideoPackets.readLegacyIdlePlayConfig(buf);
                 reply.decoded();
                 VideoArea area = getArea(player, areaName);
                 if (area == null) {
@@ -457,21 +467,25 @@ public class ServerPacketHandler {
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.SET_IDLE_PLAY, VideoPermissionContext.screen(screen))) return;
-                if (mutation.action() == IdlePlayAction.ADD) {
+                if (mutation != null && mutation.action() == IdlePlayAction.ADD) {
                     mutation = IdlePlayMutation.add(VideoUrlNormalizer.normalizeSubmittedUrl(mutation.url()), mutation.priority());
                     if (!VideoScreen.validIdlePlayUrl(mutation.url())) {
                         reply.error(VpTranslation.of("error.videoplayer.idle_play_url_invalid", "IdlePlay URL is invalid"));
                         return;
                     }
                 }
-                if (!screen.applyIdlePlayMutation(mutation, player.getUniqueId(), player.getName())) {
+                if (legacy != null) {
+                    screen.replaceLegacyIdlePlayConfig(
+                            legacy.urls(), legacy.random(), player.getUniqueId(), player.getName()
+                    );
+                } else if (!screen.applyIdlePlayMutation(mutation, player.getUniqueId(), player.getName())) {
                     reply.error(VpTranslation.of("error.videoplayer.idle_play_mutation_failed", "Unable to update IdlePlay entry"));
                     return;
                 }
                 DataHolder.queueWorldSave(area.dim);
                 screen.idlePlayConfigChanged();
                 if (area.hasPlayer()) {
-                    sendToPlayers(area.playerSnapshot(), VideoPackets.idlePlay(screen));
+                    screen.syncIdlePlay();
                 }
                 message(player, VpTranslation.of("message.videoplayer.idle_play_updated", "Updated IdlePlay list for screen %s", screen.name));
                 reply.ok();

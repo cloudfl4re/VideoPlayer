@@ -67,13 +67,13 @@ public class ServerPacketHandler {
                         sendTo(player, VideoPackets.protocolReject(VideoPlayerMain.version));
                         reject(player, VpTranslation.of(
                                 "error.videoplayer.protocol_mismatch",
-                                "VideoPlayer client and server must use the same release version. Client: %s, server: %s",
+                                "VideoPlayer client version %s is not compatible with server %s",
                                 VideoProtocol.displayVersion(remoteToken), VideoPlayerMain.version
                         ));
                     }
                     return;
                 }
-                DataHolder.recordHandshakeToken(player.getUuid(), remoteToken);
+                boolean protocolChanged = DataHolder.recordHandshakeToken(player.getUuid(), remoteToken);
                 String responseToken = DataHolder.handshakeToken(player.getUuid());
                 VideoHandshakeState previous = DataHolder.handshakeState(player.getUuid());
                 if (previous == VideoHandshakeState.NEEDS_RESET) {
@@ -87,6 +87,7 @@ public class ServerPacketHandler {
                 } else if (previous == VideoHandshakeState.ACTIVE) {
                     sendTo(player, VideoPackets.config(responseToken, DataHolder.config));
                     sendGlobalPermissions(player);
+                    if (protocolChanged) DataHolder.refreshPlayerProtocol(player);
                 }
             }
             case HANDSHAKE_ACK -> {
@@ -363,27 +364,35 @@ public class ServerPacketHandler {
             }
             case IDLE_PLAY -> {
                 int requestId = buf.readInt();
-                VideoArea area = requireArea(player, requestId, VideoPackets.readName(buf));
+                String areaName = VideoPackets.readName(buf);
+                String screenName = VideoPackets.readName(buf);
+                boolean mutations = DataHolder.supportsIdlePlayMutations(player.getUuid());
+                IdlePlayMutation mutation = mutations ? VideoPackets.readIdlePlayMutation(buf) : null;
+                VideoPackets.LegacyIdlePlayConfig legacy = mutations ? null : VideoPackets.readLegacyIdlePlayConfig(buf);
+                VideoArea area = requireArea(player, requestId, areaName);
                 if (area == null) return;
-                VideoScreen screen = requireScreen(player, requestId, area, VideoPackets.readName(buf));
+                VideoScreen screen = requireScreen(player, requestId, area, screenName);
                 if (screen == null) return;
-                IdlePlayMutation mutation = VideoPackets.readIdlePlayMutation(buf);
                 if (!requirePermission(player, requestId, VideoPermissionAction.SET_IDLE_PLAY, VideoPermissionContext.screen(screen))) return;
-                if (mutation.action() == IdlePlayAction.ADD) {
+                if (mutation != null && mutation.action() == IdlePlayAction.ADD) {
                     mutation = IdlePlayMutation.add(VideoUrlNormalizer.normalizeSubmittedUrl(mutation.url()), mutation.priority());
                     if (!VideoScreen.validIdlePlayUrl(mutation.url())) {
                         requestError(player, requestId, VpTranslation.of("error.videoplayer.idle_play_url_invalid", "IdlePlay URL is invalid"));
                         return;
                     }
                 }
-                if (!screen.applyIdlePlayMutation(mutation, player.getUuid(), player.getName().getString())) {
+                if (legacy != null) {
+                    screen.replaceLegacyIdlePlayConfig(
+                            legacy.urls(), legacy.random(), player.getUuid(), player.getName().getString()
+                    );
+                } else if (!screen.applyIdlePlayMutation(mutation, player.getUuid(), player.getName().getString())) {
                     requestError(player, requestId, VpTranslation.of("error.videoplayer.idle_play_mutation_failed", "Unable to update IdlePlay entry"));
                     return;
                 }
                 DataHolder.queueWorldSave(area.dim);
                 screen.idlePlayConfigChanged();
                 if (area.hasPlayer()) {
-                    sendToPlayers(players(player.getEntityWorld().getServer().getPlayerManager(), area.playerSnapshot()), VideoPackets.idlePlay(screen));
+                    screen.syncIdlePlay();
                 }
                 message(player, VpTranslation.of("message.videoplayer.idle_play_updated", "Updated IdlePlay list for screen %s", screen.name));
                 requestOk(player, requestId);

@@ -42,6 +42,27 @@ public class ScreenBroadcaster {
         send(VideoPackets.updatePlaylist(List.of(screen)));
     }
 
+    public void syncIdlePlay() {
+        if (server == null) return;
+        PlayerManager pm = server.getPlayerManager();
+        byte[] current = null;
+        byte[] legacy = null;
+        for (var uuid : screen.area.playerSnapshot()) {
+            ServerPlayerEntity player = pm.getPlayer(uuid);
+            if (player == null) continue;
+            boolean mutations = DataHolder.supportsIdlePlayMutations(uuid);
+            byte[] data;
+            if (mutations) {
+                if (current == null) current = VideoPackets.idlePlay(screen, true);
+                data = current;
+            } else {
+                if (legacy == null) legacy = VideoPackets.idlePlay(screen, false);
+                data = legacy;
+            }
+            ServerPacketHandler.sendTo(player, data);
+        }
+    }
+
     public void playbackNotice(VpTranslation message, boolean error) {
         for (var uuid : screen.area.playerSnapshot()) {
             DataHolder.message(uuid, screen.serverPluginEpoch(), message);

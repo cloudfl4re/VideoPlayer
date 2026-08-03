@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VideoProtocolTest {
@@ -17,23 +18,26 @@ class VideoProtocolTest {
     }
 
     @Test
-    void acceptsEveryWireRevisionForTheSameRelease() {
+    void acceptsOnlyPublishedWireRevisions() {
         assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp5"));
-        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1"));
         assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp2"));
-        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|custom-build"));
+        assertTrue(VideoProtocol.compatible("2.0.1", "2.0.1|vp4"));
+        assertFalse(VideoProtocol.compatible("2.0.1", "2.0.1"));
+        assertFalse(VideoProtocol.compatible("2.0.1", "2.0.1|vp3"));
+        assertFalse(VideoProtocol.compatible("2.0.1", "2.0.1|custom-build"));
     }
 
     @Test
     void enforcesTheReleaseVersionMatrix() {
         List<CompatibilityCase> cases = List.of(
                 new CompatibilityCase("2.0.1", "2.0.1|vp5", true),
-                new CompatibilityCase("2.0.1", "2.0.2|vp5", false),
+                new CompatibilityCase("2.0.1", "2.0.2|vp5", true),
+                new CompatibilityCase("2.0.2", "2.0.1|vp2", true),
                 new CompatibilityCase("2.0.1", "2.0.10|vp5", false),
-                new CompatibilityCase("2.0.1", "2.0.1|vp1", true),
-                new CompatibilityCase("2.0.1", "2.0.1|vp5-extra", true),
-                new CompatibilityCase("2.0.1", "2.0.1|", true),
-                new CompatibilityCase("2.0.1", "2.0.1", true),
+                new CompatibilityCase("2.0.1", "2.0.1|vp1", false),
+                new CompatibilityCase("2.0.1", "2.0.1|vp5-extra", false),
+                new CompatibilityCase("2.0.1", "2.0.1|", false),
+                new CompatibilityCase("2.0.1", "2.0.1", false),
                 new CompatibilityCase("2.0.1", "", false),
                 new CompatibilityCase("2.0.1", null, false)
         );
@@ -52,8 +56,22 @@ class VideoProtocolTest {
         assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", "2.0.1|vp5"));
         assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", " 2.0.1|vp5 "));
         assertEquals("2.0.1|vp2", VideoProtocol.responseToken("2.0.1", "2.0.1|vp2"));
-        assertEquals("2.0.1", VideoProtocol.responseToken("2.0.1", "2.0.1"));
-        assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", "2.0.2|vp5"));
+        assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", "2.0.1"));
+        assertEquals("2.0.1|vp2", VideoProtocol.responseToken("2.0.2", "2.0.1|vp2"));
+        assertEquals("2.0.2|vp5", VideoProtocol.responseToken("2.0.2", "2.0.1|custom-build"));
+    }
+
+    @Test
+    void exposesWireCapabilitiesForPerPlayerPacketSelection() {
+        assertEquals("2.0.1|vp2", VideoProtocol.legacyToken());
+        assertEquals(2, VideoProtocol.wireRevision("2.0.1|vp2"));
+        assertEquals(4, VideoProtocol.wireRevision("2.0.1|vp4"));
+        assertEquals(5, VideoProtocol.wireRevision("2.0.2|vp5"));
+        assertEquals(-1, VideoProtocol.wireRevision("2.0.1|custom-build"));
+        assertFalse(VideoProtocol.supportsClientPlaybackReporting("2.0.1|vp2"));
+        assertTrue(VideoProtocol.supportsClientPlaybackReporting("2.0.1|vp4"));
+        assertFalse(VideoProtocol.supportsIdlePlayMutations("2.0.1|vp4"));
+        assertTrue(VideoProtocol.supportsIdlePlayMutations("2.0.2|vp5"));
     }
 
     @Test

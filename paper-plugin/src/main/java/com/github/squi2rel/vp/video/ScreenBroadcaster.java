@@ -29,6 +29,23 @@ public class ScreenBroadcaster {
         send(VideoPackets.updatePlaylist(List.of(screen)));
     }
 
+    public void syncIdlePlay() {
+        byte[] current = null;
+        byte[] legacy = null;
+        for (UUID uuid : screen.area.playerSnapshot()) {
+            boolean mutations = DataHolder.supportsIdlePlayMutations(uuid);
+            byte[] data;
+            if (mutations) {
+                if (current == null) current = VideoPackets.idlePlay(screen, true);
+                data = current;
+            } else {
+                if (legacy == null) legacy = VideoPackets.idlePlay(screen, false);
+                data = legacy;
+            }
+            DataHolder.sendTo(uuid, data);
+        }
+    }
+
     public void playbackNotice(VpTranslation message, boolean error) {
         for (UUID uuid : screen.area.playerSnapshot()) {
             DataHolder.message(uuid, message);

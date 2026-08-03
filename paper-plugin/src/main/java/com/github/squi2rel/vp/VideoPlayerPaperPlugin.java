@@ -14,6 +14,7 @@ import org.bukkit.command.PluginCommand;
 import org.bukkit.command.PluginIdentifiableCommand;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -103,6 +104,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
             nativeRuntime.stop();
             nativeRuntime = null;
         }
+        HandlerList.unregisterAll((Listener) this);
         VideoPermissions.reset();
         getServer().getMessenger().unregisterIncomingPluginChannel(this, CHANNEL, this);
         getServer().getMessenger().unregisterOutgoingPluginChannel(this, CHANNEL);

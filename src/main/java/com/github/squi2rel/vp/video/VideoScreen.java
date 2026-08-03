@@ -166,6 +166,28 @@ public class VideoScreen {
         resetIdlePlayOrder();
     }
 
+    public void replaceLegacyIdlePlayConfig(List<String> urls, boolean random, UUID addedBy, String addedByName) {
+        List<String> validated = validatedIdlePlayConfig(urls);
+        sanitizeIdlePlay();
+        ArrayList<IdlePlayEntry> existing = new ArrayList<>(idlePlayEntries);
+        boolean[] retained = new boolean[existing.size()];
+        ArrayList<IdlePlayEntry> next = new ArrayList<>(validated.size());
+        for (String url : validated) {
+            IdlePlayEntry match = null;
+            for (int i = 0; i < existing.size(); i++) {
+                if (!retained[i] && existing.get(i).url().equals(url)) {
+                    retained[i] = true;
+                    match = existing.get(i);
+                    break;
+                }
+            }
+            next.add(match == null
+                    ? IdlePlayEntry.create(url, addedBy, addedByName, IdlePlayEntry.MIN_PRIORITY)
+                    : match);
+        }
+        setIdlePlayEntries(next, random);
+    }
+
     public boolean addIdlePlayEntry(String url, UUID addedBy, String addedByName, int priority) {
         sanitizeIdlePlay();
         if (idlePlayEntries.size() >= MAX_IDLE_PLAY_ITEMS) return false;
@@ -317,6 +339,10 @@ public class VideoScreen {
 
     public void syncInfo() {
         broadcaster.syncPlaylist();
+    }
+
+    public void syncIdlePlay() {
+        if (broadcaster != null) broadcaster.syncIdlePlay();
     }
 
     public static int clampSphereSegments(int value) {

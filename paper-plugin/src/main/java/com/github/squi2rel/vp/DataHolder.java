@@ -753,7 +753,8 @@ public final class DataHolder {
             handshakes.put(uuid, VideoHandshakeState.RESET_SENT);
             handshakeNonces.put(uuid, nonce);
             allPlayers.remove(uuid);
-            reset = VideoPackets.resetClient(handshakeTokenLocked(uuid), config, nonce);
+            String token = handshakeTokens.computeIfAbsent(uuid, ignored -> VideoProtocol.legacyToken());
+            reset = VideoPackets.resetClient(token, config, nonce);
         }
         sendTo(player, reset);
         return true;
@@ -1132,11 +1133,13 @@ public final class DataHolder {
         }
     }
 
-    public static void recordHandshakeToken(UUID uuid, String remoteToken) {
-        if (uuid == null) return;
+    public static boolean recordHandshakeToken(UUID uuid, String remoteToken) {
+        if (uuid == null) return false;
         synchronized (LOCK) {
-            handshakeTokens.put(uuid, VideoProtocol.responseToken(VideoPlayerMain.version, remoteToken));
+            String token = VideoProtocol.responseToken(VideoPlayerMain.version, remoteToken);
+            String previous = handshakeTokens.put(uuid, token);
             cancelReloadHandshakeLocked(uuid);
+            return previous == null || !previous.equals(token);
         }
     }
 
@@ -1213,6 +1216,40 @@ public final class DataHolder {
         }
     }
 
+    public static boolean supportsClientPlaybackReporting(UUID uuid) {
+        synchronized (LOCK) {
+            return handshakes.get(uuid) == VideoHandshakeState.ACTIVE
+                    && VideoProtocol.supportsClientPlaybackReporting(handshakeTokenLocked(uuid));
+        }
+    }
+
+    public static boolean supportsIdlePlayMutations(UUID uuid) {
+        synchronized (LOCK) {
+            return handshakes.get(uuid) == VideoHandshakeState.ACTIVE
+                    && VideoProtocol.supportsIdlePlayMutations(handshakeTokenLocked(uuid));
+        }
+    }
+
+    public static void refreshPlayerProtocol(Player player) {
+        if (player == null) return;
+        synchronized (LOCK) {
+            UUID uuid = player.getUniqueId();
+            if (handshakes.get(uuid) != VideoHandshakeState.ACTIVE) return;
+            boolean mutations = VideoProtocol.supportsIdlePlayMutations(handshakeTokenLocked(uuid));
+            for (HashMap<String, VideoArea> world : areas.values()) {
+                for (VideoArea area : world.values()) {
+                    if (!area.containsPlayer(uuid)) continue;
+                    for (VideoScreen screen : area.screens) {
+                        screen.addPlayer(uuid);
+                        if (!screen.idlePlayEntries.isEmpty() || screen.idlePlayRandom) {
+                            sendToCurrentThread(player, VideoPackets.idlePlay(screen, mutations));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     public static VideoScreen findScreen(ScreenKey key) {
         if (key == null) return null;
         synchronized (LOCK) {
@@ -1257,7 +1294,9 @@ public final class DataHolder {
                 sendToCurrentThread(player, VideoPackets.setMetadata(screen, entry.getKey(), entry.getValue()));
             }
             if (!screen.idlePlayEntries.isEmpty() || screen.idlePlayRandom) {
-                sendToCurrentThread(player, VideoPackets.idlePlay(screen));
+                sendToCurrentThread(player, VideoPackets.idlePlay(
+                        screen, supportsIdlePlayMutations(player.getUniqueId())
+                ));
             }
         }
         boolean loadedPlayback = false;

@@ -71,7 +71,7 @@ public class PlaybackController {
                 stateExecutor(screen),
                 delayedExecutor(screen),
                 screen.captureLifecycleToken(),
-                DataHolder::protocolActive
+                DataHolder::supportsClientPlaybackReporting
         );
     }
 

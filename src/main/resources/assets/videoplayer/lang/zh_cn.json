@@ -147,7 +147,7 @@
   "error.videoplayer.permission_denied": "权限不足",
   "error.videoplayer.playback_stale": "播放控制请求已过期",
   "error.videoplayer.progress_unavailable": "无法获取播放进度",
-  "error.videoplayer.protocol_mismatch": "VideoPlayer 客户端与服务端必须使用相同发布版本。客户端: %s，服务端: %s",
+  "error.videoplayer.protocol_mismatch": "VideoPlayer 客户端版本 %s 与服务端版本 %s 不兼容",
   "error.videoplayer.queue_full": "视频队列已满",
   "error.videoplayer.request_failed": "请求失败: %s",
   "error.videoplayer.request_incomplete": "请求未完成",

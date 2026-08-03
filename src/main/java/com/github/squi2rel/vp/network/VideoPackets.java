@@ -125,6 +125,48 @@ public final class VideoPackets {
         writeIdlePlayEntries(buf, entries, random);
     }
 
+    public static LegacyIdlePlayConfig readLegacyIdlePlayConfig(ByteBuf buf) {
+        boolean random = buf.readBoolean();
+        int count = buf.readUnsignedByte();
+        if (count > VideoScreen.MAX_IDLE_PLAY_ITEMS) {
+            throw new IllegalStateException("IdlePlay item count exceeds " + VideoScreen.MAX_IDLE_PLAY_ITEMS);
+        }
+        ArrayList<String> urls = new ArrayList<>(count);
+        int totalBytes = 0;
+        for (int i = 0; i < count; i++) {
+            String url = ByteBufUtils.readString(buf, VideoScreen.MAX_IDLE_PLAY_URL_LENGTH);
+            totalBytes += ByteBufUtils.utf8Length(url);
+            if (totalBytes > VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES) {
+                throw new IllegalStateException("IdlePlay URL payload exceeds " + VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES + " bytes");
+            }
+            urls.add(url);
+        }
+        try {
+            return new LegacyIdlePlayConfig(VideoScreen.validatedIdlePlayConfig(urls), random);
+        } catch (IllegalArgumentException error) {
+            throw new IllegalStateException(error.getMessage(), error);
+        }
+    }
+
+    public static void writeLegacyIdlePlayConfig(ByteBuf buf, VideoScreen screen) {
+        screen.ensureValidState();
+        ArrayList<String> urls = new ArrayList<>(screen.idlePlayEntries.size());
+        for (IdlePlayEntry entry : screen.idlePlayEntries) urls.add(entry.url());
+        writeLegacyIdlePlayConfig(buf, urls, screen.idlePlayRandom);
+    }
+
+    public static void writeLegacyIdlePlayConfig(ByteBuf buf, List<String> requestedUrls, boolean random) {
+        List<String> validated;
+        try {
+            validated = VideoScreen.validatedIdlePlayConfig(requestedUrls);
+        } catch (IllegalArgumentException error) {
+            throw new IllegalStateException(error.getMessage(), error);
+        }
+        buf.writeBoolean(random);
+        buf.writeByte(validated.size());
+        for (String url : validated) ByteBufUtils.writeString(buf, url);
+    }
+
     public static void writeIdlePlayEntries(ByteBuf buf, List<IdlePlayEntry> requestedEntries, boolean random) {
         List<IdlePlayEntry> entries;
         try {
@@ -649,10 +691,18 @@ public final class VideoPackets {
     }
 
     public static byte[] idlePlay(VideoScreen screen) {
+        return idlePlay(screen, true);
+    }
+
+    public static byte[] idlePlay(VideoScreen screen, boolean mutations) {
         ByteBuf buf = create(VideoPacketType.IDLE_PLAY);
         writeString(buf, screen.area.name);
         writeString(buf, screen.name);
-        writeIdlePlayConfig(buf, screen);
+        if (mutations) {
+            writeIdlePlayConfig(buf, screen);
+        } else {
+            writeLegacyIdlePlayConfig(buf, screen);
+        }
         return toByteArray(buf);
     }
 
@@ -728,5 +778,11 @@ public final class VideoPackets {
         writeString(buf, source == null ? "" : source);
         VideoScreen.writeDisplayConfig(buf, displayConfig == null ? screen : displayConfig);
         return toByteArray(buf);
+    }
+
+    public record LegacyIdlePlayConfig(List<String> urls, boolean random) {
+        public LegacyIdlePlayConfig {
+            urls = urls == null ? List.of() : List.copyOf(urls);
+        }
     }
 }

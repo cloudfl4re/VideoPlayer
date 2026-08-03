@@ -1004,7 +1004,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         protocolMismatchShown = true;
         client.player.sendMessage(VpTexts.tr(
                 "message.videoplayer.version_mismatch",
-                "VideoPlayer client and server must use the same release version. Local: %s, server: %s",
+                "VideoPlayer client version %s is not compatible with server %s",
                 VideoPlayerMain.version, remoteVersion == null || remoteVersion.isBlank() ? "unknown" : remoteVersion
         ).formatted(Formatting.RED), false);
     }
