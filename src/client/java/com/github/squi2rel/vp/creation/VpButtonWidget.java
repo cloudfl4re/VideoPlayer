@@ -1,18 +1,17 @@
 package com.github.squi2rel.vp.creation;
 
 import com.github.squi2rel.vp.i18n.VpTexts;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.narration.NarrationMessageBuilder;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.text.Text;
-
 import java.util.function.Consumer;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.narration.NarrationElementOutput;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 
-class VpButtonWidget extends ClickableWidget {
+class VpButtonWidget extends AbstractWidget {
     private final VpUiTheme theme;
     private final Consumer<VpButtonWidget> onPress;
     private boolean selected;
@@ -22,10 +21,10 @@ class VpButtonWidget extends ClickableWidget {
     private int clipTop;
     private int clipRight;
     private int clipBottom;
-    private Text temporaryMessage;
+    private Component temporaryMessage;
     private long temporaryMessageUntil;
 
-    VpButtonWidget(int x, int y, int width, int height, Text message, Consumer<VpButtonWidget> onPress, VpUiTheme theme) {
+    VpButtonWidget(int x, int y, int width, int height, Component message, Consumer<VpButtonWidget> onPress, VpUiTheme theme) {
         super(x, y, width, height, message);
         this.theme = theme;
         this.onPress = onPress;
@@ -51,12 +50,12 @@ class VpButtonWidget extends ClickableWidget {
     }
 
     void showTemporaryLabel(String label, long millis) {
-        temporaryMessage = Text.literal(label == null ? "" : label);
+        temporaryMessage = Component.literal(label == null ? "" : label);
         temporaryMessageUntil = System.currentTimeMillis() + Math.max(0, millis);
     }
 
-    void showTemporaryLabel(Text label, long millis) {
-        temporaryMessage = label == null ? Text.empty() : label;
+    void showTemporaryLabel(Component label, long millis) {
+        temporaryMessage = label == null ? Component.empty() : label;
         temporaryMessageUntil = System.currentTimeMillis() + Math.max(0, millis);
     }
 
@@ -70,47 +69,47 @@ class VpButtonWidget extends ClickableWidget {
     }
 
     @Override
-    protected void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
+    protected void renderWidget(GuiGraphics context, int mouseX, int mouseY, float delta) {
         int fill = fillColor();
         int border = borderColor();
         int textColor = textColor();
         VpUiRenderer.drawBox(context, getX(), getY(), getWidth(), getHeight(), fill, border);
-        TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
+        Font textRenderer = Minecraft.getInstance().font;
         drawButtonText(context, textRenderer, textColor);
     }
 
     @Override
-    public void onClick(Click click, boolean doubleClick) {
+    public void onClick(MouseButtonEvent click, boolean doubleClick) {
         onPress.accept(this);
     }
 
     @Override
-    public boolean keyPressed(KeyInput input) {
-        if (!active || !visible || !input.isEnterOrSpace()) return false;
+    public boolean keyPressed(KeyEvent input) {
+        if (!active || !visible || !input.isSelection()) return false;
         onPress.accept(this);
         return true;
     }
 
     @Override
-    protected void appendClickableNarrations(NarrationMessageBuilder builder) {
-        appendDefaultNarrations(builder);
+    protected void updateWidgetNarration(NarrationElementOutput builder) {
+        defaultButtonNarrationText(builder);
     }
 
-    private void drawButtonText(DrawContext context, TextRenderer textRenderer, int color) {
+    private void drawButtonText(GuiGraphics context, Font textRenderer, int color) {
         int left = getX() + 4;
         int right = getRight() - 4;
         int innerWidth = Math.max(1, right - left);
         String label = displayMessage().getString();
-        String visibleLabel = textRenderer.getWidth(label) > innerWidth ? textRenderer.trimToWidth(label, innerWidth) : label;
-        Text visibleText = Text.literal(visibleLabel);
-        int textWidth = textRenderer.getWidth(visibleLabel);
+        String visibleLabel = textRenderer.width(label) > innerWidth ? textRenderer.plainSubstrByWidth(label, innerWidth) : label;
+        Component visibleText = Component.literal(visibleLabel);
+        int textWidth = textRenderer.width(visibleLabel);
         int textX = left + Math.max(0, (innerWidth - textWidth) / 2);
-        int textY = getY() + Math.max(1, (getHeight() - textRenderer.fontHeight) / 2);
+        int textY = getY() + Math.max(1, (getHeight() - textRenderer.lineHeight) / 2);
         if (theme.textShadow()) {
-            context.drawTextWithShadow(textRenderer, visibleText, textX, textY, color);
+            context.drawString(textRenderer, visibleText, textX, textY, color);
             return;
         }
-        context.drawText(textRenderer, visibleText, textX, textY, color, false);
+        context.drawString(textRenderer, visibleText, textX, textY, color, false);
     }
 
     private int fillColor() {
@@ -130,7 +129,7 @@ class VpButtonWidget extends ClickableWidget {
         return base;
     }
 
-    private Text displayMessage() {
+    private Component displayMessage() {
         if (temporaryMessage != null && System.currentTimeMillis() < temporaryMessageUntil) {
             return temporaryMessage;
         }

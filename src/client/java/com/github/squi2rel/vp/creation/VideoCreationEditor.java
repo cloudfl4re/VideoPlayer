@@ -10,6 +10,7 @@ import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.ScreenGeometry;
 import com.github.squi2rel.vp.video.ScreenSurface;
 import com.github.squi2rel.vp.video.VideoScreen;
+import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -18,19 +19,18 @@ import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.fabricmc.fabric.api.event.client.player.ClientPreAttackCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.text.Text;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFW;
 
@@ -41,7 +41,7 @@ import java.util.Locale;
 import java.util.function.Consumer;
 
 public final class VideoCreationEditor {
-    private static final MinecraftClient CLIENT = MinecraftClient.getInstance();
+    private static final Minecraft CLIENT = Minecraft.getInstance();
     private static final float EPSILON = 0.02f;
     private static final float SNAP_SCALE = 16.0f;
     private static final float POINT_NORMAL_OFFSET = 1.0f / 16.0f;
@@ -51,16 +51,16 @@ public final class VideoCreationEditor {
     private static final float GIZMO_START = 0.08f;
     private static final float GIZMO_LENGTH = 0.55f;
     private static final double DRAG_PLANE_EPSILON = 1.0E-5;
-    private static final Identifier HUD_LAYER = Identifier.of("videoplayer", "creation_editor");
+    private static final Identifier HUD_LAYER = Identifier.fromNamespaceAndPath("videoplayer", "creation_editor");
     private static final VideoCreationEditor INSTANCE = new VideoCreationEditor();
 
     private final Draft draft = new Draft();
     private final ArrayList<SelectionPoint> points = new ArrayList<>();
 
-    private KeyBinding openKey;
+    private KeyMapping openKey;
     private boolean selecting;
     private boolean selectingSpherePreset;
-    private Text status = Text.empty();
+    private Component status = Component.empty();
     private boolean statusError;
     private int selectedPointIndex = -1;
     private GizmoAxis hoveredAxis;
@@ -82,11 +82,11 @@ public final class VideoCreationEditor {
     }
 
     private void registerInternal() {
-        openKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+        openKey = KeyBindingHelper.registerKeyBinding(new KeyMapping(
                 "key.videoplayer.creation_editor",
-                InputUtil.Type.KEYSYM,
+                InputConstants.Type.KEYSYM,
                 GLFW.GLFW_KEY_V,
-                KeyBinding.Category.create(Identifier.of("videoplayer", "videoplayer"))
+                KeyMapping.Category.register(Identifier.fromNamespaceAndPath("videoplayer", "videoplayer"))
         ));
 
         ClientTickEvents.END_CLIENT_TICK.register(this::tick);
@@ -96,15 +96,15 @@ public final class VideoCreationEditor {
             return true;
         });
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
-            if (!selecting) return ActionResult.PASS;
-            if (hand == Hand.MAIN_HAND) {
+            if (!selecting) return InteractionResult.PASS;
+            if (hand == InteractionHand.MAIN_HAND) {
                 if (draggingAxis != null) {
                     stopDragging();
                 } else {
                     undoLastPoint();
                 }
             }
-            return ActionResult.FAIL;
+            return InteractionResult.FAIL;
         });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> clear());
         WorldRenderEvents.AFTER_ENTITIES.register(SelectionPreviewRenderer::renderWorld);
@@ -115,18 +115,18 @@ public final class VideoCreationEditor {
         );
     }
 
-    private void tick(MinecraftClient client) {
-        if (client.player == null || client.world == null) {
+    private void tick(Minecraft client) {
+        if (client.player == null || client.level == null) {
             clear();
             return;
         }
-        if (selecting && client.currentScreen == null) {
+        if (selecting && client.screen == null) {
             tickSelectionInput();
         } else {
             stopDragging();
             hoveredAxis = null;
         }
-        while (openKey.wasPressed()) {
+        while (openKey.consumeClick()) {
             stopDragging();
             openConfigScreen();
         }
@@ -149,14 +149,14 @@ public final class VideoCreationEditor {
     }
 
     public boolean active() {
-        return selecting || CLIENT.currentScreen instanceof VideoManagementScreen || !points.isEmpty();
+        return selecting || CLIENT.screen instanceof VideoManagementScreen || !points.isEmpty();
     }
 
-    public Text openKeyText() {
-        return Text.keybind(openKey.getId());
+    public Component openKeyText() {
+        return Component.keybind(openKey.getName());
     }
 
-    public Text status() {
+    public Component status() {
         return status;
     }
 
@@ -182,7 +182,7 @@ public final class VideoCreationEditor {
 
     public boolean screenGizmoVisible() {
         return selecting
-                && CLIENT.currentScreen == null
+                && CLIENT.screen == null
                 && !selectingSpherePreset
                 && target() == Target.SCREEN
                 && validSelectedPoint();
@@ -225,7 +225,7 @@ public final class VideoCreationEditor {
         return modeText().getString();
     }
 
-    public Text modeText() {
+    public Component modeText() {
         if (selectingSpherePreset) return VpTexts.tr("label.videoplayer.mode.sphere_preset", "360 Preset");
         if (target() == Target.AREA) return VpTexts.tr("label.videoplayer.area", "Area");
         return switch (draft.operation) {
@@ -287,7 +287,7 @@ public final class VideoCreationEditor {
         selectingSpherePreset = false;
         points.clear();
         resetGizmoState();
-        status = Text.empty();
+        status = Component.empty();
         statusError = false;
     }
 
@@ -303,7 +303,7 @@ public final class VideoCreationEditor {
     public boolean confirm(Consumer<ClientPacketHandler.RequestResult> callback) {
         if (!validateDraft(true)) return false;
         if (draft.operation == Operation.CREATE_AREA) {
-            Box box = areaPreview();
+            AABB box = areaPreview();
             if (box == null) {
                 setStatus("error.videoplayer.select_two_blocks", "Select two blocks first", true);
                 return false;
@@ -414,7 +414,7 @@ public final class VideoCreationEditor {
         return uniqueScreenName(areaName);
     }
 
-    public Box areaPreview() {
+    public AABB areaPreview() {
         if (target() != Target.AREA) return null;
         if (points.size() >= 2) {
             return areaBox(points.get(0).blockPos, points.get(1).blockPos);
@@ -558,7 +558,7 @@ public final class VideoCreationEditor {
             return false;
         }
         if (requireSelection) {
-            Text previousStatus = status;
+            Component previousStatus = status;
             boolean previousError = statusError;
             if (completeVerticesForSubmit() == null) {
                 if (status == previousStatus && statusError == previousError) {
@@ -593,7 +593,7 @@ public final class VideoCreationEditor {
     }
 
     private boolean handleExistingPointClick() {
-        if (!selecting || CLIENT.currentScreen != null || points.isEmpty()) return false;
+        if (!selecting || CLIENT.screen != null || points.isEmpty()) return false;
         int pointIndex = hitTestPoint();
         if (pointIndex < 0) return false;
         selectedPointIndex = pointIndex;
@@ -707,7 +707,7 @@ public final class VideoCreationEditor {
     }
 
     private BlockHitResult currentBlockHit() {
-        HitResult target = CLIENT.crosshairTarget;
+        HitResult target = CLIENT.hitResult;
         if (target == null || target.getType() != HitResult.Type.BLOCK) return null;
         return (BlockHitResult) target;
     }
@@ -735,12 +735,12 @@ public final class VideoCreationEditor {
     }
 
     private boolean leftMousePressed() {
-        return GLFW.glfwGetMouseButton(CLIENT.getWindow().getHandle(), GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
+        return GLFW.glfwGetMouseButton(CLIENT.getWindow().handle(), GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
     }
 
     private boolean screenPointEditingEnabled() {
         return selecting
-                && CLIENT.currentScreen == null
+                && CLIENT.screen == null
                 && !selectingSpherePreset
                 && target() == Target.SCREEN
                 && !points.isEmpty();
@@ -854,7 +854,7 @@ public final class VideoCreationEditor {
     }
 
     private Vector3f createDragPlaneNormal(GizmoAxis axis, Vector3f point) {
-        Vec3d eye = CLIENT.player == null ? new Vec3d(point.x, point.y, point.z) : CLIENT.player.getEyePos();
+        Vec3 eye = CLIENT.player == null ? new Vec3(point.x, point.y, point.z) : CLIENT.player.getEyePosition();
         Vector3f toCamera = new Vector3f((float) (eye.x - point.x), (float) (eye.y - point.y), (float) (eye.z - point.z));
         if (toCamera.lengthSquared() < EPSILON * EPSILON) {
             toCamera.set(0, 0, 1);
@@ -891,49 +891,49 @@ public final class VideoCreationEditor {
 
     private Ray currentRay() {
         if (CLIENT.player == null) return null;
-        Vec3d direction = CLIENT.player.getRotationVec(1.0f);
-        if (direction.lengthSquared() <= 0) return null;
-        return new Ray(CLIENT.player.getEyePos(), direction.normalize());
+        Vec3 direction = CLIENT.player.getViewVector(1.0f);
+        if (direction.lengthSqr() <= 0) return null;
+        return new Ray(CLIENT.player.getEyePosition(), direction.normalize());
     }
 
     private double distanceRayPointSq(Ray ray, Vector3f point) {
-        Vec3d target = toVec3d(point);
-        Vec3d toTarget = target.subtract(ray.origin);
-        double along = toTarget.dotProduct(ray.direction);
+        Vec3 target = toVec3d(point);
+        Vec3 toTarget = target.subtract(ray.origin);
+        double along = toTarget.dot(ray.direction);
         if (along < 0 || along > GIZMO_REACH) return Double.POSITIVE_INFINITY;
-        Vec3d closest = ray.origin.add(ray.direction.multiply(along));
-        return target.squaredDistanceTo(closest);
+        Vec3 closest = ray.origin.add(ray.direction.scale(along));
+        return target.distanceToSqr(closest);
     }
 
     private double distanceRaySegmentSq(Ray ray, Vector3f start, Vector3f end) {
-        Vec3d rayStart = ray.origin;
-        Vec3d rayEnd = ray.origin.add(ray.direction.multiply(GIZMO_REACH));
+        Vec3 rayStart = ray.origin;
+        Vec3 rayEnd = ray.origin.add(ray.direction.scale(GIZMO_REACH));
         return distanceSegmentSegmentSq(rayStart, rayEnd, toVec3d(start), toVec3d(end));
     }
 
-    private double distanceSegmentSegmentSq(Vec3d p1, Vec3d q1, Vec3d p2, Vec3d q2) {
-        Vec3d d1 = q1.subtract(p1);
-        Vec3d d2 = q2.subtract(p2);
-        Vec3d r = p1.subtract(p2);
-        double a = d1.dotProduct(d1);
-        double e = d2.dotProduct(d2);
-        double f = d2.dotProduct(r);
+    private double distanceSegmentSegmentSq(Vec3 p1, Vec3 q1, Vec3 p2, Vec3 q2) {
+        Vec3 d1 = q1.subtract(p1);
+        Vec3 d2 = q2.subtract(p2);
+        Vec3 r = p1.subtract(p2);
+        double a = d1.dot(d1);
+        double e = d2.dot(d2);
+        double f = d2.dot(r);
         double s;
         double t;
 
         if (a <= DRAG_PLANE_EPSILON && e <= DRAG_PLANE_EPSILON) {
-            return p1.squaredDistanceTo(p2);
+            return p1.distanceToSqr(p2);
         }
         if (a <= DRAG_PLANE_EPSILON) {
             s = 0;
             t = clamp(f / e, 0, 1);
         } else {
-            double c = d1.dotProduct(r);
+            double c = d1.dot(r);
             if (e <= DRAG_PLANE_EPSILON) {
                 t = 0;
                 s = clamp(-c / a, 0, 1);
             } else {
-                double b = d1.dotProduct(d2);
+                double b = d1.dot(d2);
                 double denominator = a * e - b * b;
                 if (Math.abs(denominator) > DRAG_PLANE_EPSILON) {
                     s = clamp((b * f - c * e) / denominator, 0, 1);
@@ -951,13 +951,13 @@ public final class VideoCreationEditor {
             }
         }
 
-        Vec3d closest1 = p1.add(d1.multiply(s));
-        Vec3d closest2 = p2.add(d2.multiply(t));
-        return closest1.squaredDistanceTo(closest2);
+        Vec3 closest1 = p1.add(d1.scale(s));
+        Vec3 closest2 = p2.add(d2.scale(t));
+        return closest1.distanceToSqr(closest2);
     }
 
-    private Vec3d toVec3d(Vector3f point) {
-        return new Vec3d(point.x, point.y, point.z);
+    private Vec3 toVec3d(Vector3f point) {
+        return new Vec3(point.x, point.y, point.z);
     }
 
     private double clamp(double value, double min, double max) {
@@ -972,14 +972,14 @@ public final class VideoCreationEditor {
         return Math.round(value * SNAP_SCALE) / SNAP_SCALE;
     }
 
-    private Box areaBox(BlockPos a, BlockPos b) {
+    private AABB areaBox(BlockPos a, BlockPos b) {
         int minX = Math.min(a.getX(), b.getX());
         int minY = Math.min(a.getY(), b.getY());
         int minZ = Math.min(a.getZ(), b.getZ());
         int maxX = Math.max(a.getX(), b.getX()) + 1;
         int maxY = Math.max(a.getY(), b.getY()) + 1;
         int maxZ = Math.max(a.getZ(), b.getZ()) + 1;
-        return new Box(minX, minY, minZ, maxX, maxY, maxZ);
+        return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     private Vector3f[] rectangleQuad(SelectionPoint first, SelectionPoint second) {
@@ -1039,7 +1039,7 @@ public final class VideoCreationEditor {
     }
 
     private Vector3f directionVector(Direction direction) {
-        return new Vector3f(direction.getOffsetX(), direction.getOffsetY(), direction.getOffsetZ());
+        return new Vector3f(direction.getStepX(), direction.getStepY(), direction.getStepZ());
     }
 
     private Vector3f rectanglePoint(Vector3f origin, Vector3f right, Vector3f down, float r, float d) {
@@ -1164,7 +1164,7 @@ public final class VideoCreationEditor {
         return prefix + System.currentTimeMillis();
     }
 
-    private void setStatus(Text status, boolean error) {
+    private void setStatus(Component status, boolean error) {
         this.status = status;
         this.statusError = error;
     }
@@ -1174,20 +1174,20 @@ public final class VideoCreationEditor {
     }
 
     private void setStatusWithInput(String key, String fallback, boolean error, Object... args) {
-        setStatus(Text.translatableWithFallback(key, fallback, args), error);
+        setStatus(Component.translatableWithFallback(key, fallback, args), error);
     }
 
     private void setStatusWithOpenKey(String key, String fallback, boolean error, Object... args) {
         Object[] translatedArgs = Arrays.copyOf(args, args.length + 1);
         translatedArgs[args.length] = openKeyText();
-        setStatus(Text.translatableWithFallback(key, fallback, translatedArgs), error);
+        setStatus(Component.translatableWithFallback(key, fallback, translatedArgs), error);
     }
 
-    Text leftMouseText() {
+    Component leftMouseText() {
         return VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_LEFT);
     }
 
-    Text rightMouseText() {
+    Component rightMouseText() {
         return VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_RIGHT);
     }
 
@@ -1215,7 +1215,7 @@ public final class VideoCreationEditor {
             return labelText().getString();
         }
 
-        public Text labelText() {
+        public Component labelText() {
             return this == AREA
                     ? VpTexts.tr("label.videoplayer.target.area", "Area")
                     : VpTexts.tr("label.videoplayer.target.screen", "Screen");
@@ -1235,7 +1235,7 @@ public final class VideoCreationEditor {
             return labelText().getString();
         }
 
-        public Text labelText() {
+        public Component labelText() {
             return switch (this) {
                 case CREATE_AREA -> VpTexts.tr("label.videoplayer.operation.create_area", "Create Area");
                 case CREATE_SCREEN -> VpTexts.tr("label.videoplayer.operation.create_screen", "Create Screen");
@@ -1256,7 +1256,7 @@ public final class VideoCreationEditor {
             return labelText().getString();
         }
 
-        public Text labelText() {
+        public Component labelText() {
             return this == RECTANGLE
                     ? VpTexts.tr("label.videoplayer.screen_mode.rectangle", "Two-point Rectangle")
                     : VpTexts.tr("label.videoplayer.screen_mode.free", "Freeform Polygon");
@@ -1354,17 +1354,17 @@ public final class VideoCreationEditor {
         }
 
         public static SelectionPoint from(BlockHitResult hit, boolean snap) {
-            Vec3d pos = hit.getPos();
-            Direction side = hit.getSide();
+            Vec3 pos = hit.getLocation();
+            Direction side = hit.getDirection();
             Vector3f point = new Vector3f(
-                    (float) pos.x + side.getOffsetX() * POINT_NORMAL_OFFSET,
-                    (float) pos.y + side.getOffsetY() * POINT_NORMAL_OFFSET,
-                    (float) pos.z + side.getOffsetZ() * POINT_NORMAL_OFFSET
+                    (float) pos.x + side.getStepX() * POINT_NORMAL_OFFSET,
+                    (float) pos.y + side.getStepY() * POINT_NORMAL_OFFSET,
+                    (float) pos.z + side.getStepZ() * POINT_NORMAL_OFFSET
             );
             if (snap) snapPoint(point);
             return new SelectionPoint(
                     point,
-                    hit.getBlockPos().toImmutable(),
+                    hit.getBlockPos().immutable(),
                     side
             );
         }
@@ -1374,6 +1374,6 @@ public final class VideoCreationEditor {
         }
     }
 
-    private record Ray(Vec3d origin, Vec3d direction) {
+    private record Ray(Vec3 origin, Vec3 direction) {
     }
 }

@@ -1,11 +1,9 @@
 package com.github.squi2rel.vp.permission;
 
-import net.minecraft.command.DefaultPermissions;
-import net.minecraft.server.network.ServerPlayerEntity;
-
 import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
+import net.minecraft.server.permissions.Permissions;
 
 public final class VideoPermissions {
     private static final Set<VideoPermissionAction> PUBLIC_ACTIONS = EnumSet.complementOf(EnumSet.of(
@@ -53,14 +51,14 @@ public final class VideoPermissions {
         return mask;
     }
 
-    public static VideoPermissionPlayer player(ServerPlayerEntity player) {
+    public static VideoPermissionPlayer player(net.minecraft.server.level.ServerPlayer player) {
         return new ServerPlayer(player);
     }
 
-    private record ServerPlayer(ServerPlayerEntity player) implements VideoPermissionPlayer {
+    private record ServerPlayer(net.minecraft.server.level.ServerPlayer player) implements VideoPermissionPlayer {
         @Override
         public java.util.UUID uuid() {
-            return player.getUuid();
+            return player.getUUID();
         }
 
         @Override
@@ -70,7 +68,7 @@ public final class VideoPermissions {
 
         @Override
         public boolean opOrGameMaster() {
-            return player.getCommandSource().getPermissions().hasPermission(DefaultPermissions.GAMEMASTERS);
+            return player.createCommandSourceStack().permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER);
         }
     }
 }

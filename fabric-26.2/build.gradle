@@ -1,0 +1,215 @@
+plugins {
+	id 'net.fabricmc.fabric-loom'
+	id 'com.gradleup.shadow'
+	id 'maven-publish'
+}
+
+base {
+	archivesName = rootProject.archives_base_name
+}
+
+repositories {
+	mavenCentral()
+	exclusiveContent {
+		forRepository {
+			maven {
+				name = 'Modrinth'
+				url = 'https://api.modrinth.com/maven'
+			}
+		}
+		filter {
+			includeGroup 'maven.modrinth'
+		}
+	}
+}
+
+configurations {
+	shadowBundle
+	clientUnitTestClasspath {
+		canBeConsumed = false
+		canBeResolved = true
+	}
+}
+
+loom {
+	splitEnvironmentSourceSets()
+	mods {
+		videoplayer {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+def sharedMainSources = fileTree(rootProject.file('src/main/java')) {
+	exclude 'com/github/squi2rel/vp/VideoPlayerMain.java'
+	exclude 'com/github/squi2rel/vp/network/VideoPayload.java'
+	exclude 'com/github/squi2rel/vp/network/ClientMessageBridge.java'
+}
+
+def versionClientRoot = file('src/client/java')
+def versionClientPaths = fileTree(versionClientRoot) {
+	include '**/*.java'
+}.files.collect {
+	versionClientRoot.toPath().relativize(it.toPath()).toString().replace('\\', '/')
+}
+def sharedClientSources = fileTree(rootProject.file('src/client/java')) {
+	exclude versionClientPaths
+}
+
+sourceSets {
+	main {
+		java.setSrcDirs([file('src/main/java')])
+		resources.setSrcDirs([rootProject.file('src/main/resources')])
+	}
+	client {
+		java.setSrcDirs([versionClientRoot])
+		resources.setSrcDirs([file('src/client/resources'), rootProject.file('src/client/resources')])
+	}
+	test {
+		java.setSrcDirs([rootProject.file('src/test/java')])
+		resources.setSrcDirs([rootProject.file('src/test/resources')])
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${rootProject.minecraft_26_2_version}"
+	implementation "net.fabricmc:fabric-loader:${rootProject.loader_26_2_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_26_2_version}"
+	implementation 'net.java.dev.jna:jna:5.17.0'
+	implementation 'org.brotli:dec:0.1.2'
+	include 'org.brotli:dec:0.1.2'
+	shadowBundle 'org.brotli:dec:0.1.2'
+	implementation 'com.google.zxing:core:3.5.3'
+	include 'com.google.zxing:core:3.5.3'
+	shadowBundle 'com.google.zxing:core:3.5.3'
+	implementation project(':mcng-core')
+	implementation project(':mcng-fabric-client-26.2')
+	shadowBundle project(':mcng-core')
+	shadowBundle project(':mcng-fabric-client-26.2')
+	compileOnly "maven.modrinth:modmenu:${rootProject.modmenu_26_2_version}"
+	compileOnly "maven.modrinth:vivecraft:${rootProject.vivecraft_26_2_version}"
+	runtimeOnly 'com.electronwill.night-config:core:3.6.6'
+	runtimeOnly 'com.electronwill.night-config:toml:3.6.6'
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	clientUnitTestClasspath platform('org.junit:junit-bom:5.11.4')
+	clientUnitTestClasspath 'org.junit.jupiter:junit-jupiter'
+	clientUnitTestClasspath 'org.junit.platform:junit-platform-launcher'
+	clientUnitTestClasspath 'org.apiguardian:apiguardian-api:1.1.2'
+}
+
+test {
+	useJUnitPlatform()
+}
+
+def clientUnitTestOutput = layout.buildDirectory.dir('classes/java/clientUnitTest')
+
+tasks.register('compileClientUnitTest', JavaCompile) {
+	source file('src/main/java/com/github/squi2rel/vp/creation/TextInputFilter.java')
+	source file('src/main/java/com/github/squi2rel/vp/render/FrameRenderGeometry.java')
+	source file('src/main/java/com/github/squi2rel/vp/render/CameraRenderGuard.java')
+	source fileTree('src/test/java') { include '**/*.java' }
+	classpath = configurations.clientUnitTestClasspath
+	destinationDirectory = clientUnitTestOutput
+	options.release = 25
+}
+
+tasks.register('clientUnitTest', Test) {
+	group = 'verification'
+	dependsOn tasks.named('compileClientUnitTest')
+	testClassesDirs = files(clientUnitTestOutput)
+	classpath = files(clientUnitTestOutput) + configurations.clientUnitTestClasspath
+	useJUnitPlatform()
+}
+
+tasks.named('check') {
+	dependsOn tasks.named('clientUnitTest')
+}
+
+processResources {
+	doFirst {
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.zip'))
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.NOTICE.txt'))
+	}
+	inputs.properties([
+		version: project.version,
+		loader_min_version: rootProject.loader_26_2_version,
+		minecraft_dependency: '~26.2',
+		java_version: '25'
+	])
+	filesMatching('fabric.mod.json') {
+		expand inputs.properties
+	}
+}
+
+processClientResources {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 25
+}
+
+tasks.named('compileJava', JavaCompile) {
+	source sharedMainSources
+}
+
+tasks.named('compileClientJava', JavaCompile) {
+	source sharedClientSources
+}
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+	archiveVersion = "${project.version}-26.2"
+}
+
+jar {
+	archiveClassifier = 'plain'
+	inputs.property 'archivesName', project.base.archivesName
+	from(rootProject.file('LICENSE')) {
+		rename { "${it}_${inputs.properties.archivesName}" }
+	}
+	from(rootProject.file('MCNG_LICENSE')) {
+		rename { "${it}_${inputs.properties.archivesName}" }
+	}
+}
+
+shadowJar {
+	archiveClassifier = ''
+	configurations = [project.configurations.shadowBundle]
+	from sourceSets.client.output
+	from(rootProject.file('LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	from(rootProject.file('MCNG_LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	relocate 'com.github.squi2rel.mcng', 'com.github.squi2rel.vp.shadow.mcng'
+}
+
+tasks.named('assemble') {
+	dependsOn tasks.named('shadowJar')
+}
+
+tasks.named('sourcesJar') {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			artifactId = rootProject.archives_base_name
+			from components.java
+		}
+	}
+}

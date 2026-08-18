@@ -1,17 +1,17 @@
 package com.github.squi2rel.vp.creation;
 
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.GuiGraphics;
 
 final class VpUiRenderer {
     private VpUiRenderer() {
     }
 
-    static void drawBox(DrawContext context, int x, int y, int width, int height, int fillColor, int borderColor) {
+    static void drawBox(GuiGraphics context, int x, int y, int width, int height, int fillColor, int borderColor) {
         if (width <= 0 || height <= 0) {
             return;
         }
         context.fill(x, y, x + width, y + height, fillColor);
-        context.drawStrokedRectangle(x, y, width, height, borderColor);
+        context.renderOutline(x, y, width, height, borderColor);
     }
 
     static int blend(int startColor, int endColor, float amount) {

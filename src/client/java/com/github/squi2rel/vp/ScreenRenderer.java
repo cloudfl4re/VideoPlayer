@@ -4,33 +4,42 @@ import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.danmaku.ClientDanmakuRenderer;
 import com.github.squi2rel.vp.video.ExternalGlTexture;
 import com.github.squi2rel.vp.mixin.client.DrawContextAccessor;
+import com.github.squi2rel.vp.render.ExternalTextureRegistry;
 import com.github.squi2rel.vp.vivecraft.Vivecraft;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.pipeline.BlendFunction;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.platform.DepthTestFunction;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.Tesselator;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.ScreenRect;
-import net.minecraft.client.gui.render.state.SimpleGuiElementRenderState;
-import net.minecraft.client.gui.render.state.TexturedQuadGuiElementRenderState;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.render.*;
-import net.minecraft.client.texture.AbstractTexture;
-import net.minecraft.client.util.BufferAllocator;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.client.texture.TextureSetup;
-import net.minecraft.client.texture.GlTexture;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.profiler.Profiler;
-import net.minecraft.util.profiler.Profilers;
+import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.gui.render.TextureSetup;
+import net.minecraft.client.gui.render.state.BlitRenderState;
+import net.minecraft.client.gui.render.state.GuiElementRenderState;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.rendertype.RenderSetup;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.profiling.Profiler;
+import net.minecraft.util.profiling.ProfilerFiller;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix3x2f;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -50,48 +59,48 @@ import static com.github.squi2rel.vp.VideoPlayerClient.*;
 @SuppressWarnings({"resource", "DataFlowIssue"})
 public class ScreenRenderer {
     private static final String SAMPLER = "Sampler0";
-    private static final Identifier PLACEHOLDER_TEXTURE = Identifier.of("videoplayer", "placeholder.png");
-    private static final Map<Integer, Identifier> textureIds = new HashMap<>();
-    private static final Map<LayerKey, RenderLayer> layers = new HashMap<>();
-    private static final RenderPipeline VIDEO_WORLD_QUADS = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.POSITION_TEX_COLOR_SNIPPET)
-            .withLocation(Identifier.of("videoplayer", "video_world_quads"))
-            .withVertexFormat(VertexFormats.POSITION_TEXTURE_COLOR, VertexFormat.DrawMode.QUADS)
+    private static final Identifier PLACEHOLDER_TEXTURE = Identifier.fromNamespaceAndPath("videoplayer", "placeholder.png");
+    private static final ExternalTextureRegistry EXTERNAL_TEXTURES = new ExternalTextureRegistry();
+    private static final Map<LayerKey, RenderType> layers = new HashMap<>();
+    private static final RenderPipeline VIDEO_WORLD_QUADS = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
+            .withLocation(Identifier.fromNamespaceAndPath("videoplayer", "video_world_quads"))
+            .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)
             .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
             .withCull(false)
             .withBlend(BlendFunction.TRANSLUCENT)
             .build());
-    private static final RenderPipeline VIDEO_WORLD_TRIANGLE_STRIP = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.POSITION_TEX_COLOR_SNIPPET)
-            .withLocation(Identifier.of("videoplayer", "video_world_triangle_strip"))
-            .withVertexFormat(VertexFormats.POSITION_TEXTURE_COLOR, VertexFormat.DrawMode.TRIANGLE_STRIP)
+    private static final RenderPipeline VIDEO_WORLD_TRIANGLE_STRIP = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
+            .withLocation(Identifier.fromNamespaceAndPath("videoplayer", "video_world_triangle_strip"))
+            .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.TRIANGLE_STRIP)
             .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
             .withCull(false)
             .withBlend(BlendFunction.TRANSLUCENT)
             .build());
-    private static final RenderPipeline VIDEO_WORLD_PREMULTIPLIED_QUADS = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.POSITION_TEX_COLOR_SNIPPET)
-            .withLocation(Identifier.of("videoplayer", "video_world_premultiplied_quads"))
-            .withVertexFormat(VertexFormats.POSITION_TEXTURE_COLOR, VertexFormat.DrawMode.QUADS)
+    private static final RenderPipeline VIDEO_WORLD_PREMULTIPLIED_QUADS = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
+            .withLocation(Identifier.fromNamespaceAndPath("videoplayer", "video_world_premultiplied_quads"))
+            .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)
             .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
             .withCull(false)
             .withBlend(BlendFunction.TRANSLUCENT_PREMULTIPLIED_ALPHA)
             .withDepthWrite(false)
             .build());
-    private static final RenderPipeline VIDEO_GUI_QUADS = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.POSITION_TEX_COLOR_SNIPPET)
-            .withLocation(Identifier.of("videoplayer", "video_gui_quads"))
-            .withVertexFormat(VertexFormats.POSITION_TEXTURE_COLOR, VertexFormat.DrawMode.QUADS)
+    private static final RenderPipeline VIDEO_GUI_QUADS = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
+            .withLocation(Identifier.fromNamespaceAndPath("videoplayer", "video_gui_quads"))
+            .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)
             .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
             .withCull(false)
             .withBlend(BlendFunction.TRANSLUCENT)
             .build());
-    private static final RenderPipeline VIDEO_GUI_TRIANGLES = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.POSITION_TEX_COLOR_SNIPPET)
-            .withLocation(Identifier.of("videoplayer", "video_gui_triangles"))
-            .withVertexFormat(VertexFormats.POSITION_TEXTURE_COLOR, VertexFormat.DrawMode.TRIANGLES)
+    private static final RenderPipeline VIDEO_GUI_TRIANGLES = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
+            .withLocation(Identifier.fromNamespaceAndPath("videoplayer", "video_gui_triangles"))
+            .withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.TRIANGLES)
             .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
             .withCull(false)
             .withBlend(BlendFunction.TRANSLUCENT)
             .build());
-    private static final RenderPipeline GUI_COLOR_QUADS_PIPELINE = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.POSITION_COLOR_SNIPPET)
-            .withLocation(Identifier.of("videoplayer", "gui_color_quads"))
-            .withVertexFormat(VertexFormats.POSITION_COLOR, VertexFormat.DrawMode.QUADS)
+    private static final RenderPipeline GUI_COLOR_QUADS_PIPELINE = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
+            .withLocation(Identifier.fromNamespaceAndPath("videoplayer", "gui_color_quads"))
+            .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS)
             .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
             .withCull(false)
             .withBlend(BlendFunction.TRANSLUCENT)
@@ -110,13 +119,13 @@ public class ScreenRenderer {
     public static void render(WorldRenderContext ctx) {
         if (CameraRenderer.rendering) return;
         skybox = false;
-        Profiler profiler = Profilers.get();
+        ProfilerFiller profiler = Profiler.get();
         profiler.push("video");
         profiler.push("render");
-        MatrixStack matrices = ctx.matrices();
-        matrices.push();
-        Camera cameraObject = MinecraftClient.getInstance().gameRenderer.getCamera();
-        Vec3d camera = cameraObject.getCameraPos();
+        PoseStack matrices = ctx.matrices();
+        matrices.pushPose();
+        Camera cameraObject = Minecraft.getInstance().gameRenderer.getMainCamera();
+        Vec3 camera = cameraObject.position();
         preciseCameraX = camera.x;
         preciseCameraY = camera.y;
         preciseCameraZ = camera.z;
@@ -126,12 +135,12 @@ public class ScreenRenderer {
         if (Vivecraft.loaded && Vivecraft.isVRActive()) {
             rotation.setFromNormalized(Vivecraft.getRotation()).invert();
         } else {
-            cameraObject.getRotation().invert(rotation);
+            cameraObject.rotation().invert(rotation);
         }
         ClientDanmakuRenderer.beginFrame(screens);
-        BufferAllocator allocator = new BufferAllocator(4096);
+        ByteBufferBuilder allocator = new ByteBufferBuilder(4096);
         try {
-            VertexConsumerProvider.Immediate consumers = VertexConsumerProvider.immediate(allocator);
+            MultiBufferSource.BufferSource consumers = MultiBufferSource.immediate(allocator);
             for (ClientVideoScreen screen : screens) {
                 try {
                     screen.draw(matrices, consumers);
@@ -139,34 +148,34 @@ public class ScreenRenderer {
                     VideoPlayerMain.LOGGER.error("Exception while rendering", e);
                 }
             }
-            consumers.draw();
+            consumers.endBatch();
         } catch (RuntimeException e) {
             VideoPlayerMain.LOGGER.warn("Failed to draw video screen buffers", e);
         } finally {
             allocator.close();
         }
-        matrices.pop();
+        matrices.popPose();
         profiler.pop();
         profiler.pop();
     }
 
-    public static RenderLayer getLayer(int textureId) {
+    public static RenderType getLayer(int textureId) {
         return texturedLayer(textureId, LayerKind.WORLD);
     }
 
-    public static RenderLayer getLayer(Identifier texture) {
+    public static RenderType getLayer(Identifier texture) {
         return texturedLayer(texture, LayerKind.WORLD);
     }
 
-    public static RenderLayer getTranslucentLayer(int textureId) {
+    public static RenderType getTranslucentLayer(int textureId) {
         return texturedLayer(textureId, LayerKind.WORLD_TRANSLUCENT);
     }
 
-    public static RenderLayer getTranslucentLayer(Identifier texture) {
+    public static RenderType getTranslucentLayer(Identifier texture) {
         return texturedLayer(texture, LayerKind.WORLD_TRANSLUCENT);
     }
 
-    public static RenderLayer getPremultipliedTranslucentLayer(Identifier texture) {
+    public static RenderType getPremultipliedTranslucentLayer(Identifier texture) {
         return texturedLayer(texture, LayerKind.WORLD_PREMULTIPLIED_TRANSLUCENT);
     }
 
@@ -174,30 +183,30 @@ public class ScreenRenderer {
         layers.keySet().removeIf(key -> key.textureId instanceof Identifier identifier && identifier.equals(texture));
     }
 
-    public static RenderLayer getBackingLayer(int textureId) {
+    public static RenderType getBackingLayer(int textureId) {
         return texturedLayer(textureId, LayerKind.WORLD_BACKING);
     }
 
-    public static RenderLayer getGuiLayer(int textureId) {
+    public static RenderType getGuiLayer(int textureId) {
         return texturedLayer(textureId, LayerKind.GUI_QUADS);
     }
 
-    public static RenderLayer getGuiTriangleLayer(int textureId) {
+    public static RenderType getGuiTriangleLayer(int textureId) {
         return texturedLayer(textureId, LayerKind.GUI_TRIANGLES);
     }
 
-    public static RenderLayer getGuiColorQuadLayer() {
+    public static RenderType getGuiColorQuadLayer() {
         return layers.computeIfAbsent(new LayerKey(0, LayerKind.GUI_COLOR_QUADS), key ->
-                RenderLayer.of("videoplayer_gui_color_quads", RenderSetup.builder(GUI_COLOR_QUADS_PIPELINE)
-                        .expectedBufferSize(256)
-                        .translucent()
-                        .build()));
+                RenderType.create("videoplayer_gui_color_quads", RenderSetup.builder(GUI_COLOR_QUADS_PIPELINE)
+                        .bufferSize(256)
+                        .sortOnUpload()
+                        .createRenderSetup()));
     }
 
-    public static void drawGuiLayer(RenderLayer layer, Consumer<VertexConsumer> drawer) {
-        BufferBuilder buffer = Tessellator.getInstance().begin(layer.getDrawMode(), layer.getVertexFormat());
+    public static void drawGuiLayer(RenderType layer, Consumer<VertexConsumer> drawer) {
+        BufferBuilder buffer = Tesselator.getInstance().begin(layer.mode(), layer.format());
         drawer.accept(buffer);
-        BuiltBuffer built = buffer.endNullable();
+        MeshData built = buffer.build();
         if (built != null) {
             layer.draw(built);
         }
@@ -209,27 +218,27 @@ public class ScreenRenderer {
             return;
         }
 
-        AbstractTexture texture = MinecraftClient.getInstance().getTextureManager().getTexture(textureIdentifier(textureId));
-        if (texture.getGlTextureView() == null || texture.getSampler() == null) return;
+        AbstractTexture texture = Minecraft.getInstance().getTextureManager().getTexture(textureIdentifier(textureId));
+        if (texture.getTextureView() == null || texture.getSampler() == null) return;
 
         Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewMatrix()).mul(modelMatrix);
         Matrix4f textureTransform = new Matrix4f();
         Vector3f modelOffset = new Vector3f();
-        GpuBufferSlice textureTransforms = RenderSystem.getDynamicUniforms().write(
+        GpuBufferSlice textureTransforms = RenderSystem.getDynamicUniforms().writeTransform(
                 modelView,
                 color(textureColor),
                 modelOffset,
                 textureTransform
         );
 
-        var framebuffer = MinecraftClient.getInstance().getFramebuffer();
+        var framebuffer = Minecraft.getInstance().getMainRenderTarget();
         GpuTextureView colorTarget = RenderSystem.outputColorTextureOverride != null
                 ? RenderSystem.outputColorTextureOverride
-                : framebuffer.getColorAttachmentView();
-        GpuTextureView depthTarget = framebuffer.useDepthAttachment
+                : framebuffer.getColorTextureView();
+        GpuTextureView depthTarget = framebuffer.useDepth
                 ? (RenderSystem.outputDepthTextureOverride != null
                 ? RenderSystem.outputDepthTextureOverride
-                : framebuffer.getDepthAttachmentView())
+                : framebuffer.getDepthTextureView())
                 : null;
 
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
@@ -241,40 +250,40 @@ public class ScreenRenderer {
         )) {
             pass.setPipeline(VIDEO_WORLD_TRIANGLE_STRIP);
             var scissor = RenderSystem.getScissorStateForRenderTypeDraws();
-            if (scissor.isEnabled()) {
-                pass.enableScissor(scissor.getX(), scissor.getY(), scissor.getWidth(), scissor.getHeight());
+            if (scissor.enabled()) {
+                pass.enableScissor(scissor.x(), scissor.y(), scissor.width(), scissor.height());
             }
             RenderSystem.bindDefaultUniforms(pass);
-            pass.bindTexture(SAMPLER, texture.getGlTextureView(), texture.getSampler());
+            pass.bindTexture(SAMPLER, texture.getTextureView(), texture.getSampler());
             pass.setVertexBuffer(0, vertexBuffer);
             pass.setUniform("DynamicTransforms", textureTransforms);
             pass.draw(0, vertexCount);
         }
     }
 
-    public static void drawGuiTexturedTriangles(DrawContext context, int textureId, List<GuiVertex> vertices) {
+    public static void drawGuiTexturedTriangles(GuiGraphics context, int textureId, List<GuiVertex> vertices) {
         if (vertices == null || vertices.size() < 3) return;
-        AbstractTexture texture = MinecraftClient.getInstance().getTextureManager().getTexture(textureIdentifier(textureId));
-        Matrix3x2f pose = new Matrix3x2f(context.getMatrices());
+        AbstractTexture texture = Minecraft.getInstance().getTextureManager().getTexture(textureIdentifier(textureId));
+        Matrix3x2f pose = new Matrix3x2f(context.pose());
         int vertexCount = vertices.size() - vertices.size() % 3;
         List<GuiVertex> copiedVertices = List.copyOf(vertices.subList(0, vertexCount));
-        ((DrawContextAccessor) context).videoplayer$getState().addSimpleElement(new GuiTexturedTrianglesRenderState(
-                TextureSetup.of(texture.getGlTextureView(), texture.getSampler()),
+        ((DrawContextAccessor) context).videoplayer$getState().submitGuiElement(new GuiTexturedTrianglesRenderState(
+                TextureSetup.singleTexture(texture.getTextureView(), texture.getSampler()),
                 pose,
                 copiedVertices,
                 bounds(copiedVertices, pose)
         ));
     }
 
-    public static void drawGuiPremultipliedTexturedQuad(DrawContext context, Identifier identifier,
+    public static void drawGuiPremultipliedTexturedQuad(GuiGraphics context, Identifier identifier,
                                                         int x1, int y1, int x2, int y2,
                                                         float u1, float u2, float v1, float v2,
                                                         int color) {
-        AbstractTexture texture = MinecraftClient.getInstance().getTextureManager().getTexture(identifier);
-        ((DrawContextAccessor) context).videoplayer$getState().addSimpleElement(new TexturedQuadGuiElementRenderState(
+        AbstractTexture texture = Minecraft.getInstance().getTextureManager().getTexture(identifier);
+        ((DrawContextAccessor) context).videoplayer$getState().submitGuiElement(new BlitRenderState(
                 RenderPipelines.GUI_TEXTURED_PREMULTIPLIED_ALPHA,
-                TextureSetup.of(texture.getGlTextureView(), texture.getSampler()),
-                new Matrix3x2f(context.getMatrices()),
+                TextureSetup.singleTexture(texture.getTextureView(), texture.getSampler()),
+                new Matrix3x2f(context.pose()),
                 x1,
                 y1,
                 x2,
@@ -284,11 +293,11 @@ public class ScreenRenderer {
                 v1,
                 v2,
                 color,
-                context.scissorStack.peekLast()
+                context.scissorStack.peek()
         ));
     }
 
-    private static ScreenRect bounds(List<GuiVertex> vertices, Matrix3x2f pose) {
+    private static ScreenRectangle bounds(List<GuiVertex> vertices, Matrix3x2f pose) {
         Vector2f transformed = new Vector2f();
         float minX = Float.POSITIVE_INFINITY;
         float minY = Float.POSITIVE_INFINITY;
@@ -305,51 +314,83 @@ public class ScreenRenderer {
         int y = (int) Math.floor(minY);
         int width = Math.max(1, (int) Math.ceil(maxX) - x);
         int height = Math.max(1, (int) Math.ceil(maxY) - y);
-        return new ScreenRect(x, y, width, height);
+        return new ScreenRectangle(x, y, width, height);
     }
 
-    private static RenderLayer texturedLayer(int textureId, LayerKind kind) {
-        return layers.computeIfAbsent(new LayerKey(textureId, kind), key ->
-                RenderLayer.of("videoplayer_" + kind.name().toLowerCase() + "_" + textureId, setup(textureId, kind)));
+    private static RenderType texturedLayer(int textureId, LayerKind kind) {
+        return texturedLayer(textureIdentifier(textureId), kind);
     }
 
-    private static RenderLayer texturedLayer(Identifier texture, LayerKind kind) {
+    private static RenderType texturedLayer(Identifier texture, LayerKind kind) {
         return layers.computeIfAbsent(new LayerKey(texture, kind), key ->
-                RenderLayer.of("videoplayer_" + kind.name().toLowerCase() + "_" + texture.toString().replace(':', '_').replace('/', '_'), setup(texture, kind)));
-    }
-
-    private static RenderSetup setup(int textureId, LayerKind kind) {
-        return setup(textureIdentifier(textureId), kind);
+                RenderType.create("videoplayer_" + kind.name().toLowerCase() + "_" + texture.toString().replace(':', '_').replace('/', '_'), setup(texture, kind)));
     }
 
     private static RenderSetup setup(Identifier texture, LayerKind kind) {
-        RenderSetup.Builder builder = RenderSetup.builder(kind.pipeline)
-                .texture(SAMPLER, texture)
-                .expectedBufferSize(kind.expectedBufferSize);
+        RenderSetup.RenderSetupBuilder builder = RenderSetup.builder(kind.pipeline)
+                .withTexture(SAMPLER, texture)
+                .bufferSize(kind.expectedBufferSize);
         if (kind.useOverlay) builder.useOverlay();
         if (kind.useLightmap) builder.useLightmap();
-        if (kind.translucent) builder.translucent();
-        return builder.build();
+        if (kind.translucent) builder.sortOnUpload();
+        return builder.createRenderSetup();
     }
 
     public static Identifier textureIdentifier(int textureId) {
         if (textureId < 0) return PLACEHOLDER_TEXTURE;
-        return textureIds.computeIfAbsent(textureId, id -> {
-            Identifier identifier = Identifier.of("videoplayer", "external_texture/" + id);
-            MinecraftClient.getInstance().getTextureManager().registerTexture(identifier, new ExternalGlTexture(id, 1, 1));
-            return identifier;
+        ExternalTextureRegistry.Acquisition acquisition = EXTERNAL_TEXTURES.acquire(textureId);
+        Identifier identifier = textureIdentifier(acquisition.registration());
+        if (acquisition.created()) {
+            Minecraft.getInstance().getTextureManager().register(identifier, new ExternalGlTexture(textureId, 1, 1));
+        }
+        return identifier;
+    }
+
+    public static void releaseTexture(int textureId) {
+        if (textureId < 0) return;
+        EXTERNAL_TEXTURES.release(textureId).ifPresent(ScreenRenderer::releaseTexture);
+    }
+
+    public static void clearExternalTextures() {
+        List<ExternalTextureRegistry.Registration> registrations = EXTERNAL_TEXTURES.clear();
+        runOnClientThread(() -> {
+            for (ExternalTextureRegistry.Registration registration : registrations) {
+                Minecraft.getInstance().getTextureManager().release(textureIdentifier(registration));
+            }
+            layers.clear();
         });
     }
 
+    private static void releaseTexture(ExternalTextureRegistry.Registration registration) {
+        Identifier identifier = textureIdentifier(registration);
+        runOnClientThread(() -> {
+            Minecraft.getInstance().getTextureManager().release(identifier);
+            layers.keySet().removeIf(key -> key.textureId.equals(identifier));
+        });
+    }
+
+    private static Identifier textureIdentifier(ExternalTextureRegistry.Registration registration) {
+        return Identifier.fromNamespaceAndPath("videoplayer", registration.identifierPath());
+    }
+
+    private static void runOnClientThread(Runnable task) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.isSameThread()) {
+            task.run();
+        } else {
+            client.execute(task);
+        }
+    }
+
     public static int placeholderTextureId() {
-        if (MinecraftClient.getInstance().getTextureManager().getTexture(PLACEHOLDER_TEXTURE).getGlTexture() instanceof GlTexture texture) {
-            return texture.getGlId();
+        if (Minecraft.getInstance().getTextureManager().getTexture(PLACEHOLDER_TEXTURE).getTexture() instanceof GlTexture texture) {
+            return texture.glId();
         }
         return -1;
     }
 
-    public static void rotateMatrix(MatrixStack matrices) {
-        matrices.multiply(rotation);
+    public static void rotateMatrix(PoseStack matrices) {
+        matrices.mulPose(rotation);
     }
 
     public static void drawWorldTexturedVertex(Matrix4f matrix, VertexConsumer consumer, Vector3f vertex,
@@ -360,9 +401,9 @@ public class ScreenRenderer {
     public static void drawWorldTexturedVertex(Matrix4f matrix, VertexConsumer consumer,
                                                float x, float y, float z, float u, float v, int color,
                                                float nx, float ny, float nz) {
-        consumer.vertex(matrix, x, y, z)
-                .color(color)
-                .texture(u, v);
+        consumer.addVertex(matrix, x, y, z)
+                .setColor(color)
+                .setUv(u, v);
     }
 
     private static Vector4f color(int color) {
@@ -403,9 +444,9 @@ public class ScreenRenderer {
     }
 
     private record GuiTexturedTrianglesRenderState(TextureSetup textureSetup, Matrix3x2f pose, List<GuiVertex> vertices,
-                                                   ScreenRect bounds) implements SimpleGuiElementRenderState {
+                                                   ScreenRectangle bounds) implements GuiElementRenderState {
         @Override
-        public void setupVertices(VertexConsumer consumer) {
+        public void buildVertices(VertexConsumer consumer) {
             // The vanilla GUI renderer indexes simple elements with a quad index buffer.
             // Submit each triangle as a degenerate quad so every triangle survives batching.
             for (int i = 0; i + 2 < vertices.size(); i += 3) {
@@ -425,13 +466,13 @@ public class ScreenRenderer {
         }
 
         @Override
-        public ScreenRect scissorArea() {
+        public ScreenRectangle scissorArea() {
             return null;
         }
     }
 
     private static void setupVertex(VertexConsumer consumer, Matrix3x2f pose, GuiVertex vertex) {
-        consumer.vertex(pose, vertex.x, vertex.y).texture(vertex.u, vertex.v).color(vertex.color);
+        consumer.addVertexWith2DPose(pose, vertex.x, vertex.y).setUv(vertex.u, vertex.v).setColor(vertex.color);
     }
 
     private enum LayerKind {

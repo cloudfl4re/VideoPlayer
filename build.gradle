@@ -1,208 +1,259 @@
+import groovy.json.JsonSlurper
+
+import java.nio.charset.StandardCharsets
+import java.util.jar.JarFile
+
 plugins {
-	id 'fabric-loom' version "${loom_version}"
-	id 'com.gradleup.shadow' version '9.2.2'
-	id 'maven-publish'
+	id 'base'
+	id 'fabric-loom' version "${loom_version}" apply false
+	id 'net.fabricmc.fabric-loom' version "${loom_version}" apply false
+	id 'com.gradleup.shadow' version '9.2.2' apply false
 }
 
 version = project.mod_version
 group = project.maven_group
 
-base {
-	archivesName = project.archives_base_name
-}
-
-repositories {
-	mavenCentral()
-	// Add repositories to retrieve artifacts from in here.
-	// You should only use this when depending on other mods because
-	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
-	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
-	// for more information about repositories.
-	exclusiveContent {
-		forRepository {
-			maven {
-				name = "Modrinth"
-				url = "https://api.modrinth.com/maven"
-			}
-		}
-		filter {
-			includeGroup "maven.modrinth"
-		}
-	}
+allprojects {
+	version = rootProject.mod_version
+	group = rootProject.maven_group
 }
 
 subprojects {
 	repositories {
 		mavenCentral()
 		maven {
-			name = "Fabric"
-			url = "https://maven.fabricmc.net/"
+			name = 'Fabric'
+			url = 'https://maven.fabricmc.net/'
 		}
 	}
 }
 
-configurations {
-	shadowBundle
+tasks.named('build') {
+	dependsOn ':fabric-1.21.11:build'
+	dependsOn ':fabric-26.2:build'
+	dependsOn ':paper-plugin:build'
+	dependsOn ':paper-plugin-26.2:build'
+	dependsOn ':mcng-core:build'
+	dependsOn ':mcng-fabric-client:build'
+	dependsOn ':mcng-fabric-client-26.2:build'
 }
 
-loom {
-	splitEnvironmentSourceSets()
+def releaseVersion = project.version.toString()
+def releaseDirectory = layout.buildDirectory.dir('release')
+def releaseArtifacts = [
+	[
+		fileName: "VideoPlayer-${releaseVersion}.jar",
+		source: file("fabric-1.21.11/build/libs/VideoPlayer-${releaseVersion}.jar"),
+		type: 'fabric',
+		minecraft: '~1.21.11',
+		javaDependency: '>=21',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerMain.class',
+		classMajor: 65,
+		requiredEntries: [
+			'fabric.mod.json',
+			'videoplayer.client.mixins.json',
+			'com/github/squi2rel/vp/network/VideoProtocol.class',
+			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
+			'META-INF/jars/core-3.5.3.jar',
+			'META-INF/jars/dec-0.1.2.jar'
+		]
+	],
+	[
+		fileName: "VideoPlayer-Paper-${releaseVersion}.jar",
+		source: file("paper-plugin/build/libs/VideoPlayer-Paper-${releaseVersion}.jar"),
+		type: 'paper',
+		apiVersion: '1.21',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+		classMajor: 65,
+		requiredEntries: [
+			'plugin.yml',
+			'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+			'com/github/squi2rel/vp/FoliaScheduler.class',
+			'com/github/squi2rel/vp/network/VideoProtocol.class'
+		]
+	],
+	[
+		fileName: "VideoPlayer-${releaseVersion}-26.2.jar",
+		source: file("fabric-26.2/build/libs/VideoPlayer-${releaseVersion}-26.2.jar"),
+		type: 'fabric',
+		minecraft: '~26.2',
+		javaDependency: '>=25',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerMain.class',
+		classMajor: 69,
+		requiredEntries: [
+			'fabric.mod.json',
+			'videoplayer.client.mixins.json',
+			'com/github/squi2rel/vp/network/VideoProtocol.class',
+			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
+			'com/github/squi2rel/vp/render/FrameRenderSnapshot.class',
+			'com/github/squi2rel/vp/render/WorldRenderBatch.class',
+			'com/github/squi2rel/vp/mixin/client/GameRendererTargetAccessor.class',
+			'com/github/squi2rel/vp/mixin/client/GlDeviceAccessor.class',
+			'org/brotli/dec/BrotliInputStream.class',
+			'com/google/zxing/qrcode/QRCodeWriter.class'
+		]
+	],
+	[
+		fileName: "VideoPlayer-Paper-${releaseVersion}-26.2.jar",
+		source: file("paper-plugin-26.2/build/libs/VideoPlayer-Paper-${releaseVersion}-26.2.jar"),
+		type: 'paper',
+		apiVersion: '26.2',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+		classMajor: 69,
+		requiredEntries: [
+			'plugin.yml',
+			'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+			'com/github/squi2rel/vp/FoliaScheduler.class',
+			'com/github/squi2rel/vp/network/VideoProtocol.class'
+		]
+	]
+]
 
-	mods {
-		"videoplayer" {
-			sourceSet sourceSets.main
-			sourceSet sourceSets.client
-		}
-	}
-
-}
-
-if (findProject(":mcng-core") == null) {
-	sourceSets.client.java {
-		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphCompiler.java"
-		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphManager.java"
-		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphNodes.java"
-		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphStore.java"
-		exclude "com/github/squi2rel/vp/filtergraph/MpvFilterGraphTypes.java"
-		exclude "com/github/squi2rel/vp/creation/MpvFilterGraphScreen.java"
-	}
-}
-
-dependencies {
-	// To change the versions see the gradle.properties file
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-
-	// Fabric API. This is technically optional, but you probably want it anyway.
-	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-
-	implementation "net.java.dev.jna:jna:5.17.0"
-	implementation "org.brotli:dec:0.1.2"
-	include "org.brotli:dec:0.1.2"
-	implementation "com.google.zxing:core:3.5.3"
-	include "com.google.zxing:core:3.5.3"
-
-	if (findProject(":mcng-core") != null) {
-		implementation project(":mcng-core")
-		implementation project(path: ":mcng-fabric-client", configuration: "namedElements")
-		shadowBundle project(":mcng-core")
-		shadowBundle project(path: ":mcng-fabric-client", configuration: "namedElements")
-	}
-
-	modCompileOnly "maven.modrinth:modmenu:${project.modmenu_version}"
-	modApi "maven.modrinth:vivecraft:1.21.11-1.3.9-fabric"
-	runtimeOnly "com.electronwill.night-config:core:3.6.6"
-	runtimeOnly "com.electronwill.night-config:toml:3.6.6"
-	testImplementation platform("org.junit:junit-bom:5.11.4")
-	testImplementation "org.junit.jupiter:junit-jupiter"
-	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
-}
-
-test {
-	useJUnitPlatform()
-}
-
-def bundledAndroidVlcUrl = 'https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libvlc-android-arm64-v8a.zip'
-def bundledAndroidVlcSha256 = 'dbae70c264a9d86cd8d7fbd7ca35388cbe973de03636c08f0ac8d7cdb493f9ec'
-def bundledAndroidVlcZip = layout.buildDirectory.file('bundled-native/libvlc-android-arm64-v8a.zip')
-
-tasks.register('downloadBundledAndroidVlc') {
-	inputs.property 'url', bundledAndroidVlcUrl
-	inputs.property 'sha256', bundledAndroidVlcSha256
-	outputs.file bundledAndroidVlcZip
+tasks.register('assembleRelease') {
+	group = 'build'
+	description = 'Builds and copies the four supported release archives.'
+	dependsOn ':fabric-1.21.11:build'
+	dependsOn ':fabric-26.2:build'
+	dependsOn ':paper-plugin:build'
+	dependsOn ':paper-plugin-26.2:build'
+	inputs.files(releaseArtifacts.collect { it.source })
+	outputs.dir(releaseDirectory)
+	outputs.upToDateWhen { false }
 	doLast {
-		def target = bundledAndroidVlcZip.get().asFile
-		target.parentFile.mkdirs()
-		if (target.isFile()) {
-			def digest = java.security.MessageDigest.getInstance('SHA-256').digest(target.bytes).encodeHex().toString()
-			if (digest == bundledAndroidVlcSha256) return
-			target.delete()
+		File target = releaseDirectory.get().asFile.canonicalFile
+		if (!target.toPath().startsWith(rootProject.projectDir.canonicalFile.toPath())) {
+			throw new GradleException("Release directory is outside the project: ${target}")
 		}
-		def temporary = new File(target.parentFile, target.name + '.tmp')
-		temporary.delete()
-		new URI(bundledAndroidVlcUrl).toURL().withInputStream { input ->
-			temporary.withOutputStream { output -> output << input }
+		delete target
+		if (!target.mkdirs() && !target.isDirectory()) {
+			throw new GradleException("Cannot create release directory: ${target}")
 		}
-		def digest = java.security.MessageDigest.getInstance('SHA-256').digest(temporary.bytes).encodeHex().toString()
-		if (digest != bundledAndroidVlcSha256) {
-			temporary.delete()
-			throw new GradleException("Bundled Android VLC SHA-256 mismatch: ${digest}")
-		}
-		if (!temporary.renameTo(target)) throw new GradleException('Failed to store bundled Android VLC package')
-	}
-}
-
-processResources {
-	dependsOn tasks.named('downloadBundledAndroidVlc')
-	inputs.property "version", project.version
-	from(bundledAndroidVlcZip) {
-		into 'assets/videoplayer/native/vlc'
-		rename { 'android_arm64-v8a.zip' }
-	}
-
-	filesMatching("fabric.mod.json") {
-		expand "version": inputs.properties.version
-	}
-}
-
-tasks.withType(JavaCompile).configureEach {
-	it.options.release = 21
-}
-
-java {
-	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
-	// if it is present.
-	// If you remove this line, sources will not be generated.
-	withSourcesJar()
-
-	sourceCompatibility = JavaVersion.VERSION_21
-	targetCompatibility = JavaVersion.VERSION_21
-}
-
-jar {
-	inputs.property "archivesName", project.base.archivesName
-
-	from("LICENSE") {
-		rename { "${it}_${inputs.properties.archivesName}"}
-	}
-	from("MCNG_LICENSE") {
-		rename { "${it}_${inputs.properties.archivesName}"}
-	}
-}
-
-shadowJar {
-	archiveClassifier = "dev-shadow"
-	configurations = [project.configurations.shadowBundle]
-	from sourceSets.client.output
-	from("LICENSE") {
-		rename { "${it}_${project.base.archivesName.get()}"}
-	}
-	from("MCNG_LICENSE") {
-		rename { "${it}_${project.base.archivesName.get()}"}
-	}
-	relocate "com.github.squi2rel.mcng", "com.github.squi2rel.vp.shadow.mcng"
-}
-
-remapJar {
-	dependsOn shadowJar
-	inputFile.set(shadowJar.archiveFile)
-}
-
-// configure the maven publication
-publishing {
-	publications {
-		create("mavenJava", MavenPublication) {
-			artifactId = project.archives_base_name
-			from components.java
+		releaseArtifacts.each { artifact ->
+			File source = artifact.source
+			if (!source.isFile()) throw new GradleException("Missing release input: ${source}")
+			copy {
+				from source
+				into target
+				rename { artifact.fileName }
+			}
 		}
 	}
+}
 
-	// See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
-	repositories {
-		// Add repositories to publish to here.
-		// Notice: This block does NOT have the same function as the block in the top level.
-		// The repositories here will be used for publishing your artifact, not for
-		// retrieving dependencies.
+tasks.register('verifyRelease') {
+	group = 'verification'
+	description = 'Verifies release filenames, descriptors, bytecode targets, dependencies, and protocol token.'
+	dependsOn tasks.named('assembleRelease')
+	outputs.upToDateWhen { false }
+	doLast {
+		File target = releaseDirectory.get().asFile
+		List<String> expectedNames = releaseArtifacts.collect { it.fileName.toString() }.sort()
+		List<File> children = target.listFiles() == null ? [] : target.listFiles().toList()
+		if (children.any { !it.isFile() }) {
+			throw new GradleException("Release directory contains a non-file entry: ${children.find { !it.isFile() }}")
+		}
+		List<String> actualNames = children.collect { it.name }.sort()
+		if (actualNames != expectedNames) {
+			throw new GradleException("Release directory must contain exactly ${expectedNames}; found ${actualNames}")
+		}
+
+		def readEntry = { JarFile jar, String path ->
+			def entry = jar.getJarEntry(path)
+			if (entry == null) throw new GradleException("${jar.name} is missing ${path}")
+			jar.getInputStream(entry).withCloseable { input -> input.readAllBytes() }
+		}
+		def yamlValue = { String text, String key ->
+			String prefix = key + ':'
+			String line = text.readLines().find { it.startsWith(prefix) }
+			if (line == null) throw new GradleException("plugin.yml is missing ${key}")
+			String value = line.substring(prefix.length()).trim()
+			if (value.length() >= 2 && ((value.startsWith("'") && value.endsWith("'"))
+					|| (value.startsWith('"') && value.endsWith('"')))) {
+				value = value.substring(1, value.length() - 1)
+			}
+			value
+		}
+		List<String> forbiddenBuildValues = [
+			'GRADLE_OPTS',
+			'org.gradle.jvmargs',
+			'http.proxyHost',
+			'https.proxyHost',
+			'http.proxyPort',
+			'https.proxyPort'
+		]
+		Set<String> textExtensions = ['class', 'json', 'yml', 'yaml', 'properties', 'toml', 'txt', 'xml', 'mf'] as Set
+
+		releaseArtifacts.each { artifact ->
+			File archive = new File(target, artifact.fileName.toString())
+			JarFile jar = new JarFile(archive)
+			try {
+				artifact.requiredEntries.each { required ->
+					if (jar.getJarEntry(required) == null) {
+						throw new GradleException("${archive.name} is missing ${required}")
+					}
+				}
+				byte[] classBytes = readEntry(jar, artifact.classEntry)
+				if (classBytes.length < 8) throw new GradleException("Invalid class file in ${archive.name}")
+				int major = ((classBytes[6] & 0xFF) << 8) | (classBytes[7] & 0xFF)
+				if (major != artifact.classMajor) {
+					throw new GradleException("${archive.name} class major is ${major}; expected ${artifact.classMajor}")
+				}
+
+				if (artifact.type == 'fabric') {
+					def metadata = new JsonSlurper().parseText(new String(readEntry(jar, 'fabric.mod.json'), StandardCharsets.UTF_8))
+					if (metadata.id != 'videoplayer') throw new GradleException("${archive.name} has invalid mod id ${metadata.id}")
+					if (metadata.version != releaseVersion) throw new GradleException("${archive.name} has internal version ${metadata.version}")
+					if (!(metadata.authors instanceof Collection) || !metadata.authors.contains('cloudfl4re')) {
+						throw new GradleException("${archive.name} authors do not contain cloudfl4re")
+					}
+					if (metadata.depends?.minecraft != artifact.minecraft) {
+						throw new GradleException("${archive.name} targets Minecraft ${metadata.depends?.minecraft}; expected ${artifact.minecraft}")
+					}
+					if (metadata.depends?.java != artifact.javaDependency) {
+						throw new GradleException("${archive.name} requires Java ${metadata.depends?.java}; expected ${artifact.javaDependency}")
+					}
+				} else {
+					String plugin = new String(readEntry(jar, 'plugin.yml'), StandardCharsets.UTF_8)
+					if (yamlValue(plugin, 'name') != 'VideoPlayer') throw new GradleException("${archive.name} has an invalid plugin name")
+					if (yamlValue(plugin, 'main') != 'com.github.squi2rel.vp.VideoPlayerPaperPlugin') {
+						throw new GradleException("${archive.name} has an invalid main class")
+					}
+					if (yamlValue(plugin, 'version') != releaseVersion) throw new GradleException("${archive.name} has an invalid internal version")
+					if (yamlValue(plugin, 'api-version') != artifact.apiVersion) {
+						throw new GradleException("${archive.name} has api-version ${yamlValue(plugin, 'api-version')}; expected ${artifact.apiVersion}")
+					}
+					if (yamlValue(plugin, 'folia-supported') != 'true') throw new GradleException("${archive.name} is not marked Folia-supported")
+					if (!yamlValue(plugin, 'authors').contains('cloudfl4re')) throw new GradleException("${archive.name} authors do not contain cloudfl4re")
+				}
+
+				jar.entries().each { entry ->
+					if (entry.directory) return
+					String extension = entry.name.contains('.') ? entry.name.substring(entry.name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : ''
+					if (!textExtensions.contains(extension)) return
+					String content = new String(jar.getInputStream(entry).withCloseable { it.readAllBytes() }, StandardCharsets.ISO_8859_1)
+					String forbidden = forbiddenBuildValues.find { content.contains(it) }
+					if (forbidden != null) throw new GradleException("${archive.name}!/${entry.name} contains forbidden build value ${forbidden}")
+				}
+			} finally {
+				jar.close()
+			}
+
+			URLClassLoader loader = new URLClassLoader([archive.toURI().toURL()] as URL[], ClassLoader.getPlatformClassLoader())
+			try {
+				Class<?> protocol = Class.forName('com.github.squi2rel.vp.network.VideoProtocol', true, loader)
+				String token = protocol.getMethod('token', String.class).invoke(null, releaseVersion)
+				String revision = protocol.getField('WIRE_REVISION').get(null)
+				int maxBytes = protocol.getField('MAX_TOKEN_BYTES').getInt(null)
+				if (revision != 'vp5' || token != "${releaseVersion}|vp5") {
+					throw new GradleException("${archive.name} has protocol token ${token} and revision ${revision}")
+				}
+				if (token.getBytes(StandardCharsets.UTF_8).length > maxBytes || maxBytes != 16) {
+					throw new GradleException("${archive.name} protocol token exceeds the expected 16-byte limit")
+				}
+			} finally {
+				loader.close()
+			}
+		}
+		logger.lifecycle("Verified release archives: ${expectedNames}")
 	}
 }

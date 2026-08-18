@@ -1,18 +1,18 @@
 package com.github.squi2rel.vp.creation;
 
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.input.CharInput;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 
-class VpTextFieldWidget extends TextFieldWidget {
+class VpTextFieldWidget extends EditBox {
     private static final int PADDING_X = 4;
     private static final int PADDING_Y = 4;
 
-    private final TextRenderer textRenderer;
+    private final Font textRenderer;
     private int frameX;
     private int frameY;
     private final int frameWidth;
@@ -26,17 +26,17 @@ class VpTextFieldWidget extends TextFieldWidget {
     private int clipRight;
     private int clipBottom;
 
-    VpTextFieldWidget(TextRenderer textRenderer, int x, int y, int width, int height, Text message, VpUiTheme theme) {
-        super(textRenderer, x + PADDING_X, y + PADDING_Y, Math.max(1, width - PADDING_X * 2), textRenderer.fontHeight, message);
+    VpTextFieldWidget(Font textRenderer, int x, int y, int width, int height, Component message, VpUiTheme theme) {
+        super(textRenderer, x + PADDING_X, y + PADDING_Y, Math.max(1, width - PADDING_X * 2), textRenderer.lineHeight, message);
         this.textRenderer = textRenderer;
         this.frameX = x;
         this.frameY = y;
         this.frameWidth = Math.max(40, width);
         this.frameHeight = Math.max(16, height);
         this.theme = theme;
-        setDrawsBackground(false);
-        setEditableColor(theme.primaryTextColor());
-        setUneditableColor(VpUiRenderer.blend(theme.secondaryTextColor(), theme.canvasBackgroundColor(), 0.42f));
+        setBordered(false);
+        setTextColor(theme.primaryTextColor());
+        setTextColorUneditable(VpUiRenderer.blend(theme.secondaryTextColor(), theme.canvasBackgroundColor(), 0.42f));
     }
 
     VpTextFieldWidget clip(int left, int top, int right, int bottom) {
@@ -61,7 +61,7 @@ class VpTextFieldWidget extends TextFieldWidget {
     }
 
     @Override
-    public void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void renderWidget(GuiGraphics context, int mouseX, int mouseY, float delta) {
         int fill = VpUiRenderer.darken(theme.nodeBodyColor(), active ? 0.02f : 0.10f);
         int border = isFocused() ? theme.accentColor() : theme.panelBorderColor();
         if (!active) {
@@ -72,46 +72,46 @@ class VpTextFieldWidget extends TextFieldWidget {
     }
 
     @Override
-    public void setText(String text) {
-        super.setText(text);
+    public void setValue(String text) {
+        super.setValue(text);
         syncSelectionState();
     }
 
     @Override
-    public void write(String text) {
-        super.write(text);
+    public void insertText(String text) {
+        super.insertText(text);
         syncSelectionState();
     }
 
     @Override
-    public void setSelectionStart(int selectionStart) {
-        super.setSelectionStart(selectionStart);
+    public void setCursorPosition(int selectionStart) {
+        super.setCursorPosition(selectionStart);
         syncSelectionStart();
     }
 
     @Override
-    public void setSelectionEnd(int selectionEnd) {
-        super.setSelectionEnd(selectionEnd);
+    public void setHighlightPos(int selectionEnd) {
+        super.setHighlightPos(selectionEnd);
         this.selectionEnd = clampIndex(selectionEnd);
         updateVisibleStart(this.selectionEnd);
     }
 
     @Override
-    public boolean keyPressed(KeyInput input) {
+    public boolean keyPressed(KeyEvent input) {
         boolean handled = super.keyPressed(input);
         if (handled) syncSelectionState();
         return handled;
     }
 
     @Override
-    public boolean charTyped(CharInput input) {
+    public boolean charTyped(CharacterEvent input) {
         boolean handled = super.charTyped(input);
         if (handled) syncSelectionState();
         return handled;
     }
 
     @Override
-    public void onClick(Click click, boolean doubleClick) {
+    public void onClick(MouseButtonEvent click, boolean doubleClick) {
         super.onClick(click, doubleClick);
         syncSelectionState();
     }
@@ -133,11 +133,11 @@ class VpTextFieldWidget extends TextFieldWidget {
                 && mouseY < clipBottom;
     }
 
-    private void renderTextContent(DrawContext context) {
-        String text = getText();
-        int cursor = clampIndex(getCursor());
+    private void renderTextContent(GuiGraphics context) {
+        String text = getValue();
+        int cursor = clampIndex(getCursorPosition());
         int safeVisibleStart = clampIndex(visibleStart);
-        String visibleText = textRenderer.trimToWidth(text.substring(safeVisibleStart), getInnerWidth());
+        String visibleText = textRenderer.plainSubstrByWidth(text.substring(safeVisibleStart), getInnerWidth());
         int visibleEnd = Math.min(text.length(), safeVisibleStart + visibleText.length());
         int innerX = getX();
         int innerY = getY();
@@ -151,51 +151,51 @@ class VpTextFieldWidget extends TextFieldWidget {
         context.disableScissor();
     }
 
-    private void renderSelection(DrawContext context, String text, int visibleStart, int visibleEnd, int innerX, int right) {
-        if (!isFocused() || selectionEnd == getCursor()) {
+    private void renderSelection(GuiGraphics context, String text, int visibleStart, int visibleEnd, int innerX, int right) {
+        if (!isFocused() || selectionEnd == getCursorPosition()) {
             return;
         }
-        int start = Math.min(clampIndex(getCursor()), clampIndex(selectionEnd));
-        int end = Math.max(clampIndex(getCursor()), clampIndex(selectionEnd));
+        int start = Math.min(clampIndex(getCursorPosition()), clampIndex(selectionEnd));
+        int end = Math.max(clampIndex(getCursorPosition()), clampIndex(selectionEnd));
         int visibleSelectionStart = Math.max(visibleStart, Math.min(visibleEnd, start));
         int visibleSelectionEnd = Math.max(visibleStart, Math.min(visibleEnd, end));
         if (visibleSelectionEnd <= visibleSelectionStart) {
             return;
         }
 
-        int x1 = innerX + textRenderer.getWidth(text.substring(visibleStart, visibleSelectionStart));
-        int x2 = innerX + textRenderer.getWidth(text.substring(visibleStart, visibleSelectionEnd));
+        int x1 = innerX + textRenderer.width(text.substring(visibleStart, visibleSelectionStart));
+        int x2 = innerX + textRenderer.width(text.substring(visibleStart, visibleSelectionEnd));
         context.fill(Math.max(innerX, x1), frameY + 2, Math.min(right, x2), frameY + frameHeight - 2,
                 VpUiRenderer.blend(theme.accentColor(), theme.nodeBodyColor(), 0.24f));
     }
 
-    private void renderCursor(DrawContext context, String text, int cursor, int visibleStart, int visibleEnd, int innerX, int innerY, int right, int color) {
+    private void renderCursor(GuiGraphics context, String text, int cursor, int visibleStart, int visibleEnd, int innerX, int innerY, int right, int color) {
         if (!isFocused() || (System.currentTimeMillis() / 530L) % 2L != 0L) {
             return;
         }
         if (cursor < visibleStart || cursor > visibleEnd) {
             return;
         }
-        int cursorX = innerX + textRenderer.getWidth(text.substring(visibleStart, cursor));
+        int cursorX = innerX + textRenderer.width(text.substring(visibleStart, cursor));
         cursorX = Math.clamp(cursorX, innerX, right - 1);
         context.fill(cursorX, frameY + 2, cursorX + 1, frameY + frameHeight - 2, color);
     }
 
-    private void drawText(DrawContext context, String text, int x, int y, int color) {
+    private void drawText(GuiGraphics context, String text, int x, int y, int color) {
         if (text.isEmpty()) {
             return;
         }
         if (theme.textShadow()) {
-            context.drawTextWithShadow(textRenderer, text, x, y, color);
+            context.drawString(textRenderer, text, x, y, color);
             return;
         }
-        context.drawText(textRenderer, text, x, y, color, false);
+        context.drawString(textRenderer, text, x, y, color, false);
     }
 
     private void syncSelectionState() {
         syncSelectionStart();
-        if (getSelectedText().isEmpty()) {
-            selectionEnd = getCursor();
+        if (getHighlighted().isEmpty()) {
+            selectionEnd = getCursorPosition();
         } else {
             selectionEnd = inferSelectionEnd();
             updateVisibleStart(selectionEnd);
@@ -203,17 +203,17 @@ class VpTextFieldWidget extends TextFieldWidget {
     }
 
     private void syncSelectionStart() {
-        int cursor = clampIndex(getCursor());
-        if (selectionEnd > getText().length()) {
+        int cursor = clampIndex(getCursorPosition());
+        if (selectionEnd > getValue().length()) {
             selectionEnd = cursor;
         }
         updateVisibleStart(cursor);
     }
 
     private int inferSelectionEnd() {
-        String text = getText();
-        String selected = getSelectedText();
-        int cursor = clampIndex(getCursor());
+        String text = getValue();
+        String selected = getHighlighted();
+        int cursor = clampIndex(getCursorPosition());
         int length = selected.length();
         if (cursor + length <= text.length() && text.substring(cursor, cursor + length).equals(selected)) {
             return cursor + length;
@@ -225,19 +225,19 @@ class VpTextFieldWidget extends TextFieldWidget {
     }
 
     private void updateVisibleStart(int targetIndex) {
-        String text = getText();
+        String text = getValue();
         int target = clampIndex(targetIndex);
         visibleStart = Math.clamp(visibleStart, 0, text.length());
         if (target < visibleStart) {
             visibleStart = target;
             return;
         }
-        while (visibleStart < target && textRenderer.getWidth(text.substring(visibleStart, target)) > getInnerWidth()) {
+        while (visibleStart < target && textRenderer.width(text.substring(visibleStart, target)) > getInnerWidth()) {
             visibleStart++;
         }
     }
 
     private int clampIndex(int index) {
-        return Math.clamp(index, 0, getText().length());
+        return Math.clamp(index, 0, getValue().length());
     }
 }

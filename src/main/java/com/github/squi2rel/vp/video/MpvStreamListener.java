@@ -3,10 +3,15 @@ package com.github.squi2rel.vp.video;
 import com.github.squi2rel.vp.VideoPlayerMain;
 import com.github.squi2rel.vp.provider.MediaAddressPolicy;
 import com.github.squi2rel.vp.provider.VideoInfo;
+import com.github.squi2rel.vp.video.MpvLibrary.LibMpv;
+import com.github.squi2rel.vp.video.MpvLibrary.MpvEvent;
+import com.github.squi2rel.vp.video.MpvLibrary.MpvEventEndFile;
 import com.sun.jna.Memory;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import com.sun.jna.ptr.PointerByReference;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -20,26 +25,46 @@ import static com.github.squi2rel.vp.video.MpvLibrary.*;
 final class MpvStreamListener implements IVideoListener {
     private static final long TIMEOUT_MS = 30_000;
     private static final long PROPERTY_POLL_INTERVAL_MS = 100;
+    private static final String AUDIO_METER_LABEL = "videoplayer_audio_meter";
+    private static final String AUDIO_METER_FILTER = "@" + AUDIO_METER_LABEL + ":lavfi=[astats=metadata=1:reset=1]";
+    private static final String COLOR_METER_LABEL = "videoplayer_color_meter";
+    private static final String COLOR_METER_FILTER = "@" + COLOR_METER_LABEL
+            + ":lavfi=[fps=10,scale=32:18:flags=area,format=pix_fmts=yuv444p,signalstats]";
     private static final Set<MpvStreamListener> ACTIVE = ConcurrentHashMap.newKeySet();
+    private static final MpvTelemetryPermitPool TELEMETRY_PERMITS = new MpvTelemetryPermitPool(32);
+    private static final long SHUTDOWN_MONITOR_MS = 5_000L;
 
     private final LibMpv lib;
     private final VideoInfo info;
+    private final boolean telemetry;
+    private final boolean audioAvailable;
+    private final boolean videoAvailable;
     private final AtomicBoolean released = new AtomicBoolean(false);
     private final AtomicBoolean finished = new AtomicBoolean(false);
     private final AtomicBoolean started = new AtomicBoolean(false);
+    private final AtomicBoolean telemetryPermit = new AtomicBoolean(false);
     private final MpvProgressClock progressClock = new MpvProgressClock();
+    private final MpvPendingSeek pendingSeek = new MpvPendingSeek();
     private final Object commandLock = new Object();
 
     private Thread thread;
     private volatile Pointer handle;
+    private volatile AudioLevelSnapshot audioLevel = AudioLevelSnapshot.unsupported();
+    private volatile VideoColorSnapshot videoColor = VideoColorSnapshot.unsupported();
     private Consumer<Boolean> playing = seekable -> {};
     private Runnable stopped = () -> {};
     private Runnable errored = () -> {};
     private Runnable timeout = () -> {};
 
-    MpvStreamListener(VideoInfo info) {
+    MpvStreamListener(VideoInfo info, boolean telemetry) {
         this.lib = MpvLibrary.get();
         this.info = info;
+        this.telemetry = telemetry;
+        boolean audioOnly = info != null && (VideoParams.isAudioOnly(info.params())
+                || VideoParams.looksAudioOnlyPath(info.path()) || VideoParams.looksAudioOnlyPath(info.rawPath()));
+        boolean videoOnly = info != null && VideoParams.isVideoOnly(info.params());
+        this.audioAvailable = !videoOnly;
+        this.videoAvailable = !audioOnly;
     }
 
     static void verifyAvailable() {
@@ -65,9 +90,20 @@ final class MpvStreamListener implements IVideoListener {
     }
 
     static void shutdown() {
-        for (MpvStreamListener listener : List.copyOf(ACTIVE)) {
-            listener.cancel();
-        }
+        List<MpvStreamListener> listeners = List.copyOf(ACTIVE);
+        for (MpvStreamListener listener : listeners) listener.cancel();
+        ListenerShutdownMonitor.start(
+                "VideoPlayer-MPV-shutdown-monitor",
+                listeners,
+                ACTIVE::contains,
+                SHUTDOWN_MONITOR_MS,
+                () -> {
+                },
+                remaining -> VideoPlayerMain.LOGGER.warn(
+                        "{} MPV stream listener(s) did not exit within {} ms",
+                        remaining, SHUTDOWN_MONITOR_MS
+                )
+        );
     }
 
     private static void setOptionString(LibMpv lib, Pointer ctx, String name, String value) {
@@ -85,15 +121,17 @@ final class MpvStreamListener implements IVideoListener {
 
     @Override
     public void setProgress(long progress) {
+        long target = Math.max(0, progress);
+        pendingSeek.request(target);
+        progressClock.seekTo(target);
         Pointer ctx = handle;
         if (ctx == null || finished.get()) return;
-        long target = Math.max(0, progress);
-        progressClock.seekTo(target);
         synchronized (commandLock) {
             ctx = handle;
             if (ctx == null || finished.get()) return;
             try {
                 command(ctx, "seek", String.format(Locale.ROOT, "%.3f", target / 1000.0), "absolute", "exact");
+                pendingSeek.clearIf(target);
             } catch (RuntimeException e) {
                 VideoPlayerMain.LOGGER.warn("Failed to seek MPV stream listener", e);
             }
@@ -126,15 +164,41 @@ final class MpvStreamListener implements IVideoListener {
     }
 
     @Override
-    public void listen() {
-        released.set(false);
-        finished.set(false);
-        started.set(false);
-        progressClock.reset(false);
-        ACTIVE.add(this);
-        thread = new Thread(this::run, "VideoPlayer-MPV-stream");
-        thread.setDaemon(true);
-        thread.start();
+    public AudioLevelSnapshot audioLevel() {
+        return audioLevel;
+    }
+
+    @Override
+    public VideoColorSnapshot videoColor() {
+        return videoColor;
+    }
+
+    @Override
+    public synchronized void listen() {
+        if (telemetry) {
+            if (!telemetryPermit.compareAndSet(false, true)) {
+                throw new IllegalStateException("MPV telemetry listener is already active");
+            }
+            if (!TELEMETRY_PERMITS.acquire()) {
+                telemetryPermit.set(false);
+                throw new IllegalStateException("MPV telemetry listener limit exceeded");
+            }
+        }
+        try {
+            released.set(false);
+            finished.set(false);
+            started.set(false);
+            progressClock.reset(false);
+            resetTelemetry();
+            ACTIVE.add(this);
+            thread = new Thread(this::run, "VideoPlayer-MPV-stream");
+            thread.setDaemon(true);
+            thread.start();
+        } catch (RuntimeException | Error error) {
+            ACTIVE.remove(this);
+            releaseTelemetryPermit();
+            throw error;
+        }
     }
 
     @Override
@@ -158,9 +222,15 @@ final class MpvStreamListener implements IVideoListener {
             }
             setOptionString(ctx, "config", "no");
             setOptionString(ctx, "terminal", "no");
-            setOptionString(ctx, "vid", "no");
+            if (telemetry && videoAvailable) {
+                setOptionString(ctx, "vo", "null");
+                setOptionString(ctx, "vf", COLOR_METER_FILTER);
+            } else {
+                setOptionString(ctx, "vid", "no");
+            }
             setOptionString(ctx, "ao", "null");
             setOptionString(ctx, "mute", "yes");
+            if (telemetry && audioAvailable) setOptionString(ctx, "af", AUDIO_METER_FILTER);
             setOptionString(ctx, "network-timeout", "30");
             check(ctx, lib.mpv_initialize(ctx), "mpv_initialize");
             loadFile(ctx, VideoParams.normalizeStreamPath(info.path()),
@@ -177,7 +247,7 @@ final class MpvStreamListener implements IVideoListener {
                 long now = System.currentTimeMillis();
                 if (now - lastPoll >= PROPERTY_POLL_INTERVAL_MS) {
                     lastPoll = now;
-                    refreshProgress(ctx);
+                    refreshProperties(ctx);
                 }
                 if (!started.get() && now >= deadline) {
                     completeTimeout();
@@ -200,7 +270,12 @@ final class MpvStreamListener implements IVideoListener {
                 }
             }
             ACTIVE.remove(this);
+            releaseTelemetryPermit();
         }
+    }
+
+    private void releaseTelemetryPermit() {
+        if (telemetryPermit.compareAndSet(true, false)) TELEMETRY_PERMITS.release();
     }
 
     private void handleEvent(Pointer ctx, MpvEvent event) {
@@ -209,7 +284,12 @@ final class MpvStreamListener implements IVideoListener {
             }
             case MPV_EVENT_FILE_LOADED -> {
                 started.set(true);
-                refreshProgress(ctx);
+                long target = pendingSeek.consume();
+                if (target >= 0L) {
+                    command(ctx, "seek", String.format(Locale.ROOT, "%.3f", target / 1000.0), "absolute", "exact");
+                    progressClock.seekTo(target);
+                }
+                refreshProperties(ctx);
                 playing.accept(Boolean.TRUE.equals(getFlag(ctx, "seekable")));
             }
             case MPV_EVENT_END_FILE -> {
@@ -237,6 +317,48 @@ final class MpvStreamListener implements IVideoListener {
         if (timePos != null && timePos >= 0) {
             progressClock.updateFromTimePos(timePos);
         }
+    }
+
+    private void refreshProperties(Pointer ctx) {
+        refreshProgress(ctx);
+        if (!telemetry) return;
+        long now = System.currentTimeMillis();
+        if (!audioAvailable) {
+            audioLevel = AudioLevelSnapshot.noAudio();
+        } else {
+            String metadata = getString(ctx, "af-metadata/" + AUDIO_METER_LABEL);
+            audioLevel = updateAudioSnapshot(audioLevel, metadata, now);
+        }
+        if (!videoAvailable) {
+            videoColor = VideoColorSnapshot.noVideo();
+        } else {
+            String metadata = getString(ctx, "vf-metadata/" + COLOR_METER_LABEL);
+            videoColor = updateColorSnapshot(
+                    videoColor,
+                    metadata,
+                    getString(ctx, "video-params/colormatrix"),
+                    getString(ctx, "video-params/colorlevels"),
+                    now
+            );
+        }
+    }
+
+    static AudioLevelSnapshot updateAudioSnapshot(AudioLevelSnapshot current, String metadata, long sampledAtMs) {
+        return metadata == null ? current : MpvAudioLevelParser.parse(metadata, sampledAtMs);
+    }
+
+    static VideoColorSnapshot updateColorSnapshot(VideoColorSnapshot current, String metadata,
+                                                   String colorMatrix, String colorLevels, long sampledAtMs) {
+        return metadata == null ? current : MpvFrameColorParser.parse(
+                metadata, colorMatrix, colorLevels, sampledAtMs
+        );
+    }
+
+    private void resetTelemetry() {
+        audioLevel = telemetry ? audioAvailable ? AudioLevelSnapshot.waiting() : AudioLevelSnapshot.noAudio()
+                : AudioLevelSnapshot.unsupported();
+        videoColor = telemetry ? videoAvailable ? VideoColorSnapshot.waiting() : VideoColorSnapshot.noVideo()
+                : VideoColorSnapshot.unsupported();
     }
 
     private void completeStopped() {
@@ -291,6 +413,19 @@ final class MpvStreamListener implements IVideoListener {
         Memory data = intMemory(0);
         int result = lib.mpv_get_property(ctx, name, MPV_FORMAT_FLAG, data);
         return result < 0 ? null : data.getInt(0) != 0;
+    }
+
+    private String getString(Pointer ctx, String name) {
+        PointerByReference reference = new PointerByReference();
+        int result = lib.mpv_get_property(ctx, name, MPV_FORMAT_STRING, reference.getPointer());
+        if (result < 0) return null;
+        Pointer value = reference.getValue();
+        if (value == null) return null;
+        try {
+            return value.getString(0, StandardCharsets.UTF_8.name());
+        } finally {
+            lib.mpv_free(value);
+        }
     }
 
     private static Memory intMemory(int value) {

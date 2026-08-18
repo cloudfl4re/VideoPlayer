@@ -4,9 +4,8 @@ import com.github.squi2rel.vp.DataHolder;
 import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
 import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
-import net.minecraft.server.network.ServerPlayerEntity;
-
 import java.util.UUID;
+import net.minecraft.server.level.ServerPlayer;
 
 public class PlayerProviderSource implements IProviderSource {
     private final UUID playerUuid;
@@ -15,12 +14,12 @@ public class PlayerProviderSource implements IProviderSource {
     private final int bilibiliQualityLimit;
     private final int youtubeHeightLimit;
 
-    public PlayerProviderSource(ServerPlayerEntity entity) {
+    public PlayerProviderSource(ServerPlayer entity) {
         this(entity, BiliQuality.SERVER_LISTENER_QN, YouTubeQuality.AUTO);
     }
 
-    public PlayerProviderSource(ServerPlayerEntity entity, int bilibiliQualityLimit, int youtubeHeightLimit) {
-        playerUuid = entity.getUuid();
+    public PlayerProviderSource(ServerPlayer entity, int bilibiliQualityLimit, int youtubeHeightLimit) {
+        playerUuid = entity.getUUID();
         name = entity.getGameProfile().name();
         lifecycleEpoch = DataHolder.lifecycleEpoch();
         this.bilibiliQualityLimit = BiliQuality.normalizeScreenLimit(bilibiliQualityLimit);

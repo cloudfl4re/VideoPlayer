@@ -2,8 +2,8 @@ package com.github.squi2rel.mcng.fabric.client;
 
 import com.github.squi2rel.mcng.core.NodePosition;
 import com.github.squi2rel.mcng.core.NodeType;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 import org.lwjgl.glfw.GLFW;
 
 public final class GraphEditorComponent {
@@ -19,7 +19,7 @@ public final class GraphEditorComponent {
 	private final GraphContextMenuComponent contextMenu;
 
 	private GraphEditorUiConfig uiConfig;
-	private TextRenderer textRenderer;
+	private Font textRenderer;
 	private GraphEditorBounds bounds = new GraphEditorBounds(0, 0, 0, 0);
 	private boolean secondaryPointerDown;
 	private boolean secondaryPointerDragged;
@@ -49,7 +49,7 @@ public final class GraphEditorComponent {
 		this.contextMenu = new GraphContextMenuComponent(this::uiConfig, session::i18n);
 	}
 
-	public void init(TextRenderer textRenderer, GraphEditorBounds bounds) {
+	public void init(Font textRenderer, GraphEditorBounds bounds) {
 		this.textRenderer = textRenderer;
 		this.bounds = bounds;
 		canvas.init(textRenderer, canvasBounds());
@@ -95,7 +95,7 @@ public final class GraphEditorComponent {
 		return bounds;
 	}
 
-	public void render(DrawContext context, TextRenderer textRenderer, int mouseX, int mouseY, float delta) {
+	public void render(GuiGraphics context, Font textRenderer, int mouseX, int mouseY, float delta) {
 		this.textRenderer = textRenderer;
 		canvas.render(context, textRenderer, mouseX, mouseY);
 		renderTopBar(context);
@@ -266,23 +266,23 @@ public final class GraphEditorComponent {
 		return palette.charTyped(chr, modifiers);
 	}
 
-	private void renderTopBar(DrawContext context) {
+	private void renderTopBar(GuiGraphics context) {
 		GraphEditorTheme theme = uiConfig.theme();
 		EditorStyleRenderer.drawBox(context, bounds.x(), bounds.y(), bounds.width(), TOP_BAR_HEIGHT, theme.panelBackgroundColor(), theme.panelBorderColor(), uiConfig);
 		renderBreadcrumbs(context, theme);
 	}
 
-	private void renderBreadcrumbs(DrawContext context, GraphEditorTheme theme) {
+	private void renderBreadcrumbs(GuiGraphics context, GraphEditorTheme theme) {
 		int x = bounds.x() + TOGGLE_AREA_WIDTH();
 		int y = bounds.y() + TOP_BAR_PADDING;
 		var breadcrumbs = session.breadcrumbs();
 		for (int index = 0; index < breadcrumbs.size(); index++) {
 			GraphEditorSession.Breadcrumb breadcrumb = breadcrumbs.get(index);
-			context.drawText(textRenderer, breadcrumb.label(), x, y, theme.accentColor(), false);
-			x += textRenderer.getWidth(breadcrumb.label());
+			context.drawString(textRenderer, breadcrumb.label(), x, y, theme.accentColor(), false);
+			x += textRenderer.width(breadcrumb.label());
 			if (index < breadcrumbs.size() - 1) {
-				context.drawText(textRenderer, " / ", x, y, theme.secondaryTextColor(), false);
-				x += textRenderer.getWidth(" / ");
+				context.drawString(textRenderer, " / ", x, y, theme.secondaryTextColor(), false);
+				x += textRenderer.width(" / ");
 			}
 		}
 	}
@@ -291,11 +291,11 @@ public final class GraphEditorComponent {
 		int x = bounds.x() + TOGGLE_AREA_WIDTH();
 		int y = bounds.y() + TOP_BAR_PADDING + 2;
 		for (GraphEditorSession.Breadcrumb breadcrumb : session.breadcrumbs()) {
-			int width = textRenderer.getWidth(breadcrumb.label());
+			int width = textRenderer.width(breadcrumb.label());
 			if (mouseX >= x && mouseX <= x + width && mouseY >= y - 2 && mouseY <= y + 10) {
 				return session.exitToBreadcrumb(breadcrumb.definitionId());
 			}
-			x += width + textRenderer.getWidth(" / ");
+			x += width + textRenderer.width(" / ");
 		}
 		return false;
 	}

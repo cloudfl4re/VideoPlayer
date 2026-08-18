@@ -1,0 +1,427 @@
+package com.github.squi2rel.vp.creation;
+
+import com.github.squi2rel.vp.ClientPacketHandler;
+import com.github.squi2rel.vp.ClientPermissionCache;
+import com.github.squi2rel.vp.i18n.VpTexts;
+import com.github.squi2rel.vp.network.ByteBufUtils;
+import com.github.squi2rel.vp.permission.VideoPermissionAction;
+import com.github.squi2rel.vp.provider.VideoUrlNormalizer;
+import com.github.squi2rel.vp.video.ClientVideoScreen;
+import com.github.squi2rel.vp.video.IdlePlayEntry;
+import com.github.squi2rel.vp.video.VideoScreen;
+import java.util.function.Consumer;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
+
+public class IdlePlayListScreen extends Screen implements ServerStateScreen {
+    private static final int GAP = 8;
+    private static final int CONTROL_HEIGHT = 18;
+    private static final int ROW_HEIGHT = 32;
+    private static final int LABEL_OFFSET = 11;
+    private static final VpUiTheme THEME = VpUiTheme.classic();
+
+    private final Screen parent;
+    private final ClientVideoScreen screen;
+    private VpTextFieldWidget urlField;
+    private VpTextFieldWidget priorityField;
+    private String urlDraft = "";
+    private String priorityDraft = "0";
+    private int listScroll;
+    private int listTop;
+    private int listBottom;
+    private int listX;
+    private int listW;
+    private boolean requestPending;
+    private VpButtonWidget addButton;
+    private VpButtonWidget modeButton;
+    private VpButtonWidget clearButton;
+
+    public IdlePlayListScreen(Screen parent, ClientVideoScreen screen) {
+        this(parent, screen, "", 0);
+    }
+
+    private IdlePlayListScreen(Screen parent, ClientVideoScreen screen, String urlDraft, int listScroll) {
+        super(VpTexts.tr("screen.videoplayer.idle_play_list", "Idle Play List"));
+        this.parent = parent;
+        this.screen = screen;
+        this.urlDraft = urlDraft == null ? "" : urlDraft;
+        this.listScroll = Math.max(0, listScroll);
+    }
+
+    @Override
+    protected void init() {
+        computeLayout();
+        int x = listX;
+        int contentW = listW;
+        int row = 54;
+
+        int addW = 56;
+        int priorityW = 42;
+        int urlW = Math.max(80, contentW - addW - priorityW - GAP * 2);
+        urlField = new VpTextFieldWidget(font, x, row, urlW, CONTROL_HEIGHT, Component.empty(), THEME);
+        urlField.setMaxLength(VideoScreen.MAX_IDLE_PLAY_URL_BYTES);
+        urlField.setFilter(VideoScreen::validIdlePlayUrlInput);
+        urlField.setValue(urlDraft);
+        addRenderableWidget(urlField);
+        priorityField = new VpTextFieldWidget(font, x + urlW + GAP, row, priorityW, CONTROL_HEIGHT, Component.empty(), THEME);
+        priorityField.setMaxLength(3);
+        priorityField.setFilter(value -> value.isEmpty() || value.chars().allMatch(Character::isDigit));
+        priorityField.setValue(priorityDraft);
+        priorityField.setResponder(value -> priorityDraft = value);
+        addRenderableWidget(priorityField);
+        addButton = button(VpTexts.tr("button.videoplayer.add", "Add"), x + urlW + priorityW + GAP * 2, row, addW, this::addIdlePlayUrl);
+
+        row += 28;
+        int modeW = Math.max(80, (contentW - GAP) / 2);
+        modeButton = button(idlePlayModeText(), x, row, modeW, this::toggleIdlePlayMode)
+                .selected(screen != null && screen.idlePlayRandom);
+        clearButton = button(VpTexts.tr("button.videoplayer.clear", "Clear"), x + modeW + GAP, row, modeW, this::clearIdlePlay).danger(true);
+        refreshControls();
+
+        int closeW = 72;
+        button(VpTexts.tr("button.videoplayer.close", "Close"), x + Math.max(0, contentW - closeW), Math.max(108, height - 40), closeW, this::onClose);
+    }
+
+    @Override
+    public boolean isPauseScreen() {
+        return false;
+    }
+
+    @Override
+    public void onClose() {
+        if (minecraft != null) {
+            minecraft.gui.setScreen(parent);
+        }
+    }
+
+    @Override
+    public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        context.fill(0, 0, width, height, VpUiRenderer.withAlpha(THEME.canvasBackgroundColor(), 0xCC));
+    }
+
+    @Override
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        computeLayout();
+        extractBackground(context, mouseX, mouseY, delta);
+        int panelX = 18;
+        int panelY = 18;
+        int panelW = Math.max(260, width - 36);
+        int panelH = Math.max(120, height - 36);
+        VpUiRenderer.drawBox(context, panelX, panelY, panelW, panelH, THEME.panelBackgroundColor(), THEME.panelBorderColor());
+
+        drawCenteredText(context, title, width / 2, 28, THEME.primaryTextColor());
+        drawLabel(context, "URL", listX, 54 - LABEL_OFFSET, THEME.secondaryTextColor());
+        drawLabel(context, VpTexts.tr("label.videoplayer.priority", "Priority"), priorityField == null ? listX : priorityField.getX(), 54 - LABEL_OFFSET, THEME.secondaryTextColor());
+        drawLabel(context, VpTexts.tr("label.videoplayer.play_mode", "Play Mode"), listX, 82 - LABEL_OFFSET, THEME.secondaryTextColor());
+        drawLabel(context, VpTexts.tr("label.videoplayer.idle_play_list", "Idle Play List"), listX, listTop - LABEL_OFFSET, THEME.secondaryTextColor());
+
+        refreshControls();
+        super.extractRenderState(context, mouseX, mouseY, delta);
+        drawIdleList(context, mouseX, mouseY);
+        drawScrollbar(context);
+    }
+
+    @Override
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
+        if (click.button() == 0 && clickListControls(click.x(), click.y())) {
+            return true;
+        }
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (!inside(mouseX, mouseY, listX, listTop, listX + listW, listBottom)) {
+            return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+        }
+        int delta = (int) Math.round(-verticalAmount * ROW_HEIGHT);
+        int next = Math.clamp(listScroll + delta, 0, maxListScroll());
+        if (next == listScroll) {
+            return false;
+        }
+        if (urlField != null) {
+            urlDraft = urlField.getValue();
+        }
+        listScroll = next;
+        return true;
+    }
+
+    private void computeLayout() {
+        int panelX = 18;
+        int panelW = Math.max(260, width - 36);
+        listX = panelX + 12;
+        listW = Math.max(120, panelW - 24);
+        listTop = 122;
+        listBottom = Math.max(listTop + ROW_HEIGHT, height - 58);
+        listScroll = Math.clamp(listScroll, 0, maxListScroll());
+    }
+
+    private void drawIdleList(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+        VpUiRenderer.drawBox(context, listX, listTop, listW, listBottom - listTop, VpUiRenderer.darken(THEME.nodeBodyColor(), 0.06f), THEME.panelBorderColor());
+        context.enableScissor(listX + 1, listTop + 1, listX + listW - 1, listBottom - 1);
+        if (screen == null || screen.idlePlayEntries.isEmpty()) {
+            drawLabel(context, VpTexts.tr("message.videoplayer.idle_play_empty", "Idle list is empty"), listX + 8, listTop + 8, THEME.secondaryTextColor());
+            context.disableScissor();
+            return;
+        }
+
+        int controlsW = 76;
+        int textW = Math.max(40, listW - controlsW - 20);
+        for (int i = 0; i < screen.idlePlayEntries.size(); i++) {
+            IdlePlayEntry entry = screen.idlePlayEntries.get(i);
+            int rowY = listTop + 4 + i * ROW_HEIGHT - listScroll;
+            if (rowY + ROW_HEIGHT < listTop || rowY > listBottom) {
+                continue;
+            }
+            int fill = i % 2 == 0 ? VpUiRenderer.withAlpha(THEME.nodeBodyColor(), 0x80) : VpUiRenderer.withAlpha(THEME.nodeHeaderColor(), 0x66);
+            context.fill(listX + 4, rowY - 1, listX + listW - 4, rowY + ROW_HEIGHT - 2, fill);
+            drawLabel(context, (i + 1) + ". " + trimToWidth(entry.url(), textW), listX + 8, rowY + 3, THEME.secondaryTextColor());
+            String owner = entry.legacyOwner()
+                    ? VpTexts.tr("label.videoplayer.idle_play_legacy_owner", "Unknown (legacy config)").getString()
+                    : entry.addedByName();
+            drawLabel(context, trimToWidth(VpTexts.tr("label.videoplayer.idle_play_entry_meta", "Added by: %s | Priority: %s", owner, entry.priority()).getString(), textW),
+                    listX + 8, rowY + 16, THEME.secondaryTextColor());
+            int controlX = listControlX();
+            drawListButton(context, "P-", controlX, rowY + 6, 24, canEditIdlePlay() && entry.priority() > IdlePlayEntry.MIN_PRIORITY,
+                    inside(mouseX, mouseY, controlX, rowY + 6, controlX + 24, rowY + 24));
+            drawListButton(context, "P+", controlX + 26, rowY + 6, 24, canEditIdlePlay() && entry.priority() < IdlePlayEntry.MAX_PRIORITY,
+                    inside(mouseX, mouseY, controlX + 26, rowY + 6, controlX + 50, rowY + 24));
+            drawListButton(context, "-", controlX + 52, rowY + 6, 24, canEditIdlePlay(),
+                    inside(mouseX, mouseY, controlX + 52, rowY + 6, controlX + 76, rowY + 24));
+        }
+        context.disableScissor();
+    }
+
+    private void drawListButton(GuiGraphicsExtractor context, String label, int x, int y, int width, boolean active, boolean hovered) {
+        int fill = VpUiRenderer.darken(THEME.nodeBodyColor(), 0.04f);
+        if (hovered && active) {
+            fill = VpUiRenderer.blend(fill, THEME.errorColor(), 0.12f);
+        }
+        int border = active && hovered ? THEME.errorColor() : THEME.panelBorderColor();
+        int text = active ? (hovered ? THEME.primaryTextColor() : THEME.secondaryTextColor()) : VpUiRenderer.blend(THEME.secondaryTextColor(), THEME.canvasBackgroundColor(), 0.45f);
+        VpUiRenderer.drawBox(context, x, y, width, CONTROL_HEIGHT, fill, border);
+        drawCenteredText(context, Component.literal(label), x + width / 2, y + 5, text);
+    }
+
+    private boolean clickListControls(double mouseX, double mouseY) {
+        if (!canEditIdlePlay() || screen.idlePlayEntries.isEmpty()) {
+            return false;
+        }
+        if (!inside(mouseX, mouseY, listControlX(), listTop + 4, listControlX() + 76, listBottom)) {
+            return false;
+        }
+        double localY = mouseY - listTop - 4 + listScroll;
+        if (localY < 0) {
+            return false;
+        }
+        int index = (int) (localY / ROW_HEIGHT);
+        if (index < 0 || index >= screen.idlePlayEntries.size()) {
+            return false;
+        }
+        int rowY = listTop + 4 + index * ROW_HEIGHT - listScroll;
+        int controlX = listControlX();
+        if (!inside(mouseX, mouseY, controlX, rowY + 6, controlX + 76, rowY + 24)) {
+            return false;
+        }
+        IdlePlayEntry entry = screen.idlePlayEntries.get(index);
+        if (mouseX < controlX + 24 && entry.priority() > IdlePlayEntry.MIN_PRIORITY) {
+            adjustIdlePlayPriority(entry, -1);
+        } else if (mouseX >= controlX + 26 && mouseX < controlX + 50 && entry.priority() < IdlePlayEntry.MAX_PRIORITY) {
+            adjustIdlePlayPriority(entry, 1);
+        } else if (mouseX >= controlX + 52) {
+            removeIdlePlayEntry(entry);
+        }
+        return true;
+    }
+
+    private void drawScrollbar(GuiGraphicsExtractor context) {
+        int contentHeight = listContentHeight();
+        int viewportHeight = listBottom - listTop;
+        int maxScroll = Math.max(0, contentHeight - viewportHeight);
+        if (maxScroll <= 0) {
+            return;
+        }
+        int x = listX + listW - 5;
+        int trackColor = VpUiRenderer.withAlpha(VpUiRenderer.blend(THEME.panelBorderColor(), THEME.panelBackgroundColor(), 0.55f), 0x88);
+        int thumbColor = VpUiRenderer.withAlpha(VpUiRenderer.blend(THEME.secondaryTextColor(), THEME.accentColor(), 0.35f), 0xDD);
+        int thumbHeight = Math.max(14, viewportHeight * viewportHeight / Math.max(viewportHeight, contentHeight));
+        int thumbTravel = Math.max(1, viewportHeight - thumbHeight);
+        int thumbY = listTop + thumbTravel * Math.clamp(listScroll, 0, maxScroll) / maxScroll;
+        VpUiRenderer.drawBox(context, x, listTop, 4, viewportHeight, trackColor, trackColor);
+        VpUiRenderer.drawBox(context, x, thumbY, 4, thumbHeight, thumbColor, thumbColor);
+    }
+
+    private int listControlX() {
+        return listX + listW - 82;
+    }
+
+    private int maxListScroll() {
+        return Math.max(0, listContentHeight() - Math.max(1, listBottom - listTop));
+    }
+
+    private int listContentHeight() {
+        return screen == null || screen.idlePlayEntries.isEmpty() ? ROW_HEIGHT : screen.idlePlayEntries.size() * ROW_HEIGHT + 8;
+    }
+
+    private void addIdlePlayUrl(VpButtonWidget button) {
+        if (screen == null || urlField == null || priorityField == null) return;
+        String url = VideoUrlNormalizer.normalizeSubmittedUrl(urlField.getValue());
+        if (url.isEmpty()) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_url_empty", "IdlePlay URL must not be empty"));
+            return;
+        }
+        if (!VideoScreen.validIdlePlayUrl(url)) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_url_too_long", "IdlePlay URL must not exceed %s UTF-8 bytes", VideoScreen.MAX_IDLE_PLAY_URL_BYTES));
+            return;
+        }
+        if (screen.idlePlayEntries.size() >= VideoScreen.MAX_IDLE_PLAY_ITEMS) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_too_many", "IdlePlay can contain at most %s entries", VideoScreen.MAX_IDLE_PLAY_ITEMS));
+            return;
+        }
+        int totalBytes = ByteBufUtils.utf8Length(url);
+        for (IdlePlayEntry entry : screen.idlePlayEntries) totalBytes += ByteBufUtils.utf8Length(entry.url());
+        if (totalBytes > VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_payload_too_large", "IdlePlay URLs must not exceed %s UTF-8 bytes in total", VideoScreen.MAX_IDLE_PLAY_TOTAL_BYTES));
+            return;
+        }
+        int priority;
+        try {
+            priority = Integer.parseInt(priorityField.getValue().isBlank() ? "0" : priorityField.getValue());
+        } catch (NumberFormatException error) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_priority_invalid", "Priority must be between 0 and 100"));
+            return;
+        }
+        if (priority < IdlePlayEntry.MIN_PRIORITY || priority > IdlePlayEntry.MAX_PRIORITY) {
+            sendLocalError(VpTexts.tr("error.videoplayer.idle_play_priority_invalid", "Priority must be between 0 and 100"));
+            return;
+        }
+        urlDraft = "";
+        urlField.setValue("");
+        sendIdlePlayMutation(callback -> ClientPacketHandler.addIdlePlay(screen, url, priority, callback), button);
+    }
+
+    private void removeIdlePlayEntry(IdlePlayEntry entry) {
+        if (screen == null || entry == null) return;
+        sendIdlePlayMutation(callback -> ClientPacketHandler.removeIdlePlay(screen, entry.id(), callback), null);
+    }
+
+    private void adjustIdlePlayPriority(IdlePlayEntry entry, int delta) {
+        if (screen == null || entry == null) return;
+        sendIdlePlayMutation(callback -> ClientPacketHandler.adjustIdlePlayPriority(screen, entry.id(), delta, callback), null);
+    }
+
+    private void clearIdlePlay(VpButtonWidget button) {
+        if (screen == null) return;
+        sendIdlePlayMutation(callback -> ClientPacketHandler.clearIdlePlay(screen, callback), button);
+    }
+
+    private void toggleIdlePlayMode(VpButtonWidget button) {
+        if (screen == null) return;
+        sendIdlePlayMutation(callback -> ClientPacketHandler.setIdlePlayMode(screen, !screen.idlePlayRandom, callback), button);
+    }
+
+    private void sendIdlePlayMutation(Consumer<Consumer<ClientPacketHandler.RequestResult>> sender, VpButtonWidget button) {
+        if (screen == null || requestPending || !canEditIdlePlay()) return;
+        String currentUrl = urlField == null ? urlDraft : urlField.getValue();
+        urlDraft = currentUrl;
+        requestPending = true;
+        refreshControls();
+        sender.accept(result -> {
+            requestPending = false;
+            if (ClientPacketHandler.denied(result) && button != null) button.showPermissionDenied();
+            if (minecraft != null && minecraft.gui.screen() == this) {
+                listScroll = Math.clamp(listScroll, 0, maxListScroll());
+                rebuildWidgets();
+            }
+        });
+    }
+
+    private void refreshControls() {
+        boolean editable = canEditIdlePlay();
+        if (urlField != null) urlField.active = editable;
+        if (priorityField != null) priorityField.active = editable;
+        if (addButton != null) addButton.active = editable;
+        if (modeButton != null) {
+            modeButton.active = editable;
+            modeButton.setMessage(idlePlayModeText());
+            modeButton.selected(screen != null && screen.idlePlayRandom);
+        }
+        if (clearButton != null) clearButton.active = editable && screen != null && !screen.idlePlayEntries.isEmpty();
+    }
+
+    private Component idlePlayModeText() {
+        Component mode = screen == null || !screen.idlePlayRandom
+                ? VpTexts.tr("label.videoplayer.sequential", "Sequential")
+                : VpTexts.tr("label.videoplayer.random", "Random");
+        return VpTexts.tr("label.videoplayer.mode_value", "Mode: %s", mode.getString());
+    }
+
+    private void sendLocalError(Component message) {
+        if (minecraft != null && minecraft.player != null) {
+            minecraft.player.sendSystemMessage(message.copy().withStyle(ChatFormatting.RED));
+        }
+    }
+
+    private VpButtonWidget button(Component label, int x, int y, int width, Runnable action) {
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, label, b -> action.run(), THEME);
+        addRenderableWidget(button);
+        return button;
+    }
+
+    private VpButtonWidget button(Component label, int x, int y, int width, Consumer<VpButtonWidget> action) {
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, label, action, THEME);
+        addRenderableWidget(button);
+        return button;
+    }
+
+    private VpButtonWidget button(String label, int x, int y, int width, Runnable action) {
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Component.literal(label), b -> action.run(), THEME);
+        addRenderableWidget(button);
+        return button;
+    }
+
+    private VpButtonWidget button(String label, int x, int y, int width, Consumer<VpButtonWidget> action) {
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Component.literal(label), action, THEME);
+        addRenderableWidget(button);
+        return button;
+    }
+
+    private boolean canEditIdlePlay() {
+        return screen != null
+                && !requestPending
+                && screen.area != null
+                && screen.area.getScreen(screen.name) == screen
+                && ClientPermissionCache.allowedOrUnknown(VideoPermissionAction.SET_IDLE_PLAY, screen);
+    }
+
+    private void drawLabel(GuiGraphicsExtractor context, String label, int x, int y, int color) {
+        drawLabel(context, Component.literal(label), x, y, color);
+    }
+
+    private void drawLabel(GuiGraphicsExtractor context, Component label, int x, int y, int color) {
+        if (THEME.textShadow()) {
+            context.text(font, label, x, y, color);
+            return;
+        }
+        context.text(font, label, x, y, color, false);
+    }
+
+    private void drawCenteredText(GuiGraphicsExtractor context, Component text, int centerX, int y, int color) {
+        int x = centerX - font.width(text) / 2;
+        drawLabel(context, text, x, y, color);
+    }
+
+    private String trimToWidth(String text, int maxWidth) {
+        String value = text == null ? "" : text;
+        if (font.width(value) <= maxWidth) return value;
+        String suffix = "...";
+        return font.plainSubstrByWidth(value, Math.max(0, maxWidth - font.width(suffix))) + suffix;
+    }
+
+    private boolean inside(double mouseX, double mouseY, int left, int top, int right, int bottom) {
+        return mouseX >= left && mouseY >= top && mouseX < right && mouseY < bottom;
+    }
+}

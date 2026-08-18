@@ -2,7 +2,6 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.network.ByteBufUtils;
 import io.netty.buffer.ByteBuf;
-import net.minecraft.util.math.Vec3d;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -10,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
+import net.minecraft.world.phys.Vec3;
 
 public class VideoArea {
     public static final int MAX_AREAS_PER_WORLD = 256;
@@ -46,7 +46,7 @@ public class VideoArea {
         players = new HashSet<>();
     }
 
-    public boolean inBounds(Vec3d v) {
+    public boolean inBounds(Vec3 v) {
         return min.x <= v.x && min.y <= v.y && min.z <= v.z && v.x < max.x && v.y < max.y && v.z < max.z;
     }
 

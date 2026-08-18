@@ -12,12 +12,6 @@ import com.github.squi2rel.vp.video.AudioChannelMode;
 import com.github.squi2rel.vp.video.MpvVideoBackend;
 import com.github.squi2rel.vp.video.VideoBackends;
 import com.github.squi2rel.vp.video.VlcDecoder;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.Drawable;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.text.Text;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -25,6 +19,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Renderable;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 public class StartupGuideScreen extends Screen {
     private enum BackendRefreshResult {
@@ -117,14 +116,14 @@ public class StartupGuideScreen extends Screen {
         int buttonX = buttonGroupX();
 
         InputRowLayout inputRow = inputRowLayout();
-        proxyField = new VpTextFieldWidget(textRenderer, inputRow.proxyFieldX(), contentTop + 4, inputRow.proxyFieldWidth(), CONTROL_HEIGHT,
+        proxyField = new VpTextFieldWidget(font, inputRow.proxyFieldX(), contentTop + 4, inputRow.proxyFieldWidth(), CONTROL_HEIGHT,
                 VpTexts.tr("label.videoplayer.proxy", "Proxy"), THEME);
         proxyField.setMaxLength(220);
-        proxyField.setText(currentProxy());
-        ytdlPathField = new VpTextFieldWidget(textRenderer, inputRow.ytdlFieldX(), contentTop + 4, inputRow.ytdlFieldWidth(), CONTROL_HEIGHT,
+        proxyField.setValue(currentProxy());
+        ytdlPathField = new VpTextFieldWidget(font, inputRow.ytdlFieldX(), contentTop + 4, inputRow.ytdlFieldWidth(), CONTROL_HEIGHT,
                 VpTexts.tr("label.videoplayer.ytdl_path", "yt-dlp"), THEME);
         ytdlPathField.setMaxLength(4096);
-        ytdlPathField.setText(currentYtdlPath());
+        ytdlPathField.setValue(currentYtdlPath());
 
         audioChannelMode = button("", contentRight - audioChannelModeButtonWidth(), contentTop + 37,
                 audioChannelModeButtonWidth(), this::cycleAudioChannelMode);
@@ -147,22 +146,22 @@ public class StartupGuideScreen extends Screen {
         skip = button(VpTexts.tr("button.videoplayer.skip", "Skip"), panelLeft + 24, footerY, 92, this::finish);
         done = button(VpTexts.tr("button.videoplayer.done", "Done"), panelLeft + panelWidth - 116, footerY, 92, this::finish);
 
-        addDrawableChild(proxyField);
-        addDrawableChild(ytdlPathField);
-        addDrawableChild(audioChannelMode);
-        addDrawableChild(ytdlpPlatform);
-        addDrawableChild(ytdlpDownload);
-        addDrawableChild(ytdlpCopyLink);
-        addDrawableChild(mpvPlatform);
-        addDrawableChild(mpvSelect);
-        addDrawableChild(mpvDownload);
-        addDrawableChild(mpvCopyLink);
-        addDrawableChild(vlcPlatform);
-        addDrawableChild(vlcSelect);
-        addDrawableChild(vlcDownload);
-        addDrawableChild(vlcCopyLink);
-        addDrawableChild(skip);
-        addDrawableChild(done);
+        addRenderableWidget(proxyField);
+        addRenderableWidget(ytdlPathField);
+        addRenderableWidget(audioChannelMode);
+        addRenderableWidget(ytdlpPlatform);
+        addRenderableWidget(ytdlpDownload);
+        addRenderableWidget(ytdlpCopyLink);
+        addRenderableWidget(mpvPlatform);
+        addRenderableWidget(mpvSelect);
+        addRenderableWidget(mpvDownload);
+        addRenderableWidget(mpvCopyLink);
+        addRenderableWidget(vlcPlatform);
+        addRenderableWidget(vlcSelect);
+        addRenderableWidget(vlcDownload);
+        addRenderableWidget(vlcCopyLink);
+        addRenderableWidget(skip);
+        addRenderableWidget(done);
 
         setMpvVisible(!VideoPlayerMain.android);
         layoutWidgets();
@@ -178,12 +177,12 @@ public class StartupGuideScreen extends Screen {
     }
 
     @Override
-    public void close() {
+    public void onClose() {
         finish();
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
@@ -203,13 +202,13 @@ public class StartupGuideScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         computeLayout();
         layoutWidgets();
         context.fill(0, 0, width, height, 0xB0000000);
 
         context.fill(panelLeft, panelTop, panelLeft + panelWidth, panelTop + panelHeight, THEME.panelBackgroundColor());
-        context.drawStrokedRectangle(panelLeft, panelTop, panelWidth, panelHeight, THEME.panelBorderColor());
+        context.renderOutline(panelLeft, panelTop, panelWidth, panelHeight, THEME.panelBorderColor());
         drawCenteredText(context, title, width / 2, panelTop + 12, THEME.primaryTextColor());
 
         VpUiRenderer.drawBox(context, contentLeft - 6, contentTop - 4, contentRight - contentLeft + 12, contentBottom - contentTop + 8,
@@ -219,7 +218,7 @@ public class StartupGuideScreen extends Screen {
         context.disableScissor();
         drawScrollbar(context);
 
-        Text line = statusLine();
+        Component line = statusLine();
         if (!line.getString().isBlank()) {
             drawText(context, trimToWidth(line, Math.max(40, panelWidth - 48)), panelLeft + 24, panelTop + panelHeight - 42, THEME.secondaryTextColor());
         }
@@ -229,10 +228,10 @@ public class StartupGuideScreen extends Screen {
     }
 
     private VpButtonWidget button(String label, int x, int y, int width, Runnable action) {
-        return new VpButtonWidget(x, y, width, CONTROL_HEIGHT, Text.literal(label), ignored -> action.run(), THEME);
+        return new VpButtonWidget(x, y, width, CONTROL_HEIGHT, Component.literal(label), ignored -> action.run(), THEME);
     }
 
-    private VpButtonWidget button(Text label, int x, int y, int width, Runnable action) {
+    private VpButtonWidget button(Component label, int x, int y, int width, Runnable action) {
         return new VpButtonWidget(x, y, width, CONTROL_HEIGHT, label, ignored -> action.run(), THEME);
     }
 
@@ -319,7 +318,7 @@ public class StartupGuideScreen extends Screen {
         copyLink.clip(contentLeft, contentTop, contentRight, contentBottom);
     }
 
-    private void drawScrollableContent(DrawContext context, int mouseX, int mouseY, float delta) {
+    private void drawScrollableContent(GuiGraphics context, int mouseX, int mouseY, float delta) {
         int y = contentY();
         InputRowLayout inputRow = inputRowLayout();
         drawText(context, VpTexts.tr("label.videoplayer.proxy_colon", "Proxy:"), contentLeft, y + 5, THEME.secondaryTextColor());
@@ -349,30 +348,30 @@ public class StartupGuideScreen extends Screen {
             renderWidget(mpvCopyLink, context, mouseX, mouseY, delta);
         }
 
-        drawBackend(context, contentLeft, y + vlcStartY(), VideoBackends.VLC, Text.literal("VLC"), vlcAvailable);
+        drawBackend(context, contentLeft, y + vlcStartY(), VideoBackends.VLC, Component.literal("VLC"), vlcAvailable);
         renderWidget(vlcPlatform, context, mouseX, mouseY, delta);
         renderWidget(vlcSelect, context, mouseX, mouseY, delta);
         renderWidget(vlcDownload, context, mouseX, mouseY, delta);
         renderWidget(vlcCopyLink, context, mouseX, mouseY, delta);
     }
 
-    private void drawBackend(DrawContext context, int x, int y, String backend, Text label, boolean available) {
+    private void drawBackend(GuiGraphics context, int x, int y, String backend, Component label, boolean available) {
         int color = available ? THEME.executionColor() : THEME.errorColor();
         int count = sourceCount(backend);
         String platform = selectedPlatform(backend);
-        Text installed = backendInstalled(backend)
+        Component installed = backendInstalled(backend)
                 ? VpTexts.tr("label.videoplayer.installed", "Installed")
                 : VpTexts.tr("label.videoplayer.not_installed", "Not installed");
-        Text sources = count <= 0
+        Component sources = count <= 0
                 ? VpTexts.tr("label.videoplayer.no_sources", "No sources configured")
                 : VpTexts.tr("label.videoplayer.source_count", "%s sources", count);
         int textW = Math.max(40, buttonGroupX() - x - GAP);
-        Text visibleLabel = trimToWidth(label, Math.max(32, textW - 54));
-        int statusX = x + Math.max(52, textRenderer.getWidth(visibleLabel) + 8);
-        Text availability = available
+        Component visibleLabel = trimToWidth(label, Math.max(32, textW - 54));
+        int statusX = x + Math.max(52, font.width(visibleLabel) + 8);
+        Component availability = available
                 ? VpTexts.tr("label.videoplayer.available", "Available")
                 : VpTexts.tr("label.videoplayer.unavailable", "Unavailable");
-        int platformX = statusX + textRenderer.getWidth(availability) + 8;
+        int platformX = statusX + font.width(availability) + 8;
         drawText(context, visibleLabel, x, y, THEME.primaryTextColor());
         drawText(context, availability, statusX, y, color);
         drawText(context, trimToWidth(platformText(platform), Math.max(24, textW - (platformX - x))), platformX, y, THEME.secondaryTextColor());
@@ -383,24 +382,24 @@ public class StartupGuideScreen extends Screen {
         return VideoBackends.MPV.equals(VideoBackends.normalize(backend)) ? mpvInstalled : vlcInstalled;
     }
 
-    private void drawYtdlp(DrawContext context, int x, int y) {
+    private void drawYtdlp(GuiGraphics context, int x, int y) {
         int color = ytdlpAvailable ? THEME.executionColor() : THEME.errorColor();
         int count = ytdlpSources().size();
         int textW = Math.max(40, buttonGroupX() - x - GAP);
-        Text availability = ytdlpDetectionTask != null
+        Component availability = ytdlpDetectionTask != null
                 ? VpTexts.tr("label.videoplayer.checking", "Checking")
                 : ytdlpAvailable
                 ? VpTexts.tr("label.videoplayer.available", "Available")
                 : VpTexts.tr("label.videoplayer.unavailable", "Unavailable");
-        drawText(context, Text.literal("yt-dlp"), x, y, THEME.primaryTextColor());
+        drawText(context, Component.literal("yt-dlp"), x, y, THEME.primaryTextColor());
         drawText(context, availability, x + 48, y, color);
-        Text detail = ytdlpVersion.isBlank()
+        Component detail = ytdlpVersion.isBlank()
                 ? VpTexts.tr("label.videoplayer.source_count", "%s sources", count)
                 : VpTexts.tr("label.videoplayer.ytdlp_version", "Version %s", ytdlpVersion);
         drawText(context, trimToWidth(detail, textW), x, y + 16, THEME.secondaryTextColor());
     }
 
-    private void drawScrollbar(DrawContext context) {
+    private void drawScrollbar(GuiGraphics context) {
         int viewportHeight = contentBottom - contentTop;
         int maxScroll = maxContentScroll();
         if (maxScroll <= 0 || viewportHeight <= 0) {
@@ -437,36 +436,36 @@ public class StartupGuideScreen extends Screen {
         return Math.min(132, Math.max(88, (contentRight - contentLeft) / 3));
     }
 
-    private void renderWidget(Drawable widget, DrawContext context, int mouseX, int mouseY, float delta) {
+    private void renderWidget(Renderable widget, GuiGraphics context, int mouseX, int mouseY, float delta) {
         if (widget != null) {
             widget.render(context, mouseX, mouseY, delta);
         }
     }
 
-    private void drawText(DrawContext context, Text text, int x, int y, int color) {
+    private void drawText(GuiGraphics context, Component text, int x, int y, int color) {
         if (THEME.textShadow()) {
-            context.drawTextWithShadow(textRenderer, text, x, y, color);
+            context.drawString(font, text, x, y, color);
             return;
         }
-        context.drawText(textRenderer, text, x, y, color, false);
+        context.drawString(font, text, x, y, color, false);
     }
 
-    private void drawCenteredText(DrawContext context, Text text, int centerX, int y, int color) {
-        drawText(context, text, centerX - textRenderer.getWidth(text) / 2, y, color);
+    private void drawCenteredText(GuiGraphics context, Component text, int centerX, int y, int color) {
+        drawText(context, text, centerX - font.width(text) / 2, y, color);
     }
 
-    private Text trimToWidth(Text text, int maxWidth) {
-        return Text.literal(trimToWidth(text.getString(), maxWidth));
+    private Component trimToWidth(Component text, int maxWidth) {
+        return Component.literal(trimToWidth(text.getString(), maxWidth));
     }
 
     private String trimToWidth(String text, int maxWidth) {
         String value = text == null ? "" : text;
-        if (textRenderer.getWidth(value) <= maxWidth) return value;
+        if (font.width(value) <= maxWidth) return value;
         String suffix = "...";
-        return textRenderer.trimToWidth(value, Math.max(0, maxWidth - textRenderer.getWidth(suffix))) + suffix;
+        return font.plainSubstrByWidth(value, Math.max(0, maxWidth - font.width(suffix))) + suffix;
     }
 
-    private Text statusLine() {
+    private Component statusLine() {
         if (downloadTask == null) return VpTexts.text(status);
         String backend = activeBackend.equals(YtDlpManager.TOOL_NAME)
                 ? "yt-dlp"
@@ -560,7 +559,7 @@ public class StartupGuideScreen extends Screen {
         String taskKey = nativeTaskKey(backend, platform);
         CompletableFuture<NativePackageManager.DownloadResult> sharedTask = NATIVE_DOWNLOAD_TASKS.computeIfAbsent(taskKey,
                 ignored -> CompletableFuture.supplyAsync(() -> NativePackageManager.downloadAndInstall(backend, platform, sources, proxy, progress ->
-                        MinecraftClient.getInstance().execute(() -> {
+                        Minecraft.getInstance().execute(() -> {
                             sourceIndex = progress.sourceIndex();
                             sourceCount = progress.sourceCount();
                             sourceName = progress.sourceName();
@@ -571,7 +570,7 @@ public class StartupGuideScreen extends Screen {
         downloadTask = sharedTask;
         sharedTask.whenComplete((result, error) -> {
             NATIVE_DOWNLOAD_TASKS.remove(taskKey, sharedTask);
-            MinecraftClient.getInstance().execute(() -> {
+            Minecraft.getInstance().execute(() -> {
                 downloadTask = null;
                 if (error != null) {
                     status = VpTranslations.from(error, "error.videoplayer.native.download_failed", "Download failed: %s", error.getMessage() == null ? "" : error.getMessage());
@@ -613,7 +612,7 @@ public class StartupGuideScreen extends Screen {
         totalBytes = -1;
         NativeDownloadConfig config = nativeDownloads();
         downloadTask = CompletableFuture.supplyAsync(() -> YtDlpManager.downloadAndInstall(config, selectedYtdlpPlatform, proxy, progress ->
-                MinecraftClient.getInstance().execute(() -> {
+                Minecraft.getInstance().execute(() -> {
                     sourceIndex = progress.sourceIndex();
                     sourceCount = progress.sourceCount();
                     sourceName = progress.sourceName();
@@ -621,7 +620,7 @@ public class StartupGuideScreen extends Screen {
                     totalBytes = progress.totalBytes();
                     status = progress.message();
                 })));
-        downloadTask.whenComplete((result, error) -> MinecraftClient.getInstance().execute(() -> {
+        downloadTask.whenComplete((result, error) -> Minecraft.getInstance().execute(() -> {
             downloadTask = null;
             if (error != null) {
                 status = VpTranslations.from(error, "error.videoplayer.native.download_failed", "Download failed: %s",
@@ -630,7 +629,7 @@ public class StartupGuideScreen extends Screen {
             }
             status = result.message();
             if (result.success()) {
-                ytdlPathField.setText("");
+                ytdlPathField.setValue("");
                 VideoPlayerClient.config.mpvYtdlPath = "";
                 VideoPlayerClient.saveConfig();
                 VideoPlayerClient.applyNativePlatformConfig();
@@ -658,7 +657,7 @@ public class StartupGuideScreen extends Screen {
 
     private void copyLink(String url) {
         try {
-            MinecraftClient.getInstance().keyboard.setClipboard(url);
+            Minecraft.getInstance().keyboardHandler.setClipboard(url);
             status = VpTranslation.of("message.videoplayer.native.link_copied", "Download link copied");
         } catch (RuntimeException e) {
             status = VpTranslation.of("error.videoplayer.copy_link_failed", "Unable to copy link: %s", e.getMessage());
@@ -699,7 +698,7 @@ public class StartupGuideScreen extends Screen {
         syncButtons();
     }
 
-    private Text audioChannelModeLabel(AudioChannelMode mode) {
+    private Component audioChannelModeLabel(AudioChannelMode mode) {
         return VpTexts.tr(
                 "label.videoplayer.audio_channel_mode." + mode.configValue(),
                 mode == AudioChannelMode.AUTO ? "Auto" : "Stereo"
@@ -725,7 +724,7 @@ public class StartupGuideScreen extends Screen {
     }
 
     private String persistProxy() {
-        String proxy = proxyField == null ? currentProxy() : proxyField.getText().trim();
+        String proxy = proxyField == null ? currentProxy() : proxyField.getValue().trim();
         if (VideoPlayerClient.config != null && !Objects.equals(VideoPlayerClient.config.nativeDownloadProxy, proxy)) {
             VideoPlayerClient.config.nativeDownloadProxy = proxy;
             VideoPlayerClient.saveConfig();
@@ -740,7 +739,7 @@ public class StartupGuideScreen extends Screen {
     }
 
     private void persistYtdlPath() {
-        String path = ytdlPathField == null ? currentYtdlPath() : ytdlPathField.getText().trim();
+        String path = ytdlPathField == null ? currentYtdlPath() : ytdlPathField.getValue().trim();
         if (YtDlpManager.isCurrentManagedExecutable(path)) path = "";
         if (VideoPlayerClient.config != null && !Objects.equals(VideoPlayerClient.config.mpvYtdlPath, path)) {
             VideoPlayerClient.config.mpvYtdlPath = path;
@@ -835,12 +834,12 @@ public class StartupGuideScreen extends Screen {
         return platformText(platform).getString();
     }
 
-    private Text platformText(String platform) {
+    private Component platformText(String platform) {
         String arch = NativeDownloadConfig.archFromPlatform(platform);
-        if (arch.isBlank()) return Text.literal(platform == null ? "" : platform);
+        if (arch.isBlank()) return Component.literal(platform == null ? "" : platform);
         return platform.equals(NativePackageManager.platformKey())
                 ? VpTexts.tr("label.videoplayer.platform_recommended", "%s Recommended", arch)
-                : Text.literal(arch);
+                : Component.literal(arch);
     }
 
     private void refreshAvailability() {
@@ -854,7 +853,7 @@ public class StartupGuideScreen extends Screen {
                 VlcDecoder.isAvailable(),
                 MpvVideoBackend.isAvailable()
         ));
-        availabilityTask.whenComplete((state, error) -> MinecraftClient.getInstance().execute(() -> {
+        availabilityTask.whenComplete((state, error) -> Minecraft.getInstance().execute(() -> {
             availabilityTask = null;
             if (error != null || state == null) {
                 vlcAvailable = false;
@@ -877,7 +876,7 @@ public class StartupGuideScreen extends Screen {
                 mpvPlatform,
                 !VideoPlayerMain.android && NativePackageManager.isInstalled(VideoBackends.MPV, mpvPlatform)
         ));
-        installationStateTask.whenComplete((state, error) -> MinecraftClient.getInstance().execute(() -> {
+        installationStateTask.whenComplete((state, error) -> Minecraft.getInstance().execute(() -> {
             installationStateTask = null;
             if (error != null || state == null) return;
             if (!Objects.equals(state.vlcPlatform(), selectedVlcPlatform)
@@ -890,63 +889,16 @@ public class StartupGuideScreen extends Screen {
             if (VideoPlayerMain.android) {
                 vlcAvailable = vlcInstalled;
                 mpvAvailable = false;
-                if (!vlcInstalled && NativeDownloadConfig.ANDROID_ARM64.equals(NativePackageManager.platformKey())) {
-                    startBundledAndroidVlcInstall();
-                }
             }
             syncButtons();
         }));
     }
 
-    private void startBundledAndroidVlcInstall() {
-        if (!VideoPlayerMain.android
-                || downloadTask != null
-                || !NativeDownloadConfig.ANDROID_ARM64.equals(NativePackageManager.platformKey())) {
-            return;
-        }
-        String backend = VideoBackends.VLC;
-        String platform = NativeDownloadConfig.ANDROID_ARM64;
-        activeBackend = backend;
-        status = VpTranslation.of("message.videoplayer.native.prepare_download", "Preparing download");
-        sourceIndex = 0;
-        sourceCount = 0;
-        sourceName = "";
-        bytesRead = 0;
-        totalBytes = -1;
-        String taskKey = nativeTaskKey(backend, platform);
-        CompletableFuture<NativePackageManager.DownloadResult> sharedTask = NATIVE_DOWNLOAD_TASKS.computeIfAbsent(taskKey,
-                ignored -> CompletableFuture.supplyAsync(() -> NativePackageManager.installBundled(
-                        backend,
-                        platform,
-                        NativePackageManager.BUNDLED_ANDROID_VLC_RESOURCE,
-                        NativePackageManager.BUNDLED_ANDROID_VLC_SHA256
-                )));
-        downloadTask = sharedTask;
-        sharedTask.whenComplete((result, error) -> {
-            NATIVE_DOWNLOAD_TASKS.remove(taskKey, sharedTask);
-            MinecraftClient.getInstance().execute(() -> {
-                downloadTask = null;
-                if (error != null) {
-                    status = VpTranslations.from(error, "error.videoplayer.native.bundled_install_failed",
-                            "Bundled native package installation failed: %s", error.getMessage() == null ? "" : error.getMessage());
-                    syncButtons();
-                    return;
-                }
-                status = result.message();
-                if (result.success()) {
-                    markBackendInstalled(backend, true);
-                    vlcAvailable = true;
-                }
-                syncButtons();
-            });
-        });
-    }
-
     private void refreshYtdlpAvailability() {
         if (ytdlpDetectionTask != null) return;
-        String configured = ytdlPathField == null ? currentYtdlPath() : ytdlPathField.getText().trim();
+        String configured = ytdlPathField == null ? currentYtdlPath() : ytdlPathField.getValue().trim();
         ytdlpDetectionTask = CompletableFuture.supplyAsync(() -> YtDlpManager.detect(configured));
-        ytdlpDetectionTask.whenComplete((detection, error) -> MinecraftClient.getInstance().execute(() -> {
+        ytdlpDetectionTask.whenComplete((detection, error) -> Minecraft.getInstance().execute(() -> {
             ytdlpDetectionTask = null;
             ytdlpAvailable = error == null && detection != null && detection.available();
             ytdlpVersion = ytdlpAvailable ? detection.version() : "";
@@ -974,7 +926,8 @@ public class StartupGuideScreen extends Screen {
         if (VideoPlayerMain.android) {
             mpvAvailable = false;
             if (VideoBackends.MPV.equals(backend)) return BackendRefreshResult.RETRY_FAILED;
-            vlcAvailable = vlcInstalled;
+            VlcDecoder.resetLoadState();
+            vlcAvailable = vlcInstalled && VlcDecoder.isAvailable();
             return vlcAvailable ? BackendRefreshResult.RETRY_SUCCEEDED : BackendRefreshResult.RETRY_FAILED;
         }
         if (backendLoaded(backend)) return BackendRefreshResult.RESTART_REQUIRED;
@@ -1005,8 +958,8 @@ public class StartupGuideScreen extends Screen {
         persistProxy();
         persistYtdlPath();
         VideoPlayerClient.markStartupGuideShown();
-        if (client != null) {
-            client.setScreen(parent);
+        if (minecraft != null) {
+            minecraft.setScreen(parent);
         }
     }
 

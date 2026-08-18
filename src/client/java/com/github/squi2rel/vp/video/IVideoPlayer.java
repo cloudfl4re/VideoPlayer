@@ -1,9 +1,9 @@
 package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.provider.VideoInfo;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.renderer.MultiBufferSource;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
@@ -100,7 +100,7 @@ public interface IVideoPlayer {
         return false;
     }
 
-    default void draw(MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen s) {
+    default void draw(PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen s) {
         VideoPlayerRenderer.draw(this, matrices, consumers, s);
     }
 

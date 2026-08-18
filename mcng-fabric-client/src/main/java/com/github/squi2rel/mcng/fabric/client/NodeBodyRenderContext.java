@@ -3,15 +3,14 @@ package com.github.squi2rel.mcng.fabric.client;
 import com.github.squi2rel.mcng.core.NodeInstance;
 import com.github.squi2rel.mcng.core.NodeType;
 import com.google.gson.JsonObject;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-
 import java.util.Objects;
 import java.util.Optional;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 
 public record NodeBodyRenderContext(
-	DrawContext drawContext,
-	TextRenderer textRenderer,
+	GuiGraphics drawContext,
+	Font textRenderer,
 	NodeWidget.Bounds bounds,
 	NodeInstance node,
 	NodeType<?> nodeType,

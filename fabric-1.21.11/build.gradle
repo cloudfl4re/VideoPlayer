@@ -1,0 +1,146 @@
+plugins {
+	id 'fabric-loom'
+	id 'com.gradleup.shadow'
+	id 'maven-publish'
+}
+
+base {
+	archivesName = rootProject.archives_base_name
+}
+
+repositories {
+	mavenCentral()
+	exclusiveContent {
+		forRepository {
+			maven {
+				name = 'Modrinth'
+				url = 'https://api.modrinth.com/maven'
+			}
+		}
+		filter {
+			includeGroup 'maven.modrinth'
+		}
+	}
+}
+
+configurations {
+	shadowBundle
+}
+
+loom {
+	splitEnvironmentSourceSets()
+	mods {
+		videoplayer {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+sourceSets {
+	main {
+		java.setSrcDirs([rootProject.file('src/main/java')])
+		resources.setSrcDirs([rootProject.file('src/main/resources')])
+	}
+	client {
+		java.setSrcDirs([rootProject.file('src/client/java')])
+		resources.setSrcDirs([rootProject.file('src/client/resources')])
+	}
+	test {
+		java.setSrcDirs([rootProject.file('src/test/java')])
+		resources.setSrcDirs([rootProject.file('src/test/resources')])
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
+	mappings loom.officialMojangMappings()
+	modImplementation "net.fabricmc:fabric-loader:${rootProject.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_version}"
+	implementation 'net.java.dev.jna:jna:5.17.0'
+	implementation 'org.brotli:dec:0.1.2'
+	include 'org.brotli:dec:0.1.2'
+	implementation 'com.google.zxing:core:3.5.3'
+	include 'com.google.zxing:core:3.5.3'
+	implementation project(':mcng-core')
+	implementation project(path: ':mcng-fabric-client', configuration: 'namedElements')
+	shadowBundle project(':mcng-core')
+	shadowBundle project(path: ':mcng-fabric-client', configuration: 'namedElements')
+	modCompileOnly "maven.modrinth:modmenu:${rootProject.modmenu_version}"
+	modApi 'maven.modrinth:vivecraft:1.21.11-1.3.9-fabric'
+	runtimeOnly 'com.electronwill.night-config:core:3.6.6'
+	runtimeOnly 'com.electronwill.night-config:toml:3.6.6'
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+	useJUnitPlatform()
+}
+
+processResources {
+	doFirst {
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.zip'))
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.NOTICE.txt'))
+	}
+	inputs.properties([
+		version: project.version,
+		loader_min_version: rootProject.loader_version,
+		minecraft_dependency: '~1.21.11',
+		java_version: '21'
+	])
+	filesMatching('fabric.mod.json') {
+		expand inputs.properties
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 21
+}
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(21)
+	}
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+	inputs.property 'archivesName', project.base.archivesName
+	from(rootProject.file('LICENSE')) {
+		rename { "${it}_${inputs.properties.archivesName}" }
+	}
+	from(rootProject.file('MCNG_LICENSE')) {
+		rename { "${it}_${inputs.properties.archivesName}" }
+	}
+}
+
+shadowJar {
+	archiveClassifier = 'dev-shadow'
+	configurations = [project.configurations.shadowBundle]
+	from sourceSets.client.output
+	from(rootProject.file('LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	from(rootProject.file('MCNG_LICENSE')) {
+		rename { "${it}_${project.base.archivesName.get()}" }
+	}
+	relocate 'com.github.squi2rel.mcng', 'com.github.squi2rel.vp.shadow.mcng'
+}
+
+remapJar {
+	dependsOn shadowJar
+	inputFile.set(shadowJar.archiveFile)
+}
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			artifactId = rootProject.archives_base_name
+			from components.java
+		}
+	}
+}

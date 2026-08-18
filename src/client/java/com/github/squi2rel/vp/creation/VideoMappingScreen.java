@@ -11,10 +11,6 @@ import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.MetaValue;
 import com.github.squi2rel.vp.video.ScreenGeometry;
 import com.github.squi2rel.vp.video.ScreenMetadata;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.text.Text;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 
@@ -22,7 +18,10 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.function.Consumer;
-
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 public class VideoMappingScreen extends Screen implements ServerStateScreen {
@@ -97,57 +96,57 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
             this.keepAspect = !this.keepAspect;
             button.setMessage(keepAspectText());
         }, THEME);
-        addDrawableChild(keepAspectButton);
-        button(VpTexts.tr("button.videoplayer.close", "Close"), startX + 260, bottom, 72, this::close);
+        addRenderableWidget(keepAspectButton);
+        button(VpTexts.tr("button.videoplayer.close", "Close"), startX + 260, bottom, 72, this::onClose);
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
     @Override
-    public void close() {
+    public void onClose() {
         saveIfDirty();
-        client.setScreen(parent);
+        minecraft.setScreen(parent);
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         computeLayout();
         renderBackground(context, mouseX, mouseY, delta);
         drawChrome(context);
         super.render(context, mouseX, mouseY, delta);
         drawCenteredLabel(context, title, width / 2, 18, THEME.primaryTextColor());
         drawLabel(context, VpTexts.tr("label.videoplayer.preview", "Preview"), previewX, previewY - 14, THEME.secondaryTextColor());
-        drawLabel(context, Text.literal(screen.name), imageX, imageY - 14, THEME.secondaryTextColor());
-        Text controls = Text.translatableWithFallback(
+        drawLabel(context, Component.literal(screen.name), imageX, imageY - 14, THEME.secondaryTextColor());
+        Component controls = Component.translatableWithFallback(
                 "hint.videoplayer.mapping_controls",
                 "%1$s drag/select vertices; %2$s rotate; %3$s + %1$s multi-select",
                 VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_LEFT),
                 VpInputTexts.mouseButton(GLFW.GLFW_MOUSE_BUTTON_RIGHT),
                 VpInputTexts.key(GLFW.GLFW_KEY_LEFT_CONTROL)
         );
-        drawLabel(context, Text.literal(textRenderer.trimToWidth(controls, Math.max(1, width - 36)).getString()), 18, height - 46, THEME.secondaryTextColor());
+        drawLabel(context, Component.literal(font.substrByWidth(controls, Math.max(1, width - 36)).getString()), 18, height - 46, THEME.secondaryTextColor());
 
         drawFrame(context, previewX, previewY, previewW, previewH);
         drawPreview(context);
-        context.drawStrokedRectangle(previewX - 1, previewY - 1, previewW + 2, previewH + 2, THEME.panelBorderColor());
+        context.renderOutline(previewX - 1, previewY - 1, previewW + 2, previewH + 2, THEME.panelBorderColor());
         drawFrame(context, imageX, imageY, imageW, imageH);
         drawTexture(context);
-        context.drawStrokedRectangle(imageX - 1, imageY - 1, imageW + 2, imageH + 2, THEME.panelBorderColor());
+        context.renderOutline(imageX - 1, imageY - 1, imageW + 2, imageH + 2, THEME.panelBorderColor());
         drawPolygon(context);
         drawSelectionBox(context);
         drawHandles(context, mouseX, mouseY);
     }
 
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, VpUiRenderer.withAlpha(THEME.canvasBackgroundColor(), 0xE6));
     }
 
     @Override
-    public boolean mouseClicked(Click click, boolean doubleClick) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -159,7 +158,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
                 return true;
             }
             int handle = handleAt(mouseX, mouseY);
-            if (handle >= 0 && click.buttonInfo().hasCtrlOrCmd()) {
+            if (handle >= 0 && click.buttonInfo().hasControlDownWithQuirk()) {
                 toggleSelectedVertex(handle);
                 return true;
             }
@@ -205,7 +204,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
     }
 
     @Override
-    public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+    public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -227,7 +226,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
             return true;
         }
         if (button == 0 && dragMode == DragMode.EDGE && draggingEdge >= 0) {
-            moveEdge(mouseX, mouseY, click.buttonInfo().hasShift());
+            moveEdge(mouseX, mouseY, click.buttonInfo().hasShiftDown());
             return true;
         }
         if (button == 0 && dragMode == DragMode.PAN) {
@@ -239,7 +238,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         if ((button == 0 || button == 1) && dragMode == DragMode.ROTATE) {
             float after = angleAt(mouseX, mouseY, dragStartCenter);
             float delta = normalizedAngle(after - rotationStartAngle);
-            if (click.buttonInfo().hasShift()) {
+            if (click.buttonInfo().hasShiftDown()) {
                 float step = (float) Math.toRadians(15);
                 delta = Math.round(delta / step) * step;
             }
@@ -259,7 +258,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
     }
 
     @Override
-    public boolean mouseReleased(Click click) {
+    public boolean mouseReleased(MouseButtonEvent click) {
         double mouseX = click.x();
         double mouseY = click.y();
         int button = click.button();
@@ -299,7 +298,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
-    private Text keepAspectText() {
+    private Component keepAspectText() {
         return VpTexts.tr("label.videoplayer.keep_aspect", "Keep Aspect: %s",
                 (keepAspect ? VpTexts.tr("label.videoplayer.on", "On") : VpTexts.tr("label.videoplayer.off", "Off")).getString());
     }
@@ -412,8 +411,8 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         imageY = TOP_HEIGHT + Math.max(0, (maxH - imageH) / 2);
     }
 
-    private void drawTexture(DrawContext context) {
-        context.drawTexturedQuad(
+    private void drawTexture(GuiGraphics context) {
+        context.blit(
                 ScreenRenderer.textureIdentifier(screen.displayTextureId()),
                 imageX,
                 imageY,
@@ -426,54 +425,54 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         );
     }
 
-    private void drawChrome(DrawContext context) {
+    private void drawChrome(GuiGraphics context) {
         int margin = 14;
         VpUiRenderer.drawBox(context, margin, 12, Math.max(1, width - margin * 2), Math.max(1, height - 24),
                 THEME.panelBackgroundColor(), THEME.panelBorderColor());
     }
 
-    private void drawFrame(DrawContext context, int x, int y, int frameWidth, int frameHeight) {
+    private void drawFrame(GuiGraphics context, int x, int y, int frameWidth, int frameHeight) {
         VpUiRenderer.drawBox(context, x - 3, y - 3, frameWidth + 6, frameHeight + 6,
                 VpUiRenderer.darken(THEME.nodeBodyColor(), 0.08f), THEME.panelBorderColor());
     }
 
-    private void drawLabel(DrawContext context, Text text, int x, int y, int color) {
+    private void drawLabel(GuiGraphics context, Component text, int x, int y, int color) {
         if (THEME.textShadow()) {
-            context.drawTextWithShadow(textRenderer, text, x, y, color);
+            context.drawString(font, text, x, y, color);
             return;
         }
-        context.drawText(textRenderer, text, x, y, color, false);
+        context.drawString(font, text, x, y, color, false);
     }
 
-    private void drawCenteredLabel(DrawContext context, Text text, int centerX, int y, int color) {
-        drawLabel(context, text, centerX - textRenderer.getWidth(text) / 2, y, color);
+    private void drawCenteredLabel(GuiGraphics context, Component text, int centerX, int y, int color) {
+        drawLabel(context, text, centerX - font.width(text) / 2, y, color);
     }
 
     private VpButtonWidget button(String label, int x, int y, int width, Runnable action) {
-        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Text.literal(label), b -> action.run(), THEME);
-        addDrawableChild(button);
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Component.literal(label), b -> action.run(), THEME);
+        addRenderableWidget(button);
         return button;
     }
 
-    private VpButtonWidget button(Text label, int x, int y, int width, Runnable action) {
+    private VpButtonWidget button(Component label, int x, int y, int width, Runnable action) {
         VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, label, b -> action.run(), THEME);
-        addDrawableChild(button);
+        addRenderableWidget(button);
         return button;
     }
 
     private VpButtonWidget button(String label, int x, int y, int width, Consumer<VpButtonWidget> action) {
-        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Text.literal(label), action, THEME);
-        addDrawableChild(button);
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Component.literal(label), action, THEME);
+        addRenderableWidget(button);
         return button;
     }
 
-    private VpButtonWidget button(Text label, int x, int y, int width, Consumer<VpButtonWidget> action) {
+    private VpButtonWidget button(Component label, int x, int y, int width, Consumer<VpButtonWidget> action) {
         VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, label, action, THEME);
-        addDrawableChild(button);
+        addRenderableWidget(button);
         return button;
     }
 
-    private void drawPreview(DrawContext context) {
+    private void drawPreview(GuiGraphics context) {
         if (uvs.size() < 3) return;
         ScreenGeometry geometry;
         try {
@@ -554,7 +553,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         return new PreviewVertex3d(yawX, pitchY, pitchZ);
     }
 
-    private void drawPreview3dTexture(DrawContext context, ScreenGeometry geometry, ArrayList<PreviewVertex3d> projected) {
+    private void drawPreview3dTexture(GuiGraphics context, ScreenGeometry geometry, ArrayList<PreviewVertex3d> projected) {
         int[] triangles = geometry.triangles();
         ArrayList<ScreenRenderer.GuiVertex> vertices = new ArrayList<>(triangles.length);
         for (int i = 0; i < triangles.length; i += 3) {
@@ -570,7 +569,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         vertices.add(new ScreenRenderer.GuiVertex(point.x, point.y, uv.x, uv.y, 0xFFFFFFFF));
     }
 
-    private void drawPreview3dOutline(DrawContext context, ScreenGeometry geometry, ArrayList<PreviewVertex3d> projected) {
+    private void drawPreview3dOutline(GuiGraphics context, ScreenGeometry geometry, ArrayList<PreviewVertex3d> projected) {
         int count = geometry.vertices().size();
         for (int i = 0; i < count; i++) {
             PreviewVertex3d a = projected.get(i);
@@ -579,7 +578,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         }
     }
 
-    private void drawPolygon(DrawContext context) {
+    private void drawPolygon(GuiGraphics context) {
         if (uvs.size() < 2) return;
         for (int i = 0; i < uvs.size(); i++) {
             Vector2f a = uvs.get(i);
@@ -589,7 +588,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         drawTriangleGuides(context);
     }
 
-    private void drawTriangleGuides(DrawContext context) {
+    private void drawTriangleGuides(GuiGraphics context) {
         if (uvs.size() < 4) return;
         ScreenGeometry geometry;
         try {
@@ -606,7 +605,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         }
     }
 
-    private void drawTriangleGuideEdge(DrawContext context, int from, int to) {
+    private void drawTriangleGuideEdge(GuiGraphics context, int from, int to) {
         int size = uvs.size();
         if (from == to) return;
         int diff = Math.abs(from - to);
@@ -616,7 +615,7 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         drawLine(context, toX(a), toY(a), toX(b), toY(b), TRIANGLE_GUIDE_COLOR, GUIDE_LINE_WIDTH);
     }
 
-    private void drawHandles(DrawContext context, int mouseX, int mouseY) {
+    private void drawHandles(GuiGraphics context, int mouseX, int mouseY) {
         pruneSelection();
         for (int i = 0; i < uvs.size(); i++) {
             Vector2f uv = uvs.get(i);
@@ -630,13 +629,13 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
             String label = String.valueOf(i + 1);
             int labelX = x + 7;
             int labelY = y - 5;
-            context.fill(labelX - 2, labelY - 1, labelX + textRenderer.getWidth(label) + 2, labelY + 10,
+            context.fill(labelX - 2, labelY - 1, labelX + font.width(label) + 2, labelY + 10,
                     VpUiRenderer.withAlpha(THEME.panelBackgroundColor(), 0xCC));
-            drawLabel(context, Text.literal(label), labelX, labelY, THEME.primaryTextColor());
+            drawLabel(context, Component.literal(label), labelX, labelY, THEME.primaryTextColor());
         }
     }
 
-    private void drawSelectionBox(DrawContext context) {
+    private void drawSelectionBox(GuiGraphics context) {
         if (dragMode != DragMode.BOX_SELECT) return;
         int x1 = Math.round(Math.clamp((float) Math.min(selectionStartX, selectionEndX), imageX, imageX + imageW));
         int y1 = Math.round(Math.clamp((float) Math.min(selectionStartY, selectionEndY), imageY, imageY + imageH));
@@ -644,21 +643,21 @@ public class VideoMappingScreen extends Screen implements ServerStateScreen {
         int y2 = Math.round(Math.clamp((float) Math.max(selectionStartY, selectionEndY), imageY, imageY + imageH));
         if (x2 <= x1 || y2 <= y1) return;
         context.fill(x1, y1, x2, y2, VpUiRenderer.withAlpha(THEME.executionColor(), 0x28));
-        context.drawStrokedRectangle(x1, y1, x2 - x1, y2 - y1, THEME.executionColor());
+        context.renderOutline(x1, y1, x2 - x1, y2 - y1, THEME.executionColor());
     }
 
-    private void drawLine(DrawContext context, float x1, float y1, float x2, float y2, int color, float width) {
+    private void drawLine(GuiGraphics context, float x1, float y1, float x2, float y2, int color, float width) {
         float dx = x2 - x1;
         float dy = y2 - y1;
         float length = (float) Math.sqrt(dx * dx + dy * dy);
         if (length < 0.001f) return;
         int thickness = Math.max(1, Math.round(width));
         int half = Math.max(1, thickness) / 2;
-        context.getMatrices().pushMatrix();
-        context.getMatrices().translate(x1, y1);
-        context.getMatrices().rotate((float) Math.atan2(dy, dx));
+        context.pose().pushMatrix();
+        context.pose().translate(x1, y1);
+        context.pose().rotate((float) Math.atan2(dy, dx));
         context.fill(0, -half, Math.max(1, Math.round(length)), Math.max(1, thickness - half), color);
-        context.getMatrices().popMatrix();
+        context.pose().popMatrix();
     }
 
     private int handleAt(double mouseX, double mouseY) {

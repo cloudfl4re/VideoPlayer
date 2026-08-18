@@ -2,14 +2,16 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.vivecraft.Vivecraft;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.renderer.MultiBufferSource;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 
 import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
+
+
 import static com.github.squi2rel.vp.VideoPlayerClient.config;
 
 public class VideoPlayer extends AbstractScreenPlayer implements RateAdjustablePlayer, MetaListener {
@@ -226,7 +228,7 @@ public class VideoPlayer extends AbstractScreenPlayer implements RateAdjustableP
     }
 
     @Override
-    public void draw(MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen s) {
+    public void draw(PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen s) {
         VideoPlayerRenderer.draw(this, matrices, consumers, s);
         if (s.surface == ScreenSurface.SPHERE_360 && s.spherePreset && getTextureId() >= 0) {
             Degree360Player.drawTexture(getTextureId(), matrices, consumers, s, is3d);

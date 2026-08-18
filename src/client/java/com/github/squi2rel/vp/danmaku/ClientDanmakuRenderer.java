@@ -7,21 +7,12 @@ import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.ScreenGeometry;
 import com.github.squi2rel.vp.video.ScreenMetadata;
 import com.github.squi2rel.vp.video.ScreenSurface;
-import net.minecraft.client.font.TextDrawable;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.ScreenRect;
-import net.minecraft.client.gui.render.state.SimpleGuiElementRenderState;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.texture.TextureSetup;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.Identifier;
 import org.joml.Matrix3x2f;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
@@ -33,6 +24,15 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.font.TextRenderable;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.gui.render.TextureSetup;
+import net.minecraft.client.gui.render.state.GuiElementRenderState;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.resources.Identifier;
 
 public final class ClientDanmakuRenderer {
     private static final float BASE_ROLLING_SURFACE_GAP = 0.003f;
@@ -47,7 +47,7 @@ public final class ClientDanmakuRenderer {
     private static final float SUBTITLE_BACKGROUND_PADDING_X = 4.0f;
     private static final float SUBTITLE_BACKGROUND_PADDING_Y = 2.0f;
     private static final float SUBTITLE_BACKGROUND_SURFACE_GAP = 0.00035f;
-    private static final Identifier SUBTITLE_BACKGROUND_TEXTURE = Identifier.of("minecraft", "textures/block/white_concrete.png");
+    private static final Identifier SUBTITLE_BACKGROUND_TEXTURE = Identifier.fromNamespaceAndPath("minecraft", "textures/block/white_concrete.png");
 
     private ClientDanmakuRenderer() {
     }
@@ -70,7 +70,7 @@ public final class ClientDanmakuRenderer {
         BiliBiliSourceRegistry.clear();
     }
 
-    public static void draw(MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen target) {
+    public static void draw(PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen target) {
         if (!ClientDanmakuController.isEnabledOn(target) || target.surface == ScreenSurface.SPHERE_360) return;
         ClientVideoScreen playback = target.getScreen();
         if (playback == null) return;
@@ -83,7 +83,7 @@ public final class ClientDanmakuRenderer {
         drawDanmakuItems(consumers, context, target, items);
     }
 
-    public static void drawSubtitles(MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen target) {
+    public static void drawSubtitles(PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen target) {
         if (target == null || target.surface == ScreenSurface.SPHERE_360) return;
         ClientVideoScreen playback = target.getScreen();
         if (playback == null) return;
@@ -96,7 +96,7 @@ public final class ClientDanmakuRenderer {
         drawSubtitleItems(consumers, context, target, items);
     }
 
-    public static void drawPreview(DrawContext context, ClientVideoScreen target, int x, int y, int width, int height) {
+    public static void drawPreview(GuiGraphics context, ClientVideoScreen target, int x, int y, int width, int height) {
         if (target == null || width <= 0 || height <= 0) return;
         if (!ClientDanmakuController.isEnabledOn(target) || target.surface == ScreenSurface.SPHERE_360) return;
         ClientVideoScreen playback = target.getScreen();
@@ -112,7 +112,7 @@ public final class ClientDanmakuRenderer {
         DanmakuTextLayoutCache.prepare(items);
         context.enableScissor(x, y, x + width, y + height);
         try {
-            GuiTextBatch batch = new GuiTextBatch(context.scissorStack.peekLast());
+            GuiTextBatch batch = new GuiTextBatch(context.scissorStack.peek());
             for (ClientDanmakuController.RenderableDanmaku item : items) {
                 collectPreviewItem(context, batch, item, x, y, width, height, scaleX, scaleY, alpha);
             }
@@ -122,7 +122,7 @@ public final class ClientDanmakuRenderer {
         }
     }
 
-    public static void drawSubtitlePreview(DrawContext context, ClientVideoScreen target, int x, int y, int width, int height) {
+    public static void drawSubtitlePreview(GuiGraphics context, ClientVideoScreen target, int x, int y, int width, int height) {
         if (target == null || width <= 0 || height <= 0 || target.surface == ScreenSurface.SPHERE_360) return;
         ClientVideoScreen playback = target.getScreen();
         if (playback == null) return;
@@ -136,7 +136,7 @@ public final class ClientDanmakuRenderer {
         DanmakuTextLayoutCache.prepare(items);
         context.enableScissor(x, y, x + width, y + height);
         try {
-            GuiTextBatch batch = new GuiTextBatch(context.scissorStack.peekLast());
+            GuiTextBatch batch = new GuiTextBatch(context.scissorStack.peek());
             for (ClientDanmakuController.RenderableDanmaku item : items) {
                 drawPreviewSubtitleBackground(context, item, x, y, width, height, scaleX, scaleY);
                 collectPreviewItem(context, batch, item, x, y, width, height, scaleX, scaleY, alpha(SUBTITLE_VERTEX_COLOR));
@@ -198,7 +198,7 @@ public final class ClientDanmakuRenderer {
         return new RenderContext(targetGeometry, projection, source, targetBounds, rootTarget, directPlane, renderOrigin);
     }
 
-    private static void collectPreviewItem(DrawContext context, GuiTextBatch batch,
+    private static void collectPreviewItem(GuiGraphics context, GuiTextBatch batch,
                                            ClientDanmakuController.RenderableDanmaku item,
                                            int x, int y, int width, int height,
                                            float scaleX, float scaleY, int alpha) {
@@ -212,16 +212,16 @@ public final class ClientDanmakuRenderer {
             return;
         }
 
-        Matrix3x2f pose = new Matrix3x2f(context.getMatrices())
+        Matrix3x2f pose = new Matrix3x2f(context.pose())
                 .translate(drawX, drawY)
                 .scale(item.scale() * scaleX, item.scale() * scaleY);
         Matrix4f matrix = new Matrix4f().mul(pose);
         DanmakuTextLayoutCache.CachedLayout layout = DanmakuTextLayoutCache.get(item.text());
         int bodyColor = colorWithAlpha(item.color(), alpha);
-        layout.body().draw(new GuiGlyphCollector(batch, matrix, bodyColor));
+        layout.body().visit(new GuiGlyphCollector(batch, matrix, bodyColor));
     }
 
-    private static void drawPreviewSubtitleBackground(DrawContext context, ClientDanmakuController.RenderableDanmaku item,
+    private static void drawPreviewSubtitleBackground(GuiGraphics context, ClientDanmakuController.RenderableDanmaku item,
                                                       int x, int y, int width, int height, float scaleX, float scaleY) {
         float padX = SUBTITLE_BACKGROUND_PADDING_X * item.scale() * scaleX;
         float padY = SUBTITLE_BACKGROUND_PADDING_Y * item.scale() * scaleY;
@@ -234,7 +234,7 @@ public final class ClientDanmakuRenderer {
         }
     }
 
-    private static void drawDanmakuItems(VertexConsumerProvider consumers, RenderContext context, ClientVideoScreen target,
+    private static void drawDanmakuItems(MultiBufferSource consumers, RenderContext context, ClientVideoScreen target,
                                          List<ClientDanmakuController.RenderableDanmaku> items) {
         WorldTextBatch batch = new WorldTextBatch();
         int rollingCount = countItems(items, false);
@@ -255,7 +255,7 @@ public final class ClientDanmakuRenderer {
         batch.submit(consumers);
     }
 
-    private static void drawSubtitleItems(VertexConsumerProvider consumers, RenderContext context, ClientVideoScreen target,
+    private static void drawSubtitleItems(MultiBufferSource consumers, RenderContext context, ClientVideoScreen target,
                                           List<ClientDanmakuController.RenderableDanmaku> items) {
         drawSubtitleBackgrounds(consumers, context, target, items);
         WorldTextBatch batch = new WorldTextBatch();
@@ -267,7 +267,7 @@ public final class ClientDanmakuRenderer {
         batch.submit(consumers);
     }
 
-    private static void drawSubtitleBackgrounds(VertexConsumerProvider consumers, RenderContext context, ClientVideoScreen target,
+    private static void drawSubtitleBackgrounds(MultiBufferSource consumers, RenderContext context, ClientVideoScreen target,
                                                 List<ClientDanmakuController.RenderableDanmaku> items) {
         VertexConsumer consumer = consumers.getBuffer(ScreenRenderer.getTranslucentLayer(SUBTITLE_BACKGROUND_TEXTURE));
         int count = items.size();
@@ -321,8 +321,8 @@ public final class ClientDanmakuRenderer {
         Matrix4f matrix = new Matrix4f().translation(item.x(), item.y(), 0.0f).scale(item.scale(), item.scale(), 1.0f);
         int alpha = alpha(vertexColor);
         int bodyColor = colorWithAlpha(item.color(), alpha);
-        layout.body().draw(new MappedGlyphDrawer(batch, context, target, normalOffset, matrix,
-                TextRenderer.TextLayerType.POLYGON_OFFSET, bodyColor));
+        layout.body().visit(new MappedGlyphDrawer(batch, context, target, normalOffset, matrix,
+                Font.DisplayMode.POLYGON_OFFSET, bodyColor));
     }
 
     private static int opacityVertexColor() {
@@ -595,9 +595,9 @@ public final class ClientDanmakuRenderer {
         Vector3f vertex = triangle.interpolate(point.x, point.y)
                 .add(normalOffset)
                 .add(renderOrigin);
-        consumer.vertex(vertex.x, vertex.y, vertex.z)
-                .color(vertexColor)
-                .texture(point.u, point.v);
+        consumer.addVertex(vertex.x, vertex.y, vertex.z)
+                .setColor(vertexColor)
+                .setUv(point.u, point.v);
     }
 
     private static void drawBackgroundPlaneVertex(DirectPlane plane, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
@@ -608,9 +608,9 @@ public final class ClientDanmakuRenderer {
                 + normalOffset.y + renderOrigin.y;
         float z = plane.origin.z + plane.xAxis.z * (point.x - plane.minX) + plane.yAxis.z * (point.y - plane.minY)
                 + normalOffset.z + renderOrigin.z;
-        consumer.vertex(x, y, z)
-                .color(vertexColor)
-                .texture(point.u, point.v);
+        consumer.addVertex(x, y, z)
+                .setColor(vertexColor)
+                .setUv(point.u, point.v);
     }
 
     private static void drawTriangle(SurfaceTriangle triangle, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
@@ -630,10 +630,10 @@ public final class ClientDanmakuRenderer {
         Vector3f vertex = triangle.interpolate(point.x, point.y)
                 .add(normalOffset)
                 .add(renderOrigin);
-        consumer.vertex(vertex.x, vertex.y, vertex.z)
-                .color(vertexColor)
-                .texture(point.u, point.v)
-                .light(light);
+        consumer.addVertex(vertex.x, vertex.y, vertex.z)
+                .setColor(vertexColor)
+                .setUv(point.u, point.v)
+                .setLight(light);
     }
 
     private static void drawPlaneVertex(DirectPlane plane, Vector3f renderOrigin, Vector3f normalOffset, VertexConsumer consumer,
@@ -644,10 +644,10 @@ public final class ClientDanmakuRenderer {
                 + normalOffset.y + renderOrigin.y;
         float z = plane.origin.z + plane.xAxis.z * (point.x - plane.minX) + plane.yAxis.z * (point.y - plane.minY)
                 + normalOffset.z + renderOrigin.z;
-        consumer.vertex(x, y, z)
-                .color(vertexColor)
-                .texture(point.u, point.v)
-                .light(light);
+        consumer.addVertex(x, y, z)
+                .setColor(vertexColor)
+                .setUv(point.u, point.v)
+                .setLight(light);
     }
 
     private static float signedArea(List<Vector2f> polygon) {
@@ -738,24 +738,24 @@ public final class ClientDanmakuRenderer {
     }
 
     private static final class GuiTextBatch {
-        private final ScreenRect scissorArea;
+        private final ScreenRectangle scissorArea;
         private final Map<GuiTextBatchKey, ArrayList<GuiGlyphVertex>> verticesByBatch = new HashMap<>();
 
-        private GuiTextBatch(ScreenRect scissorArea) {
+        private GuiTextBatch(ScreenRectangle scissorArea) {
             this.scissorArea = scissorArea;
         }
 
-        private void add(TextDrawable drawable, Matrix4f matrix, int color) {
-            GuiTextBatchKey key = new GuiTextBatchKey(drawable.getPipeline(), drawable.textureView());
+        private void add(TextRenderable drawable, Matrix4f matrix, int color) {
+            GuiTextBatchKey key = new GuiTextBatchKey(drawable.guiPipeline(), drawable.textureView());
             ArrayList<GuiGlyphVertex> vertices = verticesByBatch.computeIfAbsent(key, ignored -> new ArrayList<>());
             drawable.render(matrix, new GuiGlyphVertexCollector(vertices, color), LIGHT, true);
         }
 
-        private void submit(DrawContext context) {
+        private void submit(GuiGraphics context) {
             if (verticesByBatch.isEmpty() || scissorArea == null) return;
             for (Map.Entry<GuiTextBatchKey, ArrayList<GuiGlyphVertex>> entry : verticesByBatch.entrySet()) {
                 if (entry.getValue().isEmpty()) continue;
-                ((DrawContextAccessor) context).videoplayer$getState().addSimpleElement(new GuiTextBatchRenderState(
+                ((DrawContextAccessor) context).videoplayer$getState().submitGuiElement(new GuiTextBatchRenderState(
                         entry.getKey().pipeline(),
                         entry.getKey().textureView(),
                         List.copyOf(entry.getValue()),
@@ -765,7 +765,7 @@ public final class ClientDanmakuRenderer {
         }
     }
 
-    private static final class GuiGlyphCollector implements TextRenderer.GlyphDrawer {
+    private static final class GuiGlyphCollector implements Font.GlyphVisitor {
         private final GuiTextBatch batch;
         private final Matrix4f matrix;
         private final int color;
@@ -777,12 +777,12 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public void drawGlyph(TextDrawable.DrawnGlyphRect glyph) {
+        public void acceptGlyph(TextRenderable.Styled glyph) {
             batch.add(glyph, matrix, color);
         }
 
         @Override
-        public void drawRectangle(TextDrawable rectangle) {
+        public void acceptEffect(TextRenderable rectangle) {
             batch.add(rectangle, matrix, color);
         }
     }
@@ -802,7 +802,7 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public VertexConsumer vertex(float x, float y, float z) {
+        public VertexConsumer addVertex(float x, float y, float z) {
             this.x = x;
             this.y = y;
             this.z = z;
@@ -810,64 +810,64 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public VertexConsumer color(int red, int green, int blue, int alpha) {
+        public VertexConsumer setColor(int red, int green, int blue, int alpha) {
             return this;
         }
 
         @Override
-        public VertexConsumer color(int color) {
+        public VertexConsumer setColor(int color) {
             return this;
         }
 
         @Override
-        public VertexConsumer texture(float u, float v) {
+        public VertexConsumer setUv(float u, float v) {
             this.u = u;
             this.v = v;
             return this;
         }
 
         @Override
-        public VertexConsumer overlay(int u, int v) {
+        public VertexConsumer setUv1(int u, int v) {
             return this;
         }
 
         @Override
-        public VertexConsumer light(int u, int v) {
+        public VertexConsumer setUv2(int u, int v) {
             vertices.add(new GuiGlyphVertex(x, y, z, this.u, this.v, color, (v << 16) | (u & 0xFFFF)));
             return this;
         }
 
         @Override
-        public VertexConsumer normal(float x, float y, float z) {
+        public VertexConsumer setNormal(float x, float y, float z) {
             return this;
         }
 
         @Override
-        public VertexConsumer lineWidth(float width) {
+        public VertexConsumer setLineWidth(float width) {
             return this;
         }
     }
 
     private record GuiTextBatchRenderState(RenderPipeline pipeline, GpuTextureView textureView,
                                            List<GuiGlyphVertex> vertices,
-                                           ScreenRect bounds) implements SimpleGuiElementRenderState {
+                                           ScreenRectangle bounds) implements GuiElementRenderState {
         @Override
-        public void setupVertices(VertexConsumer consumer) {
+        public void buildVertices(VertexConsumer consumer) {
             for (GuiGlyphVertex vertex : vertices) {
-                consumer.vertex(vertex.x(), vertex.y(), vertex.z())
-                        .color(vertex.color())
-                        .texture(vertex.u(), vertex.v())
-                        .light(vertex.light());
+                consumer.addVertex(vertex.x(), vertex.y(), vertex.z())
+                        .setColor(vertex.color())
+                        .setUv(vertex.u(), vertex.v())
+                        .setLight(vertex.light());
             }
         }
 
         @Override
         public TextureSetup textureSetup() {
-            return TextureSetup.withLightmap(textureView, RenderSystem.getSamplerCache().get(FilterMode.NEAREST));
+            return TextureSetup.singleTextureWithLightmap(textureView, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
         }
 
         @Override
-        public ScreenRect scissorArea() {
+        public ScreenRectangle scissorArea() {
             return bounds;
         }
     }
@@ -879,22 +879,22 @@ public final class ClientDanmakuRenderer {
     }
 
     private static final class WorldTextBatch {
-        private final Map<RenderLayer, WorldGlyphVertexCollector> consumers = new LinkedHashMap<>();
+        private final Map<RenderType, WorldGlyphVertexCollector> consumers = new LinkedHashMap<>();
 
-        private VertexConsumer consumer(RenderLayer layer) {
+        private VertexConsumer consumer(RenderType layer) {
             return consumers.computeIfAbsent(layer, ignored -> new WorldGlyphVertexCollector());
         }
 
-        private void submit(VertexConsumerProvider output) {
-            for (Map.Entry<RenderLayer, WorldGlyphVertexCollector> entry : consumers.entrySet()) {
+        private void submit(MultiBufferSource output) {
+            for (Map.Entry<RenderType, WorldGlyphVertexCollector> entry : consumers.entrySet()) {
                 List<WorldGlyphVertex> vertices = entry.getValue().vertices();
                 if (vertices.isEmpty()) continue;
                 VertexConsumer consumer = output.getBuffer(entry.getKey());
                 for (WorldGlyphVertex vertex : vertices) {
-                    consumer.vertex(vertex.x(), vertex.y(), vertex.z())
-                            .color(vertex.color())
-                            .texture(vertex.u(), vertex.v())
-                            .light(vertex.light());
+                    consumer.addVertex(vertex.x(), vertex.y(), vertex.z())
+                            .setColor(vertex.color())
+                            .setUv(vertex.u(), vertex.v())
+                            .setLight(vertex.light());
                 }
             }
         }
@@ -914,7 +914,7 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public VertexConsumer vertex(float x, float y, float z) {
+        public VertexConsumer addVertex(float x, float y, float z) {
             this.x = x;
             this.y = y;
             this.z = z;
@@ -922,7 +922,7 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public VertexConsumer color(int red, int green, int blue, int alpha) {
+        public VertexConsumer setColor(int red, int green, int blue, int alpha) {
             this.color = (Math.clamp(alpha, 0, 255) << 24)
                     | (Math.clamp(red, 0, 255) << 16)
                     | (Math.clamp(green, 0, 255) << 8)
@@ -931,36 +931,36 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public VertexConsumer color(int color) {
+        public VertexConsumer setColor(int color) {
             this.color = color;
             return this;
         }
 
         @Override
-        public VertexConsumer texture(float u, float v) {
+        public VertexConsumer setUv(float u, float v) {
             this.u = u;
             this.v = v;
             return this;
         }
 
         @Override
-        public VertexConsumer overlay(int u, int v) {
+        public VertexConsumer setUv1(int u, int v) {
             return this;
         }
 
         @Override
-        public VertexConsumer light(int u, int v) {
+        public VertexConsumer setUv2(int u, int v) {
             vertices.add(new WorldGlyphVertex(x, y, z, this.u, this.v, color, (v << 16) | (u & 0xFFFF)));
             return this;
         }
 
         @Override
-        public VertexConsumer normal(float x, float y, float z) {
+        public VertexConsumer setNormal(float x, float y, float z) {
             return this;
         }
 
         @Override
-        public VertexConsumer lineWidth(float width) {
+        public VertexConsumer setLineWidth(float width) {
             return this;
         }
     }
@@ -974,19 +974,19 @@ public final class ClientDanmakuRenderer {
     private record GlyphVertex(float x, float y, float u, float v, int light) {
     }
 
-    private static final class MappedGlyphDrawer implements TextRenderer.GlyphDrawer {
+    private static final class MappedGlyphDrawer implements Font.GlyphVisitor {
         private final WorldTextBatch batch;
         private final RenderContext context;
         private final ClientVideoScreen target;
         private final Vector3f normalOffset;
         private final Matrix4f matrix;
-        private final TextRenderer.TextLayerType layerType;
+        private final Font.DisplayMode layerType;
         private final int color;
-        private final Map<RenderLayer, MappingVertexConsumer> layerConsumers = new HashMap<>();
+        private final Map<RenderType, MappingVertexConsumer> layerConsumers = new HashMap<>();
 
         private MappedGlyphDrawer(WorldTextBatch batch, RenderContext context, ClientVideoScreen target,
                                   Vector3f normalOffset, Matrix4f matrix,
-                                  TextRenderer.TextLayerType layerType, int color) {
+                                  Font.DisplayMode layerType, int color) {
             this.batch = batch;
             this.context = context;
             this.target = target;
@@ -997,17 +997,17 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public void drawGlyph(TextDrawable.DrawnGlyphRect glyph) {
+        public void acceptGlyph(TextRenderable.Styled glyph) {
             draw(glyph);
         }
 
         @Override
-        public void drawRectangle(TextDrawable rectangle) {
+        public void acceptEffect(TextRenderable rectangle) {
             draw(rectangle);
         }
 
-        private void draw(TextDrawable drawable) {
-            RenderLayer layer = drawable.getRenderLayer(layerType);
+        private void draw(TextRenderable drawable) {
+            RenderType layer = drawable.renderType(layerType);
             MappingVertexConsumer consumer = layerConsumers.computeIfAbsent(layer, key ->
                     new MappingVertexConsumer(batch.consumer(key), context, target, normalOffset, color));
             drawable.render(matrix, consumer, LIGHT, false);
@@ -1038,36 +1038,36 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public VertexConsumer vertex(float x, float y, float z) {
+        public VertexConsumer addVertex(float x, float y, float z) {
             this.x = x;
             this.y = y;
             return this;
         }
 
         @Override
-        public VertexConsumer color(int red, int green, int blue, int alpha) {
+        public VertexConsumer setColor(int red, int green, int blue, int alpha) {
             return this;
         }
 
         @Override
-        public VertexConsumer color(int color) {
+        public VertexConsumer setColor(int color) {
             return this;
         }
 
         @Override
-        public VertexConsumer texture(float u, float v) {
+        public VertexConsumer setUv(float u, float v) {
             this.u = u;
             this.v = v;
             return this;
         }
 
         @Override
-        public VertexConsumer overlay(int u, int v) {
+        public VertexConsumer setUv1(int u, int v) {
             return this;
         }
 
         @Override
-        public VertexConsumer light(int u, int v) {
+        public VertexConsumer setUv2(int u, int v) {
             this.light = (v << 16) | (u & 0xFFFF);
             vertices[vertexCount++] = new GlyphVertex(x, y, this.u, this.v, light);
             if (vertexCount == vertices.length) {
@@ -1078,12 +1078,12 @@ public final class ClientDanmakuRenderer {
         }
 
         @Override
-        public VertexConsumer normal(float x, float y, float z) {
+        public VertexConsumer setNormal(float x, float y, float z) {
             return this;
         }
 
         @Override
-        public VertexConsumer lineWidth(float width) {
+        public VertexConsumer setLineWidth(float width) {
             return this;
         }
 

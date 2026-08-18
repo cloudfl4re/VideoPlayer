@@ -28,7 +28,9 @@ class PluginPermissionDefaultsTest {
         }
         assertEquals(VideoPermissionAction.values().length + 3, defaults.size());
 
-        String plugin = Files.readString(Path.of("src/main/resources/plugin.yml"));
+        String plugin = Files.readString(Path.of("src/main/resources/plugin.yml"))
+                .replace("\r\n", "\n")
+                .replace('\r', '\n');
         assertTrue(plugin.contains("  vlc:\n    description: Manage VideoPlayer server notifications.\n    usage: /videoplayer:vlc joinmessage\n    permission: videoplayer.joinmessage"));
         assertTrue(plugin.contains("  vlcversion:\n    description: Show connected VideoPlayer client versions.\n    usage: /vlcversion\n    permission: videoplayer.version"));
     }

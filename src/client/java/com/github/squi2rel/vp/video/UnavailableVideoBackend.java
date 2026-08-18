@@ -2,9 +2,9 @@ package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.provider.VideoInfo;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.util.Formatting;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 
 import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
 
@@ -30,13 +30,13 @@ final class UnavailableVideoBackend implements VideoBackend {
         if (warned) return;
         warned = true;
         LOGGER.warn("No available video backend for requested backend {}", requestedBackend);
-        MinecraftClient client = MinecraftClient.getInstance();
-        ClientPlayerEntity player = client == null ? null : client.player;
+        Minecraft client = Minecraft.getInstance();
+        LocalPlayer player = client == null ? null : client.player;
         if (player != null) {
-            player.sendMessage(VpTexts.tr(
+            player.displayClientMessage(VpTexts.tr(
                     "error.videoplayer.local_backend_unavailable",
                     "Neither local MPV nor VLC is available. Open /videoplayer boot to install or repair a video runtime."
-            ).formatted(Formatting.RED), false);
+            ).withStyle(ChatFormatting.RED), false);
         }
     }
 

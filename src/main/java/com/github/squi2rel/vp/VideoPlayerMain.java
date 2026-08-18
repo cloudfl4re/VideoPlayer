@@ -16,9 +16,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.command.CommandManager;
-import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,12 +57,12 @@ public class VideoPlayerMain implements ModInitializer {
         ServerWorldEvents.UNLOAD.register(DataHolder::unloadWorld);
         ServerTickEvents.START_SERVER_TICK.register(ignored -> DataHolder.update());
         ServerPlayConnectionEvents.JOIN.register((e, p, s) -> DataHolder.playerJoin(e.player));
-        ServerPlayConnectionEvents.DISCONNECT.register((e, s) -> DataHolder.playerLeave(e.player.getUuid()));
+        ServerPlayConnectionEvents.DISCONNECT.register((e, s) -> DataHolder.playerLeave(e.player.getUUID()));
         ServerPlayNetworking.registerGlobalReceiver(VideoPayload.ID, (p, c) -> {
             long receivedAt = System.currentTimeMillis();
             byte[] copy = p.data().clone();
             if (copy.length > VideoPackets.MAX_PAYLOAD_BYTES) {
-                c.player().networkHandler.disconnect(Text.of("VideoPlayer payload is too large"));
+                c.player().connection.disconnect(Component.nullToEmpty("VideoPlayer payload is too large"));
                 return;
             }
             c.server().execute(() -> {
@@ -70,14 +70,14 @@ public class VideoPlayerMain implements ModInitializer {
                 try {
                     ServerPacketHandler.handle(c.player(), buf, receivedAt);
                 } catch (Exception e) {
-                    c.player().networkHandler.disconnect(Text.of(e.toString()));
+                    c.player().connection.disconnect(Component.nullToEmpty(e.toString()));
                 } finally {
                     buf.release();
                 }
             });
         });
-        CommandRegistrationCallback.EVENT.register((d, c, e) -> d.register(CommandManager.literal("").then(CommandManager.argument("command", StringArgumentType.greedyString()).executes(s -> {
-            if (!s.getSource().isExecutedByPlayer()) return 0;
+        CommandRegistrationCallback.EVENT.register((d, c, e) -> d.register(Commands.literal("").then(Commands.argument("command", StringArgumentType.greedyString()).executes(s -> {
+            if (!s.getSource().isPlayer()) return 0;
             ServerPacketHandler.sendTo(s.getSource().getPlayer(), VideoPackets.execute(s.getArgument("command", String.class)));
             return 1;
         }))));

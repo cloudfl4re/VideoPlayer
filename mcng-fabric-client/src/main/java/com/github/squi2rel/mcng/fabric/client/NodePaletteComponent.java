@@ -4,14 +4,14 @@ import com.github.squi2rel.mcng.core.NodeType;
 import com.github.squi2rel.mcng.core.PortChannel;
 import com.github.squi2rel.mcng.core.NodeTypeRegistry;
 import com.github.squi2rel.mcng.core.PortTypeRegistry;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 
 public final class NodePaletteComponent {
 	private static final NodeComponentRegistry EMPTY_COMPONENT_REGISTRY = new NodeComponentRegistry();
@@ -41,7 +41,7 @@ public final class NodePaletteComponent {
 	private final GraphTextFieldComponent searchField;
 
 	private GraphEditorBounds bounds = new GraphEditorBounds(0, 0, 0, 0);
-	private TextRenderer textRenderer;
+	private Font textRenderer;
 
 	public NodePaletteComponent(
 		Supplier<List<NodePaletteSection>> sectionsSupplier,
@@ -79,7 +79,7 @@ public final class NodePaletteComponent {
 		);
 	}
 
-	public void init(TextRenderer textRenderer, GraphEditorBounds bounds) {
+	public void init(Font textRenderer, GraphEditorBounds bounds) {
 		this.textRenderer = textRenderer;
 		setBounds(bounds);
 		searchField.setText(state.query());
@@ -128,7 +128,7 @@ public final class NodePaletteComponent {
 		return GraphCursorManager.CursorKind.DEFAULT;
 	}
 
-	public void render(DrawContext context, TextRenderer textRenderer, int mouseX, int mouseY, float delta) {
+	public void render(GuiGraphics context, Font textRenderer, int mouseX, int mouseY, float delta) {
 		this.textRenderer = textRenderer;
 		GraphEditorUiConfig uiConfig = uiConfigSupplier.get();
 		GraphEditorTheme theme = uiConfig.theme();
@@ -139,7 +139,7 @@ public final class NodePaletteComponent {
 		}
 
 		EditorStyleRenderer.drawBox(context, panelX(), panelY(), PANEL_WIDTH, panelBottom() - panelY(), theme.panelBackgroundColor(), theme.panelBorderColor(), uiConfig);
-		context.drawText(textRenderer, GraphEditorTranslations.ui(i18n, "palette.title", "Nodes"), panelX() + PANEL_PADDING, panelY() + 10, theme.primaryTextColor(), false);
+		context.drawString(textRenderer, GraphEditorTranslations.ui(i18n, "palette.title", "Nodes"), panelX() + PANEL_PADDING, panelY() + 10, theme.primaryTextColor(), false);
 		searchField.render(context, textRenderer, theme, uiConfig);
 
 		int listTop = panelY() + 28 + SEARCH_HEIGHT + LIST_TOP_GAP;
@@ -154,7 +154,7 @@ public final class NodePaletteComponent {
 			for (Row row : rows) {
 				if (row.type() == RowType.SECTION) {
 					if (y + SECTION_HEADER_HEIGHT >= listTop && y <= listBottom) {
-						context.drawText(textRenderer, row.title(), panelX() + PANEL_PADDING, y + 4, theme.accentColor(), false);
+						context.drawString(textRenderer, row.title(), panelX() + PANEL_PADDING, y + 4, theme.accentColor(), false);
 					}
 					y += SECTION_HEADER_HEIGHT;
 					continue;
@@ -167,8 +167,8 @@ public final class NodePaletteComponent {
 						? EditorStyleRenderer.blend(theme.nodeBodyColor(), theme.accentColor(), 0.24f)
 						: hovered ? EditorStyleRenderer.brighten(theme.nodeBodyColor(), 0.08f) : theme.nodeBodyColor();
 					EditorStyleRenderer.drawBox(context, panelX() + PANEL_PADDING, y, PANEL_WIDTH - (PANEL_PADDING * 2), ENTRY_HEIGHT, fill, theme.panelBorderColor(), uiConfig);
-					context.drawText(textRenderer, row.entry().displayName(), panelX() + PANEL_PADDING + 6, y + 5, theme.primaryTextColor(), false);
-					context.drawText(textRenderer, row.entry().subtitle(), panelX() + PANEL_PADDING + 6, y + 14, theme.secondaryTextColor(), false);
+					context.drawString(textRenderer, row.entry().displayName(), panelX() + PANEL_PADDING + 6, y + 5, theme.primaryTextColor(), false);
+					context.drawString(textRenderer, row.entry().subtitle(), panelX() + PANEL_PADDING + 6, y + 14, theme.secondaryTextColor(), false);
 				}
 				y += ENTRY_HEIGHT;
 			}
@@ -288,7 +288,7 @@ public final class NodePaletteComponent {
 		return state.open() && searchField.charTyped(chr, modifiers, textRenderer);
 	}
 
-	public void renderDragPreview(DrawContext context, TextRenderer textRenderer) {
+	public void renderDragPreview(GuiGraphics context, Font textRenderer) {
 		if (!state.dragging() || state.dragEntry() == null) {
 			return;
 		}
@@ -321,10 +321,10 @@ public final class NodePaletteComponent {
 		}
 	}
 
-	private void renderToggleButton(DrawContext context, TextRenderer textRenderer, GraphEditorUiConfig uiConfig, GraphEditorTheme theme) {
+	private void renderToggleButton(GuiGraphics context, Font textRenderer, GraphEditorUiConfig uiConfig, GraphEditorTheme theme) {
 		int fill = state.open() ? EditorStyleRenderer.blend(theme.panelBackgroundColor(), theme.accentColor(), 0.18f) : theme.panelBackgroundColor();
 		EditorStyleRenderer.drawBox(context, toggleX(), toggleY(), TOGGLE_WIDTH, TOGGLE_HEIGHT, fill, theme.panelBorderColor(), uiConfig);
-		context.drawText(
+		context.drawString(
 			textRenderer,
 			state.open()
 				? GraphEditorTranslations.ui(i18nSupplier.get(), "palette.toggle_open", "Nodes [%s]", GraphInputText.key(GLFW.GLFW_KEY_TAB))
@@ -336,7 +336,7 @@ public final class NodePaletteComponent {
 		);
 	}
 
-	private void renderScrollbar(DrawContext context, List<Row> rows, int listTop, int listBottom, GraphEditorUiConfig uiConfig, GraphEditorTheme theme) {
+	private void renderScrollbar(GuiGraphics context, List<Row> rows, int listTop, int listBottom, GraphEditorUiConfig uiConfig, GraphEditorTheme theme) {
 		int viewportHeight = listBottom - listTop;
 		int contentHeight = totalContentHeight(rows);
 		if (contentHeight <= viewportHeight) {

@@ -1,18 +1,17 @@
 package com.github.squi2rel.vp.creation;
 
 import com.github.squi2rel.vp.i18n.VpTexts;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.SliderWidget;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.text.Text;
-
 import java.util.function.LongConsumer;
 import java.util.function.Supplier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 
-class VpProgressSliderWidget extends SliderWidget {
+class VpProgressSliderWidget extends AbstractSliderButton {
     private final Supplier<ProgressState> source;
     private final LongConsumer onPreview;
     private final LongConsumer onCommit;
@@ -26,7 +25,7 @@ class VpProgressSliderWidget extends SliderWidget {
     VpProgressSliderWidget(int x, int y, int width, int height, Supplier<ProgressState> source,
                            LongConsumer onPreview, LongConsumer onCommit,
                            Runnable onDragStart, Runnable onDragEnd, VpUiTheme theme) {
-        super(x, y, Math.max(80, width), height, Text.empty(), 0.0);
+        super(x, y, Math.max(80, width), height, Component.empty(), 0.0);
         this.source = source;
         this.onPreview = onPreview;
         this.onCommit = onCommit;
@@ -54,7 +53,7 @@ class VpProgressSliderWidget extends SliderWidget {
     }
 
     @Override
-    public boolean mouseClicked(Click click, boolean doubleClick) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
         updateState();
         if (!active || click.button() != 0 || !isMouseOver(click.x(), click.y())) {
             return false;
@@ -72,7 +71,7 @@ class VpProgressSliderWidget extends SliderWidget {
     }
 
     @Override
-    public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+    public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
         if (!dragging || !active || click.button() != 0) {
             return false;
         }
@@ -80,7 +79,7 @@ class VpProgressSliderWidget extends SliderWidget {
     }
 
     @Override
-    public void onRelease(Click click) {
+    public void onRelease(MouseButtonEvent click) {
         boolean wasDragging = dragging;
         super.onRelease(click);
         if (!wasDragging) return;
@@ -90,7 +89,7 @@ class VpProgressSliderWidget extends SliderWidget {
     }
 
     @Override
-    public boolean keyPressed(KeyInput input) {
+    public boolean keyPressed(KeyEvent input) {
         updateState();
         if (!active) return false;
         boolean handled = super.keyPressed(input);
@@ -113,15 +112,15 @@ class VpProgressSliderWidget extends SliderWidget {
             return;
         }
         if (!state.seekable) {
-            setMessage(Text.literal(formatDuration(state.total, state.total)));
+            setMessage(Component.literal(formatDuration(state.total, state.total)));
             return;
         }
         long progress = dragging ? dragProgress : state.progress;
-        setMessage(Text.literal(formatDuration(progress, state.total) + "/" + formatDuration(state.total, state.total)));
+        setMessage(Component.literal(formatDuration(progress, state.total) + "/" + formatDuration(state.total, state.total)));
     }
 
     @Override
-    public void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void renderWidget(GuiGraphics context, int mouseX, int mouseY, float delta) {
         updateState();
         int fill = VpUiRenderer.darken(theme.nodeBodyColor(), active ? 0.04f : 0.12f);
         int border = isHovered() || isFocused() ? VpUiRenderer.blend(theme.panelBorderColor(), theme.accentColor(), 0.48f) : theme.panelBorderColor();
@@ -139,7 +138,7 @@ class VpProgressSliderWidget extends SliderWidget {
         int knobX = trackX + Math.clamp(fillW, 0, trackW) - 2;
         context.fill(knobX, trackY - 2, knobX + 4, trackY + 4, active ? theme.primaryTextColor() : VpUiRenderer.blend(theme.primaryTextColor(), theme.canvasBackgroundColor(), 0.55f));
 
-        TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
+        Font textRenderer = Minecraft.getInstance().font;
         int textColor = state.available ? theme.secondaryTextColor() : VpUiRenderer.blend(theme.secondaryTextColor(), theme.canvasBackgroundColor(), 0.45f);
         drawProgressText(context, textRenderer, textColor);
     }
@@ -161,14 +160,14 @@ class VpProgressSliderWidget extends SliderWidget {
         onPreview.accept(dragProgress);
     }
 
-    private void drawProgressText(DrawContext context, TextRenderer textRenderer, int textColor) {
+    private void drawProgressText(GuiGraphics context, Font textRenderer, int textColor) {
         if (!state.available) {
             drawText(context, textRenderer, getMessage().getString(), getX() + 4, textColor);
             return;
         }
 
         String totalText = trimText(textRenderer, formatDuration(state.total, state.total), getWidth() - 8);
-        int totalX = getX() + getWidth() - 4 - textRenderer.getWidth(totalText);
+        int totalX = getX() + getWidth() - 4 - textRenderer.width(totalText);
         drawText(context, textRenderer, totalText, totalX, textColor);
         if (!state.seekable) return;
 
@@ -178,18 +177,18 @@ class VpProgressSliderWidget extends SliderWidget {
         drawText(context, textRenderer, visibleProgressText, getX() + 4, textColor);
     }
 
-    private void drawText(DrawContext context, TextRenderer textRenderer, String text, int x, int color) {
+    private void drawText(GuiGraphics context, Font textRenderer, String text, int x, int color) {
         if (text == null || text.isEmpty()) return;
         if (theme.textShadow()) {
-            context.drawTextWithShadow(textRenderer, text, x, getY() + 2, color);
+            context.drawString(textRenderer, text, x, getY() + 2, color);
             return;
         }
-        context.drawText(textRenderer, text, x, getY() + 2, color, false);
+        context.drawString(textRenderer, text, x, getY() + 2, color, false);
     }
 
-    private static String trimText(TextRenderer textRenderer, String text, int maxWidth) {
+    private static String trimText(Font textRenderer, String text, int maxWidth) {
         if (maxWidth <= 0) return "";
-        return textRenderer.getWidth(text) > maxWidth ? textRenderer.trimToWidth(text, maxWidth) : text;
+        return textRenderer.width(text) > maxWidth ? textRenderer.plainSubstrByWidth(text, maxWidth) : text;
     }
 
     private static String formatDuration(long millis, long totalMillis) {

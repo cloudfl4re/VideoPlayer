@@ -1,14 +1,7 @@
 package com.github.squi2rel.mcng.fabric.client;
 
 import com.google.gson.JsonObject;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.util.Identifier;
-
+import com.mojang.blaze3d.platform.NativeImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.InvalidPathException;
@@ -17,6 +10,12 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.Identifier;
 
 final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 	private static final AtomicInteger NEXT_TEXTURE_ID = new AtomicInteger();
@@ -34,7 +33,7 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 	private String loadedPath = null;
 	private LoadError loadError;
 	private Identifier textureId;
-	private NativeImageBackedTexture texture;
+	private DynamicTexture texture;
 	private int imageWidth;
 	private int imageHeight;
 
@@ -88,7 +87,7 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 	}
 
 	private void renderPreviewArea(NodeBodyRenderContext context, NodeWidget.Bounds bounds) {
-		DrawContext drawContext = context.drawContext();
+		GuiGraphics drawContext = context.drawContext();
 		GraphEditorTheme theme = context.theme();
 		int fill = EditorStyleRenderer.darken(theme.nodeBodyColor(), 0.06f);
 		int border = loadError == null ? theme.panelBorderColor() : theme.errorColor();
@@ -102,11 +101,11 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 		if (textureId != null && imageWidth > 0 && imageHeight > 0) {
 			drawTexture(drawContext, bounds);
 			String info = imageWidth + " x " + imageHeight;
-			int infoWidth = context.textRenderer().getWidth(info);
+			int infoWidth = context.textRenderer().width(info);
 			int infoX = bounds.x() + Math.max(PADDING, bounds.width() - infoWidth - PADDING);
-			int infoY = bounds.y() + Math.max(PADDING, bounds.height() - context.textRenderer().fontHeight - PADDING);
-			drawContext.fill(infoX - 3, infoY - 1, infoX + infoWidth + 3, infoY + context.textRenderer().fontHeight + 1, 0x99000000);
-			drawContext.drawText(context.textRenderer(), info, infoX, infoY, theme.primaryTextColor(), false);
+			int infoY = bounds.y() + Math.max(PADDING, bounds.height() - context.textRenderer().lineHeight - PADDING);
+			drawContext.fill(infoX - 3, infoY - 1, infoX + infoWidth + 3, infoY + context.textRenderer().lineHeight + 1, 0x99000000);
+			drawContext.drawString(context.textRenderer(), info, infoX, infoY, theme.primaryTextColor(), false);
 			return;
 		}
 
@@ -123,8 +122,8 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 			? context.translate("mcng.ui.image_preview.no_file", "No file selected")
 			: trimLeading(context.textRenderer(), filePath, Math.max(1, bounds.width() - (GraphTextInputRenderer.CONTENT_PADDING_X * 2)));
 		int color = filePath.isBlank() ? context.theme().secondaryTextColor() : context.theme().primaryTextColor();
-		int baselineY = bounds.y() + Math.max(2, (bounds.height() - context.textRenderer().fontHeight) / 2);
-		context.drawContext().drawText(context.textRenderer(), display, bounds.x() + GraphTextInputRenderer.CONTENT_PADDING_X, baselineY, color, false);
+		int baselineY = bounds.y() + Math.max(2, (bounds.height() - context.textRenderer().lineHeight) / 2);
+		context.drawContext().drawString(context.textRenderer(), display, bounds.x() + GraphTextInputRenderer.CONTENT_PADDING_X, baselineY, color, false);
 	}
 
 	private void renderButtons(NodeBodyRenderContext context, Layout layout, String filePath) {
@@ -141,12 +140,12 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 		int border = enabled ? accentColor : theme.panelBorderColor();
 		int textColor = enabled ? theme.primaryTextColor() : theme.secondaryTextColor();
 		EditorStyleRenderer.drawBox(context.drawContext(), bounds.x(), bounds.y(), bounds.width(), bounds.height(), fill, border, context.uiConfig());
-		int textX = bounds.x() + Math.max(4, (bounds.width() - context.textRenderer().getWidth(label)) / 2);
-		int textY = bounds.y() + Math.max(2, (bounds.height() - context.textRenderer().fontHeight) / 2);
-		context.drawContext().drawText(context.textRenderer(), label, textX, textY, textColor, false);
+		int textX = bounds.x() + Math.max(4, (bounds.width() - context.textRenderer().width(label)) / 2);
+		int textY = bounds.y() + Math.max(2, (bounds.height() - context.textRenderer().lineHeight) / 2);
+		context.drawContext().drawString(context.textRenderer(), label, textX, textY, textColor, false);
 	}
 
-	private void drawTexture(DrawContext context, NodeWidget.Bounds bounds) {
+	private void drawTexture(GuiGraphics context, NodeWidget.Bounds bounds) {
 		int availableWidth = Math.max(1, bounds.width() - (PADDING * 2));
 		int availableHeight = Math.max(1, bounds.height() - (PADDING * 2));
 		double scale = Math.min(availableWidth / (double) imageWidth, availableHeight / (double) imageHeight);
@@ -154,14 +153,14 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 		int drawHeight = Math.max(1, (int) Math.round(imageHeight * scale));
 		int drawX = bounds.x() + ((bounds.width() - drawWidth) / 2);
 		int drawY = bounds.y() + ((bounds.height() - drawHeight) / 2);
-		context.drawTexture(RenderPipelines.GUI_TEXTURED, textureId, drawX, drawY, 0.0f, 0.0f, drawWidth, drawHeight, imageWidth, imageHeight, imageWidth, imageHeight);
+		context.blit(RenderPipelines.GUI_TEXTURED, textureId, drawX, drawY, 0.0f, 0.0f, drawWidth, drawHeight, imageWidth, imageHeight, imageWidth, imageHeight);
 	}
 
-	private void drawCenteredLabel(DrawContext context, TextRenderer textRenderer, NodeWidget.Bounds bounds, String label, int color) {
+	private void drawCenteredLabel(GuiGraphics context, Font textRenderer, NodeWidget.Bounds bounds, String label, int color) {
 		String text = trimCenter(textRenderer, label, Math.max(1, bounds.width() - (PADDING * 2)));
-		int x = bounds.x() + Math.max(PADDING, (bounds.width() - textRenderer.getWidth(text)) / 2);
-		int y = bounds.y() + Math.max(PADDING, (bounds.height() - textRenderer.fontHeight) / 2);
-		context.drawText(textRenderer, text, x, y, color, false);
+		int x = bounds.x() + Math.max(PADDING, (bounds.width() - textRenderer.width(text)) / 2);
+		int y = bounds.y() + Math.max(PADDING, (bounds.height() - textRenderer.lineHeight) / 2);
+		context.drawString(textRenderer, text, x, y, color, false);
 	}
 
 	private void syncTexture(String filePath) {
@@ -186,15 +185,15 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 
 			try (InputStream stream = Files.newInputStream(path)) {
 				NativeImage image = NativeImage.read(stream);
-				Identifier id = Identifier.of("mcng", "image_preview/" + NEXT_TEXTURE_ID.incrementAndGet());
-				NativeImageBackedTexture loadedTexture = new NativeImageBackedTexture(id::toString, image);
-				MinecraftClient client = MinecraftClient.getInstance();
+				Identifier id = Identifier.fromNamespaceAndPath("mcng", "image_preview/" + NEXT_TEXTURE_ID.incrementAndGet());
+				DynamicTexture loadedTexture = new DynamicTexture(id::toString, image);
+				Minecraft client = Minecraft.getInstance();
 				if (client == null) {
 					loadedTexture.close();
 					loadError = LoadError.CLIENT_UNAVAILABLE;
 					return;
 				}
-				client.getTextureManager().registerTexture(id, loadedTexture);
+				client.getTextureManager().register(id, loadedTexture);
 				textureId = id;
 				texture = loadedTexture;
 				imageWidth = image.getWidth();
@@ -207,9 +206,9 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 
 	private void releaseTexture() {
 		if (textureId != null) {
-			MinecraftClient client = MinecraftClient.getInstance();
+			Minecraft client = Minecraft.getInstance();
 			if (client != null) {
-				client.getTextureManager().destroyTexture(textureId);
+				client.getTextureManager().release(textureId);
 			} else if (texture != null) {
 				texture.close();
 			}
@@ -236,33 +235,33 @@ final class ImagePreviewNodeBodyComponent implements NodeBodyComponent {
 		return config.get(FILE_PATH_KEY).getAsString();
 	}
 
-	private static String trimLeading(TextRenderer textRenderer, String text, int maxWidth) {
-		if (textRenderer.getWidth(text) <= maxWidth) {
+	private static String trimLeading(Font textRenderer, String text, int maxWidth) {
+		if (textRenderer.width(text) <= maxWidth) {
 			return text;
 		}
 		String ellipsis = "...";
-		int ellipsisWidth = textRenderer.getWidth(ellipsis);
+		int ellipsisWidth = textRenderer.width(ellipsis);
 		if (ellipsisWidth >= maxWidth) {
 			return ellipsis;
 		}
 		String value = text;
-		while (!value.isEmpty() && textRenderer.getWidth(value) + ellipsisWidth > maxWidth) {
+		while (!value.isEmpty() && textRenderer.width(value) + ellipsisWidth > maxWidth) {
 			value = value.substring(1);
 		}
 		return ellipsis + value;
 	}
 
-	private static String trimCenter(TextRenderer textRenderer, String text, int maxWidth) {
-		if (textRenderer.getWidth(text) <= maxWidth) {
+	private static String trimCenter(Font textRenderer, String text, int maxWidth) {
+		if (textRenderer.width(text) <= maxWidth) {
 			return text;
 		}
 		String ellipsis = "...";
-		int ellipsisWidth = textRenderer.getWidth(ellipsis);
+		int ellipsisWidth = textRenderer.width(ellipsis);
 		if (ellipsisWidth >= maxWidth) {
 			return ellipsis;
 		}
 		String value = text;
-		while (!value.isEmpty() && textRenderer.getWidth(value) + ellipsisWidth > maxWidth) {
+		while (!value.isEmpty() && textRenderer.width(value) + ellipsisWidth > maxWidth) {
 			value = value.substring(0, value.length() - 1);
 		}
 		return value + ellipsis;

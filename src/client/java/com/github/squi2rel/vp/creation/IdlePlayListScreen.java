@@ -9,14 +9,13 @@ import com.github.squi2rel.vp.provider.VideoUrlNormalizer;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.IdlePlayEntry;
 import com.github.squi2rel.vp.video.VideoScreen;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-
 import java.util.function.Consumer;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 
 public class IdlePlayListScreen extends Screen implements ServerStateScreen {
     private static final int GAP = 8;
@@ -27,8 +26,8 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
 
     private final Screen parent;
     private final ClientVideoScreen screen;
-    private TextFieldWidget urlField;
-    private TextFieldWidget priorityField;
+    private EditBox urlField;
+    private EditBox priorityField;
     private String urlDraft = "";
     private String priorityDraft = "0";
     private int listScroll;
@@ -63,17 +62,17 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         int addW = 56;
         int priorityW = 42;
         int urlW = Math.max(80, contentW - addW - priorityW - GAP * 2);
-        urlField = new VpTextFieldWidget(textRenderer, x, row, urlW, CONTROL_HEIGHT, Text.empty(), THEME);
+        urlField = new VpTextFieldWidget(font, x, row, urlW, CONTROL_HEIGHT, Component.empty(), THEME);
         urlField.setMaxLength(VideoScreen.MAX_IDLE_PLAY_URL_BYTES);
-        urlField.setTextPredicate(VideoScreen::validIdlePlayUrlInput);
-        urlField.setText(urlDraft);
-        addDrawableChild(urlField);
-        priorityField = new VpTextFieldWidget(textRenderer, x + urlW + GAP, row, priorityW, CONTROL_HEIGHT, Text.empty(), THEME);
+        urlField.setFilter(VideoScreen::validIdlePlayUrlInput);
+        urlField.setValue(urlDraft);
+        addRenderableWidget(urlField);
+        priorityField = new VpTextFieldWidget(font, x + urlW + GAP, row, priorityW, CONTROL_HEIGHT, Component.empty(), THEME);
         priorityField.setMaxLength(3);
-        priorityField.setTextPredicate(value -> value.isEmpty() || value.chars().allMatch(Character::isDigit));
-        priorityField.setText(priorityDraft);
-        priorityField.setChangedListener(value -> priorityDraft = value);
-        addDrawableChild(priorityField);
+        priorityField.setFilter(value -> value.isEmpty() || value.chars().allMatch(Character::isDigit));
+        priorityField.setValue(priorityDraft);
+        priorityField.setResponder(value -> priorityDraft = value);
+        addRenderableWidget(priorityField);
         addButton = button(VpTexts.tr("button.videoplayer.add", "Add"), x + urlW + priorityW + GAP * 2, row, addW, this::addIdlePlayUrl);
 
         row += 28;
@@ -84,28 +83,28 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         refreshControls();
 
         int closeW = 72;
-        button(VpTexts.tr("button.videoplayer.close", "Close"), x + Math.max(0, contentW - closeW), Math.max(108, height - 40), closeW, this::close);
+        button(VpTexts.tr("button.videoplayer.close", "Close"), x + Math.max(0, contentW - closeW), Math.max(108, height - 40), closeW, this::onClose);
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
     @Override
-    public void close() {
-        if (client != null) {
-            client.setScreen(parent);
+    public void onClose() {
+        if (minecraft != null) {
+            minecraft.setScreen(parent);
         }
     }
 
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, VpUiRenderer.withAlpha(THEME.canvasBackgroundColor(), 0xCC));
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         computeLayout();
         renderBackground(context, mouseX, mouseY, delta);
         int panelX = 18;
@@ -127,7 +126,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
     }
 
     @Override
-    public boolean mouseClicked(Click click, boolean doubleClick) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
         if (click.button() == 0 && clickListControls(click.x(), click.y())) {
             return true;
         }
@@ -145,7 +144,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
             return false;
         }
         if (urlField != null) {
-            urlDraft = urlField.getText();
+            urlDraft = urlField.getValue();
         }
         listScroll = next;
         return true;
@@ -161,7 +160,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         listScroll = Math.clamp(listScroll, 0, maxListScroll());
     }
 
-    private void drawIdleList(DrawContext context, int mouseX, int mouseY) {
+    private void drawIdleList(GuiGraphics context, int mouseX, int mouseY) {
         VpUiRenderer.drawBox(context, listX, listTop, listW, listBottom - listTop, VpUiRenderer.darken(THEME.nodeBodyColor(), 0.06f), THEME.panelBorderColor());
         context.enableScissor(listX + 1, listTop + 1, listX + listW - 1, listBottom - 1);
         if (screen == null || screen.idlePlayEntries.isEmpty()) {
@@ -197,7 +196,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         context.disableScissor();
     }
 
-    private void drawListButton(DrawContext context, String label, int x, int y, int width, boolean active, boolean hovered) {
+    private void drawListButton(GuiGraphics context, String label, int x, int y, int width, boolean active, boolean hovered) {
         int fill = VpUiRenderer.darken(THEME.nodeBodyColor(), 0.04f);
         if (hovered && active) {
             fill = VpUiRenderer.blend(fill, THEME.errorColor(), 0.12f);
@@ -205,7 +204,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         int border = active && hovered ? THEME.errorColor() : THEME.panelBorderColor();
         int text = active ? (hovered ? THEME.primaryTextColor() : THEME.secondaryTextColor()) : VpUiRenderer.blend(THEME.secondaryTextColor(), THEME.canvasBackgroundColor(), 0.45f);
         VpUiRenderer.drawBox(context, x, y, width, CONTROL_HEIGHT, fill, border);
-        drawCenteredText(context, Text.literal(label), x + width / 2, y + 5, text);
+        drawCenteredText(context, Component.literal(label), x + width / 2, y + 5, text);
     }
 
     private boolean clickListControls(double mouseX, double mouseY) {
@@ -239,7 +238,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         return true;
     }
 
-    private void drawScrollbar(DrawContext context) {
+    private void drawScrollbar(GuiGraphics context) {
         int contentHeight = listContentHeight();
         int viewportHeight = listBottom - listTop;
         int maxScroll = Math.max(0, contentHeight - viewportHeight);
@@ -270,7 +269,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
 
     private void addIdlePlayUrl(VpButtonWidget button) {
         if (screen == null || urlField == null || priorityField == null) return;
-        String url = VideoUrlNormalizer.normalizeSubmittedUrl(urlField.getText());
+        String url = VideoUrlNormalizer.normalizeSubmittedUrl(urlField.getValue());
         if (url.isEmpty()) {
             sendLocalError(VpTexts.tr("error.videoplayer.idle_play_url_empty", "IdlePlay URL must not be empty"));
             return;
@@ -291,7 +290,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         }
         int priority;
         try {
-            priority = Integer.parseInt(priorityField.getText().isBlank() ? "0" : priorityField.getText());
+            priority = Integer.parseInt(priorityField.getValue().isBlank() ? "0" : priorityField.getValue());
         } catch (NumberFormatException error) {
             sendLocalError(VpTexts.tr("error.videoplayer.idle_play_priority_invalid", "Priority must be between 0 and 100"));
             return;
@@ -301,7 +300,7 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
             return;
         }
         urlDraft = "";
-        urlField.setText("");
+        urlField.setValue("");
         sendIdlePlayMutation(callback -> ClientPacketHandler.addIdlePlay(screen, url, priority, callback), button);
     }
 
@@ -327,16 +326,16 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
 
     private void sendIdlePlayMutation(Consumer<Consumer<ClientPacketHandler.RequestResult>> sender, VpButtonWidget button) {
         if (screen == null || requestPending || !canEditIdlePlay()) return;
-        String currentUrl = urlField == null ? urlDraft : urlField.getText();
+        String currentUrl = urlField == null ? urlDraft : urlField.getValue();
         urlDraft = currentUrl;
         requestPending = true;
         refreshControls();
         sender.accept(result -> {
             requestPending = false;
             if (ClientPacketHandler.denied(result) && button != null) button.showPermissionDenied();
-            if (client != null && client.currentScreen == this) {
+            if (minecraft != null && minecraft.screen == this) {
                 listScroll = Math.clamp(listScroll, 0, maxListScroll());
-                clearAndInit();
+                rebuildWidgets();
             }
         });
     }
@@ -354,40 +353,40 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
         if (clearButton != null) clearButton.active = editable && screen != null && !screen.idlePlayEntries.isEmpty();
     }
 
-    private Text idlePlayModeText() {
-        Text mode = screen == null || !screen.idlePlayRandom
+    private Component idlePlayModeText() {
+        Component mode = screen == null || !screen.idlePlayRandom
                 ? VpTexts.tr("label.videoplayer.sequential", "Sequential")
                 : VpTexts.tr("label.videoplayer.random", "Random");
         return VpTexts.tr("label.videoplayer.mode_value", "Mode: %s", mode.getString());
     }
 
-    private void sendLocalError(Text message) {
-        if (client != null && client.player != null) {
-            client.player.sendMessage(message.copy().formatted(Formatting.RED), false);
+    private void sendLocalError(Component message) {
+        if (minecraft != null && minecraft.player != null) {
+            minecraft.player.displayClientMessage(message.copy().withStyle(ChatFormatting.RED), false);
         }
     }
 
-    private VpButtonWidget button(Text label, int x, int y, int width, Runnable action) {
+    private VpButtonWidget button(Component label, int x, int y, int width, Runnable action) {
         VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, label, b -> action.run(), THEME);
-        addDrawableChild(button);
+        addRenderableWidget(button);
         return button;
     }
 
-    private VpButtonWidget button(Text label, int x, int y, int width, Consumer<VpButtonWidget> action) {
+    private VpButtonWidget button(Component label, int x, int y, int width, Consumer<VpButtonWidget> action) {
         VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, label, action, THEME);
-        addDrawableChild(button);
+        addRenderableWidget(button);
         return button;
     }
 
     private VpButtonWidget button(String label, int x, int y, int width, Runnable action) {
-        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Text.literal(label), b -> action.run(), THEME);
-        addDrawableChild(button);
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Component.literal(label), b -> action.run(), THEME);
+        addRenderableWidget(button);
         return button;
     }
 
     private VpButtonWidget button(String label, int x, int y, int width, Consumer<VpButtonWidget> action) {
-        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Text.literal(label), action, THEME);
-        addDrawableChild(button);
+        VpButtonWidget button = new VpButtonWidget(x, y, Math.max(34, width), CONTROL_HEIGHT, Component.literal(label), action, THEME);
+        addRenderableWidget(button);
         return button;
     }
 
@@ -399,28 +398,28 @@ public class IdlePlayListScreen extends Screen implements ServerStateScreen {
                 && ClientPermissionCache.allowedOrUnknown(VideoPermissionAction.SET_IDLE_PLAY, screen);
     }
 
-    private void drawLabel(DrawContext context, String label, int x, int y, int color) {
-        drawLabel(context, Text.literal(label), x, y, color);
+    private void drawLabel(GuiGraphics context, String label, int x, int y, int color) {
+        drawLabel(context, Component.literal(label), x, y, color);
     }
 
-    private void drawLabel(DrawContext context, Text label, int x, int y, int color) {
+    private void drawLabel(GuiGraphics context, Component label, int x, int y, int color) {
         if (THEME.textShadow()) {
-            context.drawTextWithShadow(textRenderer, label, x, y, color);
+            context.drawString(font, label, x, y, color);
             return;
         }
-        context.drawText(textRenderer, label, x, y, color, false);
+        context.drawString(font, label, x, y, color, false);
     }
 
-    private void drawCenteredText(DrawContext context, Text text, int centerX, int y, int color) {
-        int x = centerX - textRenderer.getWidth(text) / 2;
+    private void drawCenteredText(GuiGraphics context, Component text, int centerX, int y, int color) {
+        int x = centerX - font.width(text) / 2;
         drawLabel(context, text, x, y, color);
     }
 
     private String trimToWidth(String text, int maxWidth) {
         String value = text == null ? "" : text;
-        if (textRenderer.getWidth(value) <= maxWidth) return value;
+        if (font.width(value) <= maxWidth) return value;
         String suffix = "...";
-        return textRenderer.trimToWidth(value, Math.max(0, maxWidth - textRenderer.getWidth(suffix))) + suffix;
+        return font.plainSubstrByWidth(value, Math.max(0, maxWidth - font.width(suffix))) + suffix;
     }
 
     private boolean inside(double mouseX, double mouseY, int left, int top, int right, int bottom) {

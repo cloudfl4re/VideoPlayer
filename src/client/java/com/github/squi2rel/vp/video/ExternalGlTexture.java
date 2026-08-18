@@ -1,20 +1,20 @@
 package com.github.squi2rel.vp.video;
 
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.opengl.GlTextureView;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.TextureFormat;
-import net.minecraft.client.texture.AbstractTexture;
-import net.minecraft.client.texture.GlTexture;
-import net.minecraft.client.texture.GlTextureView;
+import net.minecraft.client.renderer.texture.AbstractTexture;
 
 public final class ExternalGlTexture extends AbstractTexture {
     public ExternalGlTexture(int glId, int width, int height) {
         WrappedTexture texture = new WrappedTexture(glId, width, height);
-        this.glTexture = texture;
-        this.glTextureView = new WrappedTextureView(texture);
-        this.sampler = RenderSystem.getSamplerCache().get(
+        this.texture = texture;
+        this.textureView = new WrappedTextureView(texture);
+        this.sampler = RenderSystem.getSamplerCache().getSampler(
                 AddressMode.CLAMP_TO_EDGE,
                 AddressMode.CLAMP_TO_EDGE,
                 FilterMode.LINEAR,
@@ -25,11 +25,11 @@ public final class ExternalGlTexture extends AbstractTexture {
 
     @Override
     public void close() {
-        if (glTexture instanceof WrappedTexture wrapped) {
+        if (texture instanceof WrappedTexture wrapped) {
             wrapped.markClosed();
         }
-        glTexture = null;
-        glTextureView = null;
+        texture = null;
+        textureView = null;
     }
 
     private static final class WrappedTexture extends GlTexture {

@@ -1,0 +1,42 @@
+plugins {
+	id 'net.fabricmc.fabric-loom'
+	id 'maven-publish'
+}
+
+base {
+	archivesName = "${rootProject.archives_base_name}-fabric-client-26.2"
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${rootProject.minecraft_26_2_version}"
+	implementation "net.fabricmc:fabric-loader:${rootProject.loader_26_2_version}"
+	implementation project(':mcng-core')
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+	useJUnitPlatform()
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 25
+}
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			from components.java
+			artifactId = "${rootProject.archives_base_name}-fabric-client-26.2"
+		}
+	}
+}

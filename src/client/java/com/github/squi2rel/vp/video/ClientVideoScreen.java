@@ -8,15 +8,15 @@ import com.github.squi2rel.vp.i18n.VpTexts;
 import com.github.squi2rel.vp.danmaku.ClientDanmakuRenderer;
 import com.github.squi2rel.vp.danmaku.ClientSubtitleController;
 import com.github.squi2rel.vp.provider.VideoInfo;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import com.mojang.blaze3d.vertex.PoseStack;
 import org.joml.Vector3f;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.network.chat.Component;
 
 public class ClientVideoScreen extends VideoScreen {
     public IVideoPlayer player = null;
@@ -147,7 +147,7 @@ public class ClientVideoScreen extends VideoScreen {
         if (old != null) old.cleanup();
     }
 
-    public void draw(MatrixStack matrices, VertexConsumerProvider consumers) {
+    public void draw(PoseStack matrices, MultiBufferSource consumers) {
         if (shouldDrawPlaceholder()) {
             boolean showIdleImage = metadata == null || metadata.getBool(ScreenMetadata.KEY_SHOW_IDLE_IMAGE, true);
             if (!shouldKeepFallbackFrame(hasDisplayPlaybackContent(), showIdleImage)) return;
@@ -456,11 +456,11 @@ public class ClientVideoScreen extends VideoScreen {
             if (corrected) setProgress(syncProgress);
 
             if (metadata.getBool("debug", false)) {
-                MinecraftClient.getInstance().inGameHud.setOverlayMessage(Text.literal(
+                Minecraft.getInstance().gui.setOverlayMessage(Component.literal(
                         "local: %s, server: %s, rtt: %s, delta: %s, corrected: %s, rate: %.2f".formatted(
                                 progress, syncProgress, rtt, delta, corrected, ratePlayer.getRate()
                         )
-                ).formatted(Formatting.GREEN), false);
+                ).withStyle(ChatFormatting.GREEN), false);
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.github.squi2rel.vp;
 
 import com.github.squi2rel.vp.network.ServerPacketHandler;
+import com.github.squi2rel.vp.network.ClientMessageBridge;
 import com.github.squi2rel.vp.network.VideoHandshakeState;
 import com.github.squi2rel.vp.network.VideoPackets;
 import com.github.squi2rel.vp.i18n.MinecraftTexts;
@@ -9,14 +10,13 @@ import com.github.squi2rel.vp.video.VideoScreen;
 import com.github.squi2rel.vp.video.ScreenKey;
 import com.google.gson.Gson;
 import net.fabricmc.fabric.api.networking.v1.PlayerLookup;
+import net.minecraft.ChatFormatting;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.PlayerManager;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.WorldSavePath;
-import net.minecraft.util.Formatting;
-import net.minecraft.world.dimension.DimensionType;
-
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.PlayerList;
+import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.storage.LevelResource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -67,64 +67,64 @@ public class DataHolder {
     public static void update() {
         MinecraftServer current = server;
         if (!running || current == null) return;
-        PlayerManager pm = current.getPlayerManager();
+        PlayerList pm = current.getPlayerList();
         ArrayList<Runnable> notifications = new ArrayList<>();
         for (Map.Entry<UUID, String> entry : new ArrayList<>(playerDim.entrySet())) {
-            ServerPlayerEntity player = pm.getPlayer(entry.getKey());
+            ServerPlayer player = pm.getPlayer(entry.getKey());
             if (player == null) continue;
-            String dim = player.getEntityWorld().getRegistryKey().getValue().toString();
+            String dim = player.level().dimension().identifier().toString();
             if (dim.equals(entry.getValue())) continue;
             HashMap<String, VideoArea> map = areas.get(entry.getValue());
             if (map == null) continue;
             for (VideoArea area : map.values()) {
-                if (area.removePlayer(player.getUuid())) {
+                if (area.removePlayer(player.getUUID())) {
                     ServerPacketHandler.sendTo(player, VideoPackets.unloadArea(area));
                     ServerPacketHandler.sendTo(player, VideoPackets.removeArea(area));
                 }
             }
         }
         for (UUID uuid : allPlayers) {
-            ServerPlayerEntity player = pm.getPlayer(uuid);
+            ServerPlayer player = pm.getPlayer(uuid);
             if (player == null) continue;
-            String dim = player.getEntityWorld().getRegistryKey().getValue().toString();
+            String dim = player.level().dimension().identifier().toString();
             HashMap<String, VideoArea> all = areas.get(dim);
             if (all == null) {
-                loadWorld(current, player.getEntityWorld());
+                loadWorld(current, player.level());
                 all = areas.get(dim);
             }
             if (all == null || all.isEmpty()) continue;
             for (VideoArea area : all.values()) {
-                if (area.inBounds(player.getEntityPos())) {
-                    if (area.addPlayer(player.getUuid())) {
+                if (area.inBounds(player.position())) {
+                    if (area.addPlayer(player.getUUID())) {
                         sendAreaSnapshot(player, area);
                         area.playerEntered();
-                        notifications.add(() -> player.sendMessage(MinecraftTexts.tr(
+                        notifications.add(() -> ClientMessageBridge.sendOverlay(player, MinecraftTexts.tr(
                                 "message.videoplayer.area_enter",
                                 "Entered video area %s",
                                 area.name
-                        ).formatted(Formatting.DARK_AQUA), true));
+                        ).withStyle(ChatFormatting.DARK_AQUA)));
                     }
                 } else {
-                    if (area.removePlayer(player.getUuid())) {
+                    if (area.removePlayer(player.getUUID())) {
                         notifications.add(() -> ServerPacketHandler.sendTo(player, VideoPackets.unloadArea(area)));
                         notifications.add(() -> ServerPacketHandler.sendTo(player, VideoPackets.removeArea(area)));
-                        notifications.add(() -> player.sendMessage(MinecraftTexts.tr(
+                        notifications.add(() -> ClientMessageBridge.sendOverlay(player, MinecraftTexts.tr(
                                 "message.videoplayer.area_leave",
                                 "Left video area %s",
                                 area.name
-                        ).formatted(Formatting.DARK_AQUA), true));
+                        ).withStyle(ChatFormatting.DARK_AQUA)));
                     }
                 }
             }
         }
-        for (ServerPlayerEntity player : PlayerLookup.all(current)) {
-            playerDim.put(player.getUuid(), player.getEntityWorld().getRegistryKey().getValue().toString());
+        for (ServerPlayer player : PlayerLookup.all(current)) {
+            playerDim.put(player.getUUID(), player.level().dimension().identifier().toString());
         }
         notifications.forEach(Runnable::run);
     }
 
     public static void unload(MinecraftServer s) {
-        PlayerManager pm = s.getPlayerManager();
+        PlayerList pm = s.getPlayerList();
         for (HashMap<String, VideoArea> map : areas.values()) {
             for (VideoArea area : map.values()) {
                 unloadArea(pm, area);
@@ -133,12 +133,12 @@ public class DataHolder {
         }
     }
 
-    public static void playerJoin(ServerPlayerEntity player) {
+    public static void playerJoin(ServerPlayer player) {
         if (!running || player == null) return;
-        handshakes.put(player.getUuid(), VideoHandshakeState.NEEDS_RESET);
-        handshakeNonces.remove(player.getUuid());
-        handshakeTokens.remove(player.getUuid());
-        onlinePlayerNames.put(player.getGameProfile().name().toLowerCase(Locale.ROOT), player.getUuid());
+        handshakes.put(player.getUUID(), VideoHandshakeState.NEEDS_RESET);
+        handshakeNonces.remove(player.getUUID());
+        handshakeTokens.remove(player.getUUID());
+        onlinePlayerNames.put(player.getGameProfile().name().toLowerCase(Locale.ROOT), player.getUUID());
     }
 
     public static void playerLeave(UUID uuid) {
@@ -213,14 +213,14 @@ public class DataHolder {
         handshakeNonces.clear();
         handshakeTokens.clear();
         onlinePlayerNames.clear();
-        for (ServerWorld world : server.getWorlds()) {
+        for (ServerLevel world : server.getAllLevels()) {
             loadWorld(server, world);
         }
     }
 
-    public static void loadWorld(MinecraftServer server, ServerWorld world) {
+    public static void loadWorld(MinecraftServer server, ServerLevel world) {
         if (!running || server == null || world == null || DataHolder.server != server) return;
-        String dim = world.getRegistryKey().getValue().toString();
+        String dim = world.dimension().identifier().toString();
         if (areas.containsKey(dim)) return;
 
         Path path = worldDirectory(server, world).resolve("videoplayer.json");
@@ -253,9 +253,9 @@ public class DataHolder {
         VideoPlayerMain.LOGGER.info("Loaded {} VideoPlayer areas for world {} from {}", map.size(), dim, path);
     }
 
-    public static void unloadWorld(MinecraftServer server, ServerWorld world) {
+    public static void unloadWorld(MinecraftServer server, ServerLevel world) {
         if (world == null) return;
-        String dim = world.getRegistryKey().getValue().toString();
+        String dim = world.dimension().identifier().toString();
         try {
             saveWorld(dim);
         } catch (RuntimeException error) {
@@ -264,7 +264,7 @@ public class DataHolder {
         }
         HashMap<String, VideoArea> map = areas.remove(dim);
         if (map != null) {
-            PlayerManager pm = server == null ? null : server.getPlayerManager();
+            PlayerList pm = server == null ? null : server.getPlayerList();
             for (VideoArea area : map.values()) {
                 unloadArea(pm, area);
                 area.remove();
@@ -518,18 +518,18 @@ public class DataHolder {
         area.afterLoad();
     }
 
-    private static void unloadArea(PlayerManager pm, VideoArea area) {
+    private static void unloadArea(PlayerList pm, VideoArea area) {
         if (pm == null || area == null || !area.hasPlayer()) return;
         byte[] unload = VideoPackets.unloadArea(area);
         byte[] remove = VideoPackets.removeArea(area);
         for (UUID uuid : area.playerSnapshot()) {
-            ServerPlayerEntity player = pm.getPlayer(uuid);
+            ServerPlayer player = pm.getPlayer(uuid);
             ServerPacketHandler.sendTo(player, unload);
             ServerPacketHandler.sendTo(player, remove);
         }
     }
 
-    private static void sendAreaSnapshot(ServerPlayerEntity player, VideoArea area) {
+    private static void sendAreaSnapshot(ServerPlayer player, VideoArea area) {
         ServerPacketHandler.sendTo(player, VideoPackets.createArea(area));
         ServerPacketHandler.sendAreaPermissions(player, area);
         for (VideoScreen screen : area.screens) {
@@ -539,7 +539,7 @@ public class DataHolder {
             }
             if (!screen.idlePlayEntries.isEmpty() || screen.idlePlayRandom) {
                 ServerPacketHandler.sendTo(player, VideoPackets.idlePlay(
-                        screen, supportsIdlePlayMutations(player.getUuid())
+                        screen, supportsIdlePlayMutations(player.getUUID())
                 ));
             }
         }
@@ -580,8 +580,8 @@ public class DataHolder {
         config.noControlRange = loaded.noControlRange;
     }
 
-    private static Path worldDirectory(MinecraftServer server, ServerWorld world) {
-        return DimensionType.getSaveDirectory(world.getRegistryKey(), server.getSavePath(WorldSavePath.ROOT));
+    private static Path worldDirectory(MinecraftServer server, ServerLevel world) {
+        return DimensionType.getStorageFolder(world.dimension(), server.getWorldPath(LevelResource.ROOT));
     }
 
     public static String readString(Path path) {
@@ -687,9 +687,9 @@ public class DataHolder {
                 && com.github.squi2rel.vp.network.VideoProtocol.supportsIdlePlayMutations(handshakeToken(uuid));
     }
 
-    public static void refreshPlayerProtocol(ServerPlayerEntity player) {
-        if (player == null || !protocolActive(player.getUuid())) return;
-        UUID uuid = player.getUuid();
+    public static void refreshPlayerProtocol(ServerPlayer player) {
+        if (player == null || !protocolActive(player.getUUID())) return;
+        UUID uuid = player.getUUID();
         boolean mutations = supportsIdlePlayMutations(uuid);
         for (HashMap<String, VideoArea> world : areas.values()) {
             for (VideoArea area : world.values()) {
@@ -730,8 +730,8 @@ public class DataHolder {
         if (current == null || message == null) return;
         current.execute(() -> {
             if (!lifecycleActive(epoch)) return;
-            ServerPlayerEntity player = current.getPlayerManager().getPlayer(uuid);
-            if (player != null) player.sendMessage(net.minecraft.text.Text.of(message));
+            ServerPlayer player = current.getPlayerList().getPlayer(uuid);
+            if (player != null) player.sendSystemMessage(net.minecraft.network.chat.Component.nullToEmpty(message));
         });
     }
 
@@ -740,8 +740,8 @@ public class DataHolder {
         if (current == null || message == null) return;
         current.execute(() -> {
             if (!lifecycleActive(epoch)) return;
-            ServerPlayerEntity player = current.getPlayerManager().getPlayer(uuid);
-            if (player != null) player.sendMessage(MinecraftTexts.text(message));
+            ServerPlayer player = current.getPlayerList().getPlayer(uuid);
+            if (player != null) player.sendSystemMessage(MinecraftTexts.text(message));
         });
     }
 

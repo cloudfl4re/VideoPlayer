@@ -7,15 +7,6 @@ import com.github.squi2rel.mcng.core.GraphJsonCodec;
 import com.github.squi2rel.mcng.core.GraphVariableDefinition;
 import com.github.squi2rel.mcng.core.NodeTypeRegistry;
 import com.github.squi2rel.mcng.core.PortTypeRegistry;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.resource.language.I18n;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.input.CharInput;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.text.Text;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryStack;
@@ -25,6 +16,15 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.resources.language.I18n;
+import net.minecraft.network.chat.Component;
 
 public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	private static final int EXECUTION_STEP_BUDGET = 8;
@@ -41,7 +41,7 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	private static final int DEBUG_VARIABLE_ROW_STEP = 18;
 	private static final int DEBUG_VARIABLE_ROWS_VISIBLE = 5;
 	private static final GraphEditorI18n MINECRAFT_I18N = (key, fallback, args) ->
-		I18n.hasTranslation(key) ? I18n.translate(key, args) : GraphEditorI18n.formatFallback(fallback, key, args);
+		I18n.exists(key) ? I18n.get(key, args) : GraphEditorI18n.formatFallback(fallback, key, args);
 	private static final List<ThemeOption> THEME_OPTIONS = List.of(
 		new ThemeOption("classic", "Classic", GraphEditorTheme.classic()),
 		new ThemeOption("light", "Light", GraphEditorTheme.light()),
@@ -87,7 +87,7 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 		Consumer<GraphDocument> onPersist,
 		Consumer<String> statusSink
 	) {
-		super(minecraftClient(), minecraftTextRenderer(), Text.translatable("mcng.ui.debug.screen_title"));
+		super(minecraftClient(), minecraftTextRenderer(), Component.translatable("mcng.ui.debug.screen_title"));
 		this.registry = registry;
 		this.portTypes = portTypes;
 		this.paletteRegistry = paletteRegistry;
@@ -101,19 +101,19 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 		this.statusMessage = translate("mcng.ui.debug.command_hint", "/mcng editor");
 	}
 
-	private static MinecraftClient minecraftClient() {
-		return MinecraftClient.getInstance();
+	private static Minecraft minecraftClient() {
+		return Minecraft.getInstance();
 	}
 
-	private static TextRenderer minecraftTextRenderer() {
-		MinecraftClient client = MinecraftClient.getInstance();
-		return client == null ? null : client.textRenderer;
+	private static Font minecraftTextRenderer() {
+		Minecraft client = Minecraft.getInstance();
+		return client == null ? null : client.font;
 	}
 
 	@Override
 	protected void init() {
 		super.init();
-		editor.init(textRenderer, new GraphEditorBounds(0, 0, width, height));
+		editor.init(font, new GraphEditorBounds(0, 0, width, height));
 	}
 
 	@Override
@@ -123,14 +123,14 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	}
 
 	@Override
-	public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+	public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
 		editor.setBounds(new GraphEditorBounds(0, 0, width, height));
-		editor.render(context, textRenderer, mouseX, mouseY, delta);
+		editor.render(context, font, mouseX, mouseY, delta);
 		renderOverlay(context);
 	}
 
 	@Override
-	public boolean mouseClicked(Click click, boolean doubleClick) {
+	public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
 		return mouseClicked(click.x(), click.y(), click.button()) || super.mouseClicked(click, doubleClick);
 	}
 
@@ -148,7 +148,7 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	}
 
 	@Override
-	public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+	public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
 		return mouseDragged(click.x(), click.y(), click.button(), deltaX, deltaY) || super.mouseDragged(click, deltaX, deltaY);
 	}
 
@@ -157,7 +157,7 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	}
 
 	@Override
-	public boolean mouseReleased(Click click) {
+	public boolean mouseReleased(MouseButtonEvent click) {
 		return mouseReleased(click.x(), click.y(), click.button()) || super.mouseReleased(click);
 	}
 
@@ -171,7 +171,7 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	}
 
 	@Override
-	public boolean keyPressed(KeyInput input) {
+	public boolean keyPressed(KeyEvent input) {
 		return keyPressed(input.key(), input.scancode(), input.modifiers()) || super.keyPressed(input);
 	}
 
@@ -206,9 +206,9 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	}
 
 	@Override
-	public boolean charTyped(CharInput input) {
-		if (input.isValidChar()) {
-			String text = input.asString();
+	public boolean charTyped(CharacterEvent input) {
+		if (input.isAllowedChatCharacter()) {
+			String text = input.codepointAsString();
 			if (text.length() == 1 && charTyped(text.charAt(0), input.modifiers())) {
 				return true;
 			}
@@ -224,10 +224,10 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 	}
 
 	@Override
-	public void close() {
+	public void onClose() {
 		onPersist.accept(session.document());
 		editor.close();
-		super.close();
+		super.onClose();
 	}
 
 	@Override
@@ -237,14 +237,14 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 
 	@Override
 	public void copyToClipboard(String value) {
-		if (client != null) {
-			client.keyboard.setClipboard(value);
+		if (minecraft != null) {
+			minecraft.keyboardHandler.setClipboard(value);
 		}
 	}
 
 	@Override
 	public String readClipboard() {
-		return client != null ? client.keyboard.getClipboard() : "";
+		return minecraft != null ? minecraft.keyboardHandler.getClipboard() : "";
 	}
 
 	@Override
@@ -282,7 +282,7 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 		}
 	}
 
-	private void renderOverlay(DrawContext context) {
+	private void renderOverlay(GuiGraphics context) {
 		GraphEditorUiConfig uiConfig = editor.uiConfig();
 		GraphEditorTheme theme = uiConfig.theme();
 		List<String> help = helpLines();
@@ -292,14 +292,14 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 		int x = editor.isPaletteOpen() ? editor.paletteSidebarRight() + 10 : 10;
 		int y = 36;
 		EditorStyleRenderer.drawBox(context, x, y, panelWidth, panelHeight, theme.panelBackgroundColor(), theme.panelBorderColor(), uiConfig);
-		context.drawText(textRenderer, title, x + 8, y + 8, theme.primaryTextColor(), false);
+		context.drawString(font, title, x + 8, y + 8, theme.primaryTextColor(), false);
 		for (int index = 0; index < help.size(); index++) {
-			context.drawText(textRenderer, help.get(index), x + 8, y + 24 + (index * 12), theme.secondaryTextColor(), false);
+			context.drawString(font, help.get(index), x + 8, y + 24 + (index * 12), theme.secondaryTextColor(), false);
 		}
 
 		int statusY = y + panelHeight + 6;
 		EditorStyleRenderer.drawBox(context, x, statusY, panelWidth, 16, theme.panelBackgroundColor(), theme.panelBorderColor(), uiConfig);
-		context.drawText(textRenderer, translate("mcng.ui.debug.status", "Status: %s", statusMessage), x + 8, statusY + 4, theme.accentColor(), false);
+		context.drawString(font, translate("mcng.ui.debug.status", "Status: %s", statusMessage), x + 8, statusY + 4, theme.accentColor(), false);
 
 		if (!debugPanelVisible) {
 			return;
@@ -307,20 +307,20 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 
 		DebugPanelLayout layout = debugPanelLayout();
 		EditorStyleRenderer.drawBox(context, layout.x(), layout.y(), layout.width(), layout.height(), theme.panelBackgroundColor(), theme.panelBorderColor(), uiConfig);
-		context.drawText(textRenderer, translate("mcng.ui.debug.panel_title", "Debug"), layout.x() + 8, layout.y() + 8, theme.primaryTextColor(), false);
-		context.drawText(textRenderer, session.isExecutionRunning() ? translate("mcng.ui.debug.running", "Running") : translate("mcng.ui.debug.idle", "Idle"), layout.x() + layout.width() - 46, layout.y() + 8, session.isExecutionRunning() ? theme.executionColor() : theme.secondaryTextColor(), false);
+		context.drawString(font, translate("mcng.ui.debug.panel_title", "Debug"), layout.x() + 8, layout.y() + 8, theme.primaryTextColor(), false);
+		context.drawString(font, session.isExecutionRunning() ? translate("mcng.ui.debug.running", "Running") : translate("mcng.ui.debug.idle", "Idle"), layout.x() + layout.width() - 46, layout.y() + 8, session.isExecutionRunning() ? theme.executionColor() : theme.secondaryTextColor(), false);
 
 		List<String> debug = session.debugMessages();
 		for (int index = 0; index < Math.min(debug.size(), 2); index++) {
-			context.drawText(textRenderer, debug.get(debug.size() - 1 - index), layout.x() + 8, layout.y() + 24 + (index * 12), theme.secondaryTextColor(), false);
+			context.drawString(font, debug.get(debug.size() - 1 - index), layout.x() + 8, layout.y() + 24 + (index * 12), theme.secondaryTextColor(), false);
 		}
 
 		List<GraphError> errors = session.lastErrors();
 		for (int index = 0; index < Math.min(errors.size(), 2); index++) {
-			context.drawText(textRenderer, GraphEditorTranslations.formatError(i18n(), errors.get(index)), layout.x() + 8, layout.y() + 50 + (index * 10), theme.errorColor(), false);
+			context.drawString(font, GraphEditorTranslations.formatError(i18n(), errors.get(index)), layout.x() + 8, layout.y() + 50 + (index * 10), theme.errorColor(), false);
 		}
 
-		context.drawText(textRenderer, translate("mcng.ui.debug.section.editor", "Editor"), layout.x() + DEBUG_PANEL_PADDING, settingsTitleY(layout), theme.primaryTextColor(), false);
+		context.drawString(font, translate("mcng.ui.debug.section.editor", "Editor"), layout.x() + DEBUG_PANEL_PADDING, settingsTitleY(layout), theme.primaryTextColor(), false);
 
 		for (DebugButton button : debugButtons(layout)) {
 			int fill = button.active()
@@ -328,16 +328,16 @@ public final class MCNGDebugScreen extends Screen implements GraphEditorHost {
 				: theme.nodeBodyColor();
 			int border = button.active() ? theme.accentColor() : theme.panelBorderColor();
 			EditorStyleRenderer.drawBox(context, button.x(), button.y(), button.width(), button.height(), fill, border, uiConfig);
-			context.drawText(textRenderer, button.label(), button.x() + 6, button.y() + 5, theme.primaryTextColor(), false);
+			context.drawString(font, button.label(), button.x() + 6, button.y() + 5, theme.primaryTextColor(), false);
 		}
 
-		context.drawText(textRenderer, translate("mcng.ui.debug.section.variables", "Variables"), layout.x() + DEBUG_PANEL_PADDING, variablesTitleY(layout), theme.primaryTextColor(), false);
+		context.drawString(font, translate("mcng.ui.debug.section.variables", "Variables"), layout.x() + DEBUG_PANEL_PADDING, variablesTitleY(layout), theme.primaryTextColor(), false);
 		for (VariableRow row : variableRows(layout)) {
 			int fill = row.selected()
 				? EditorStyleRenderer.blend(theme.nodeBodyColor(), theme.accentColor(), 0.2f)
 				: EditorStyleRenderer.darken(theme.nodeBodyColor(), 0.02f);
 			EditorStyleRenderer.drawBox(context, row.x(), row.y(), row.width(), row.height(), fill, row.selected() ? theme.accentColor() : theme.panelBorderColor(), uiConfig);
-			context.drawText(textRenderer, row.label(), row.x() + 6, row.y() + 5, theme.secondaryTextColor(), false);
+			context.drawString(font, row.label(), row.x() + 6, row.y() + 5, theme.secondaryTextColor(), false);
 		}
 	}
 

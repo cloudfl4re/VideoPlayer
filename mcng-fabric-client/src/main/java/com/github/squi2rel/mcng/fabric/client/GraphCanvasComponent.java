@@ -15,8 +15,6 @@ import com.github.squi2rel.mcng.fabric.client.GraphInteractionController.Selecti
 import com.github.squi2rel.mcng.fabric.client.NodeWidget.InlineHit;
 import com.github.squi2rel.mcng.fabric.client.NodeWidget.PortWidget;
 import com.google.gson.JsonPrimitive;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -24,6 +22,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 
 public final class GraphCanvasComponent {
 	private final GraphEditorSession session;
@@ -32,7 +32,7 @@ public final class GraphCanvasComponent {
 	private final Supplier<GraphEditorUiConfig> uiConfigSupplier;
 	private final NodeComponentRegistry componentRegistry;
 	private final Map<NodeId, NodeBodyComponent> bodyComponents = new LinkedHashMap<>();
-	private TextRenderer textRenderer;
+	private Font textRenderer;
 	private ActiveTextEdit activeTextEdit;
 	private NodeId focusedBodyNodeId;
 	private CapturedBodyInteraction capturedBodyInteraction;
@@ -52,7 +52,7 @@ public final class GraphCanvasComponent {
 		viewport.reset();
 	}
 
-	public void init(TextRenderer textRenderer, GraphEditorBounds bounds) {
+	public void init(Font textRenderer, GraphEditorBounds bounds) {
 		this.textRenderer = textRenderer;
 		setBounds(bounds);
 	}
@@ -93,7 +93,7 @@ public final class GraphCanvasComponent {
 		return bounds.contains(mouseX, mouseY);
 	}
 
-	public void render(DrawContext context, TextRenderer textRenderer, int mouseX, int mouseY) {
+	public void render(GuiGraphics context, Font textRenderer, int mouseX, int mouseY) {
 		this.textRenderer = textRenderer;
 		GraphEditorUiConfig uiConfig = uiConfigSupplier.get();
 		GraphEditorTheme theme = uiConfig.theme();
@@ -102,10 +102,10 @@ public final class GraphCanvasComponent {
 		context.enableScissor(bounds.x(), bounds.y(), bounds.right(), bounds.bottom());
 		try {
 			List<NodeWidget> widgets = widgets();
-			context.getMatrices().pushMatrix();
-			context.getMatrices().translate(bounds.x(), bounds.y());
-			context.getMatrices().translate((float) viewport.offsetX(), (float) viewport.offsetY());
-			context.getMatrices().scale((float) viewport.zoom(), (float) viewport.zoom());
+			context.pose().pushMatrix();
+			context.pose().translate(bounds.x(), bounds.y());
+			context.pose().translate((float) viewport.offsetX(), (float) viewport.offsetY());
+			context.pose().scale((float) viewport.zoom(), (float) viewport.zoom());
 			try {
 				for (EdgeDefinition edge : session.edges()) {
 					NodeWidget fromNode = widgets.stream().filter(widget -> widget.node().id().equals(edge.fromNodeId())).findFirst().orElse(null);
@@ -187,7 +187,7 @@ public final class GraphCanvasComponent {
 					EditorStyleRenderer.drawBorder(context, (int) selectionBox.minX(), (int) selectionBox.minY(), (int) Math.max(1, selectionBox.maxX() - selectionBox.minX()), (int) Math.max(1, selectionBox.maxY() - selectionBox.minY()), 0xFF6EA8FF);
 				}
 			} finally {
-				context.getMatrices().popMatrix();
+				context.pose().popMatrix();
 			}
 		} finally {
 			context.disableScissor();
@@ -549,10 +549,10 @@ public final class GraphCanvasComponent {
 		return nodeIds;
 	}
 
-	private void renderGrid(DrawContext context, GraphEditorTheme theme) {
+	private void renderGrid(GuiGraphics context, GraphEditorTheme theme) {
 		context.fill(bounds.x(), bounds.y(), bounds.right(), bounds.bottom(), theme.canvasBackgroundColor());
-		context.getMatrices().pushMatrix();
-		context.getMatrices().translate(bounds.x(), bounds.y());
+		context.pose().pushMatrix();
+		context.pose().translate(bounds.x(), bounds.y());
 		try {
 			double step = Math.max(8, 24 * viewport.zoom());
 			double startX = viewport.offsetX() % step;
@@ -564,24 +564,24 @@ public final class GraphCanvasComponent {
 				context.fill(0, (int) y, bounds.width(), (int) y + 1, theme.gridColor());
 			}
 		} finally {
-			context.getMatrices().popMatrix();
+			context.pose().popMatrix();
 		}
 	}
 
-	private void renderActiveTextEditor(DrawContext context, TextRenderer textRenderer, GraphEditorTheme theme, GraphEditorUiConfig uiConfig) {
+	private void renderActiveTextEditor(GuiGraphics context, Font textRenderer, GraphEditorTheme theme, GraphEditorUiConfig uiConfig) {
 		if (activeTextEdit == null) {
 			return;
 		}
 		context.enableScissor(bounds.x(), bounds.y(), bounds.right(), bounds.bottom());
 		try {
-			context.getMatrices().pushMatrix();
+			context.pose().pushMatrix();
 			try {
-				context.getMatrices().translate(bounds.x(), bounds.y());
-				context.getMatrices().translate((float) viewport.offsetX(), (float) viewport.offsetY());
-				context.getMatrices().scale((float) viewport.zoom(), (float) viewport.zoom());
+				context.pose().translate(bounds.x(), bounds.y());
+				context.pose().translate((float) viewport.offsetX(), (float) viewport.offsetY());
+				context.pose().scale((float) viewport.zoom(), (float) viewport.zoom());
 				GraphTextInputRenderer.renderFrame(context, activeTextEdit.bounds(), theme, uiConfig);
 			} finally {
-				context.getMatrices().popMatrix();
+				context.pose().popMatrix();
 			}
 
 			NodeWidget.Bounds screenBounds = screenBounds(activeTextEdit.bounds());
@@ -591,14 +591,14 @@ public final class GraphCanvasComponent {
 			int scissorBottom = Math.min(bounds.bottom(), screenBounds.y() + screenBounds.height() - GraphTextInputRenderer.CONTENT_PADDING_Y);
 			context.enableScissor(scissorLeft, scissorTop, scissorRight, scissorBottom);
 			try {
-				context.getMatrices().pushMatrix();
+				context.pose().pushMatrix();
 				try {
-					context.getMatrices().translate(bounds.x(), bounds.y());
-					context.getMatrices().translate((float) viewport.offsetX(), (float) viewport.offsetY());
-					context.getMatrices().scale((float) viewport.zoom(), (float) viewport.zoom());
+					context.pose().translate(bounds.x(), bounds.y());
+					context.pose().translate((float) viewport.offsetX(), (float) viewport.offsetY());
+					context.pose().scale((float) viewport.zoom(), (float) viewport.zoom());
 					GraphTextInputRenderer.renderContent(context, textRenderer, activeTextEdit.bounds(), activeTextEdit.state(), theme, true);
 				} finally {
-					context.getMatrices().popMatrix();
+					context.pose().popMatrix();
 				}
 			} finally {
 				context.disableScissor();
@@ -1008,7 +1008,7 @@ public final class GraphCanvasComponent {
 			return state;
 		}
 
-		private void handlePointerDown(TextRenderer textRenderer, double worldX, long timeMs) {
+		private void handlePointerDown(Font textRenderer, double worldX, long timeMs) {
 			int index = indexForWorldX(textRenderer, worldX);
 			if ((timeMs - lastPointerDownAt) <= DOUBLE_CLICK_WINDOW_MS && Math.abs(index - lastPointerIndex) <= 1) {
 				state.selectWordAt(index);
@@ -1022,7 +1022,7 @@ public final class GraphCanvasComponent {
 			ensureCursorVisible(textRenderer);
 		}
 
-		private void handlePointerDrag(TextRenderer textRenderer, double worldX) {
+		private void handlePointerDrag(Font textRenderer, double worldX) {
 			if (!draggingPointer) {
 				return;
 			}
@@ -1034,7 +1034,7 @@ public final class GraphCanvasComponent {
 			draggingPointer = false;
 		}
 
-		private void ensureCursorVisible(TextRenderer textRenderer) {
+		private void ensureCursorVisible(Font textRenderer) {
 			state.ensureCursorVisible(textRenderer, Math.max(1, bounds.width() - 8));
 		}
 
@@ -1046,7 +1046,7 @@ public final class GraphCanvasComponent {
 			return this.nodeId.equals(nodeId) && this.key != null && this.key.equals(key);
 		}
 
-		private int indexForWorldX(TextRenderer textRenderer, double worldX) {
+		private int indexForWorldX(Font textRenderer, double worldX) {
 			double localX = worldX - (bounds.x() + 4) + state.scrollX();
 			return state.indexForX(textRenderer, localX);
 		}

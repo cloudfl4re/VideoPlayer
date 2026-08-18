@@ -1,10 +1,9 @@
 package com.github.squi2rel.mcng.fabric.client;
 
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-
 import java.util.List;
 import java.util.function.Supplier;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 
 public final class GraphContextMenuComponent {
 	private static final int PADDING = 4;
@@ -30,7 +29,7 @@ public final class GraphContextMenuComponent {
 		this.i18nSupplier = i18nSupplier;
 	}
 
-	public void openNodeMenu(double anchorScreenX, double anchorScreenY, GraphEditorBounds bounds, TextRenderer textRenderer) {
+	public void openNodeMenu(double anchorScreenX, double anchorScreenY, GraphEditorBounds bounds, Font textRenderer) {
 		open(anchorScreenX, anchorScreenY, bounds, textRenderer, List.of(
 			new MenuItem(GraphEditorTranslations.ui(i18nSupplier.get(), "context_menu.copy", "Copy"), MenuAction.COPY, true),
 			new MenuItem(GraphEditorTranslations.ui(i18nSupplier.get(), "context_menu.cut", "Cut"), MenuAction.CUT, true),
@@ -38,7 +37,7 @@ public final class GraphContextMenuComponent {
 		));
 	}
 
-	public void openCanvasMenu(double anchorScreenX, double anchorScreenY, GraphEditorBounds bounds, TextRenderer textRenderer, boolean canPaste) {
+	public void openCanvasMenu(double anchorScreenX, double anchorScreenY, GraphEditorBounds bounds, Font textRenderer, boolean canPaste) {
 		open(anchorScreenX, anchorScreenY, bounds, textRenderer, List.of(new MenuItem(GraphEditorTranslations.ui(i18nSupplier.get(), "context_menu.paste", "Paste"), MenuAction.PASTE, canPaste)));
 	}
 
@@ -67,7 +66,7 @@ public final class GraphContextMenuComponent {
 		return item.action();
 	}
 
-	public void render(DrawContext context, TextRenderer textRenderer) {
+	public void render(GuiGraphics context, Font textRenderer) {
 		if (!open) {
 			return;
 		}
@@ -83,7 +82,7 @@ public final class GraphContextMenuComponent {
 				: EditorStyleRenderer.darken(theme.panelBackgroundColor(), 0.08f);
 			int border = item.active() ? theme.panelBorderColor() : EditorStyleRenderer.darken(theme.panelBorderColor(), 0.25f);
 			EditorStyleRenderer.drawBox(context, x + PADDING, itemY, width - (PADDING * 2), ITEM_HEIGHT - 2, fill, border, uiConfig);
-			context.drawText(textRenderer, item.label(), x + PADDING + ITEM_PADDING_X, itemY + 6, item.active() ? theme.primaryTextColor() : theme.secondaryTextColor(), false);
+			context.drawString(textRenderer, item.label(), x + PADDING + ITEM_PADDING_X, itemY + 6, item.active() ? theme.primaryTextColor() : theme.secondaryTextColor(), false);
 		}
 	}
 
@@ -95,11 +94,11 @@ public final class GraphContextMenuComponent {
 		return anchorScreenY;
 	}
 
-	private void open(double anchorScreenX, double anchorScreenY, GraphEditorBounds bounds, TextRenderer textRenderer, List<MenuItem> items) {
+	private void open(double anchorScreenX, double anchorScreenY, GraphEditorBounds bounds, Font textRenderer, List<MenuItem> items) {
 		this.anchorScreenX = anchorScreenX;
 		this.anchorScreenY = anchorScreenY;
 		this.items = List.copyOf(items);
-		this.width = Math.max(MIN_WIDTH, this.items.stream().mapToInt(item -> textRenderer.getWidth(item.label()) + (ITEM_PADDING_X * 2) + (PADDING * 2)).max().orElse(MIN_WIDTH));
+		this.width = Math.max(MIN_WIDTH, this.items.stream().mapToInt(item -> textRenderer.width(item.label()) + (ITEM_PADDING_X * 2) + (PADDING * 2)).max().orElse(MIN_WIDTH));
 		this.height = (this.items.size() * ITEM_HEIGHT) + (PADDING * 2);
 		int minX = bounds.x() + SCREEN_MARGIN;
 		int maxX = Math.max(minX, bounds.right() - width - SCREEN_MARGIN);

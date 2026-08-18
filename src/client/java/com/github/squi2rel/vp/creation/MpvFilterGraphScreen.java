@@ -16,13 +16,13 @@ import com.github.squi2rel.vp.filtergraph.MpvFilterGraphNodes;
 import com.github.squi2rel.vp.filtergraph.MpvFilterGraphTypes;
 import com.github.squi2rel.vp.filtergraph.MpvLavfiFilterCatalog;
 import com.github.squi2rel.vp.i18n.VpTexts;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.input.CharInput;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.resource.language.I18n;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.resources.language.I18n;
+import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
@@ -30,7 +30,7 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
     private static final int TOP_BAR_HEIGHT = 28;
     private static final long AUTO_APPLY_DELAY_MS = 500L;
     private static final GraphEditorI18n MINECRAFT_I18N = (key, fallback, args) ->
-            I18n.hasTranslation(key) ? I18n.translate(key, args) : GraphEditorI18n.formatFallback(fallback, key, args);
+            I18n.exists(key) ? I18n.get(key, args) : GraphEditorI18n.formatFallback(fallback, key, args);
 
     private final Screen parent;
     private final GraphJsonCodec codec = new GraphJsonCodec();
@@ -68,9 +68,9 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
                 VpTexts.tr("button.videoplayer.apply_filter", "Apply"), button -> applyNow(), THEME);
         autoApplyButton = new VpButtonWidget(width - 96, 5, 88, 18, autoApplyText(), button -> toggleAutoApply(), THEME)
                 .selected(MpvFilterGraphManager.autoApply());
-        addDrawableChild(applyButton);
-        addDrawableChild(autoApplyButton);
-        editor.init(textRenderer, editorBounds());
+        addRenderableWidget(applyButton);
+        addRenderableWidget(autoApplyButton);
+        editor.init(font, editorBounds());
         syncStatusFromCompile();
     }
 
@@ -84,30 +84,30 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         editor.setBounds(editorBounds());
-        editor.render(context, textRenderer, mouseX, mouseY, delta);
+        editor.render(context, font, mouseX, mouseY, delta);
         context.fill(0, 0, width, TOP_BAR_HEIGHT, THEME.panelBackgroundColor());
-        context.drawTextWithShadow(textRenderer, title, 8, 10, THEME.primaryTextColor());
+        context.drawString(font, title, 8, 10, THEME.primaryTextColor());
         int statusRight = Math.max(80, width - 184);
-        String visible = textRenderer.trimToWidth(status == null ? "" : status, statusRight - 90);
-        context.drawTextWithShadow(textRenderer, Text.literal(visible), 90, 10, statusColor());
+        String visible = font.plainSubstrByWidth(status == null ? "" : status, statusRight - 90);
+        context.drawString(font, Component.literal(visible), 90, 10, statusColor());
         super.render(context, mouseX, mouseY, delta);
     }
 
     @Override
-    public boolean mouseClicked(Click click, boolean doubleClick) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
         if (super.mouseClicked(click, doubleClick)) return true;
         return editor.mouseClicked(click.x(), click.y(), click.button());
     }
 
     @Override
-    public boolean mouseDragged(Click click, double deltaX, double deltaY) {
+    public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
         return editor.mouseDragged(click.x(), click.y(), click.button(), deltaX, deltaY) || super.mouseDragged(click, deltaX, deltaY);
     }
 
     @Override
-    public boolean mouseReleased(Click click) {
+    public boolean mouseReleased(MouseButtonEvent click) {
         return editor.mouseReleased(click.x(), click.y(), click.button()) || super.mouseReleased(click);
     }
 
@@ -117,7 +117,7 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
     }
 
     @Override
-    public boolean keyPressed(KeyInput input) {
+    public boolean keyPressed(KeyEvent input) {
         if (editor.keyPressed(input.key(), input.scancode(), input.modifiers())) return true;
         if (input.key() == GLFW.GLFW_KEY_DELETE || input.key() == GLFW.GLFW_KEY_BACKSPACE) {
             session.removeSelectedNodes();
@@ -127,22 +127,22 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
     }
 
     @Override
-    public boolean charTyped(CharInput input) {
-        if (input.isValidChar()) {
-            String value = input.asString();
+    public boolean charTyped(CharacterEvent input) {
+        if (input.isAllowedChatCharacter()) {
+            String value = input.codepointAsString();
             if (value.length() == 1 && editor.charTyped(value.charAt(0), input.modifiers())) return true;
         }
         return super.charTyped(input);
     }
 
     @Override
-    public void close() {
+    public void onClose() {
         editor.close();
-        if (client != null) client.setScreen(parent);
+        if (minecraft != null) minecraft.setScreen(parent);
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
@@ -157,12 +157,12 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
 
     @Override
     public void copyToClipboard(String value) {
-        if (client != null) client.keyboard.setClipboard(value);
+        if (minecraft != null) minecraft.keyboardHandler.setClipboard(value);
     }
 
     @Override
     public String readClipboard() {
-        return client == null ? "" : client.keyboard.getClipboard();
+        return minecraft == null ? "" : minecraft.keyboardHandler.getClipboard();
     }
 
     @Override
@@ -223,7 +223,7 @@ public class MpvFilterGraphScreen extends Screen implements GraphEditorHost {
         return statusError ? THEME.errorColor() : THEME.secondaryTextColor();
     }
 
-    private Text autoApplyText() {
+    private Component autoApplyText() {
         return VpTexts.tr("label.videoplayer.mpv_auto_apply", "Auto: %s",
                 MpvFilterGraphManager.autoApply()
                         ? VpTexts.tr("label.videoplayer.on", "On")

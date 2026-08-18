@@ -4,10 +4,9 @@ import com.github.squi2rel.vp.DataHolder;
 import com.github.squi2rel.vp.i18n.VpTranslation;
 import com.github.squi2rel.vp.network.ServerPacketHandler;
 import com.github.squi2rel.vp.network.VideoPackets;
-import net.minecraft.server.PlayerManager;
-import net.minecraft.server.network.ServerPlayerEntity;
-
 import java.util.List;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.PlayerList;
 
 import static com.github.squi2rel.vp.DataHolder.server;
 
@@ -20,9 +19,9 @@ public class ScreenBroadcaster {
 
     public void send(byte[] data) {
         if (server == null) return;
-        PlayerManager pm = server.getPlayerManager();
+        PlayerList pm = server.getPlayerList();
         for (var uuid : screen.area.playerSnapshot()) {
-            ServerPlayerEntity player = pm.getPlayer(uuid);
+            ServerPlayer player = pm.getPlayer(uuid);
             if (player != null) {
                 ServerPacketHandler.sendTo(player, data);
             }
@@ -32,7 +31,7 @@ public class ScreenBroadcaster {
     public void sendTo(java.util.UUID uuid, byte[] data) {
         if (uuid == null || data == null) return;
         if (server == null) return;
-        ServerPlayerEntity player = server.getPlayerManager().getPlayer(uuid);
+        ServerPlayer player = server.getPlayerList().getPlayer(uuid);
         if (player != null) {
             ServerPacketHandler.sendTo(player, data);
         }
@@ -44,11 +43,11 @@ public class ScreenBroadcaster {
 
     public void syncIdlePlay() {
         if (server == null) return;
-        PlayerManager pm = server.getPlayerManager();
+        PlayerList pm = server.getPlayerList();
         byte[] current = null;
         byte[] legacy = null;
         for (var uuid : screen.area.playerSnapshot()) {
-            ServerPlayerEntity player = pm.getPlayer(uuid);
+            ServerPlayer player = pm.getPlayer(uuid);
             if (player == null) continue;
             boolean mutations = DataHolder.supportsIdlePlayMutations(uuid);
             byte[] data;

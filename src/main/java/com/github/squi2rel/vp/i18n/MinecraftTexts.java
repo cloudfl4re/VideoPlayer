@@ -1,23 +1,23 @@
 package com.github.squi2rel.vp.i18n;
 
-import net.minecraft.text.Text;
-import net.minecraft.text.MutableText;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 
 public final class MinecraftTexts {
     private MinecraftTexts() {
     }
 
-    public static MutableText tr(String key, String fallback, Object... args) {
+    public static MutableComponent tr(String key, String fallback, Object... args) {
         return text(VpTranslation.of(key, fallback, args));
     }
 
-    public static MutableText text(VpTranslation translation) {
+    public static MutableComponent text(VpTranslation translation) {
         if (translation == null || translation.isEmpty()) {
-            return Text.empty();
+            return Component.empty();
         }
         if (translation.isLiteral()) {
-            return Text.literal(translation.fallback());
+            return Component.literal(translation.fallback());
         }
-        return Text.translatableWithFallback(translation.key(), translation.fallback(), translation.argumentArray());
+        return Component.translatableWithFallback(translation.key(), translation.fallback(), translation.argumentArray());
     }
 }

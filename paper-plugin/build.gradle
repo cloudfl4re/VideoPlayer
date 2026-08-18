@@ -1,6 +1,6 @@
 plugins {
     id 'java'
-    id 'com.gradleup.shadow' version '9.2.2'
+    id 'com.gradleup.shadow'
 }
 
 version = rootProject.mod_version
@@ -36,6 +36,7 @@ def sharedMainSources = fileTree("${rootProject.projectDir}/src/main/java") {
     exclude 'com/github/squi2rel/vp/DataHolder.java'
     exclude 'com/github/squi2rel/vp/network/ServerPacketHandler.java'
     exclude 'com/github/squi2rel/vp/network/VideoPayload.java'
+    exclude 'com/github/squi2rel/vp/network/ClientMessageBridge.java'
     exclude 'com/github/squi2rel/vp/provider/PlayerProviderSource.java'
     exclude 'com/github/squi2rel/vp/permission/VideoPermissions.java'
     exclude 'com/github/squi2rel/vp/video/ScreenBroadcaster.java'
@@ -55,7 +56,7 @@ dependencies {
 
     testImplementation platform("org.junit:junit-bom:5.11.4")
     testImplementation "org.junit.jupiter:junit-jupiter"
-    testImplementation "org.mockito:mockito-core:5.15.2"
+    testImplementation "org.mockito:mockito-core:${rootProject.mockito_version}"
     testImplementation "io.papermc.paper:paper-api:${rootProject.paper_api_version}"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
@@ -64,45 +65,17 @@ tasks.test {
     useJUnitPlatform()
 }
 
-def bundledMpvUrl = 'https://github.com/squi2rel/VideoPlayer-Library/releases/download/runtime-20260712-064900/libmpv-windows-x64.zip'
-def bundledMpvSha256 = '0a1e614d3b3db315895d19b1e97013fd12da9bc20c50d02d5de3b71a959dfdfb'
-def bundledMpvZip = layout.buildDirectory.file('bundled-native/libmpv-windows-x64.zip')
-
-tasks.register('downloadBundledWindowsMpv') {
-    outputs.file(bundledMpvZip)
-    doLast {
-        def target = bundledMpvZip.get().asFile
-        target.parentFile.mkdirs()
-        if (target.isFile()) {
-            def digest = java.security.MessageDigest.getInstance('SHA-256').digest(target.bytes).encodeHex().toString()
-            if (digest == bundledMpvSha256) return
-            target.delete()
-        }
-        def temporary = new File(target.parentFile, target.name + '.tmp')
-        temporary.delete()
-        new URI(bundledMpvUrl).toURL().withInputStream { input ->
-            temporary.withOutputStream { output -> output << input }
-        }
-        def digest = java.security.MessageDigest.getInstance('SHA-256').digest(temporary.bytes).encodeHex().toString()
-        if (digest != bundledMpvSha256) {
-            temporary.delete()
-            throw new GradleException("Bundled MPV SHA-256 mismatch: ${digest}")
-        }
-        if (!temporary.renameTo(target)) throw new GradleException('Failed to store bundled MPV package')
-    }
-}
-
 tasks.processResources {
-    dependsOn tasks.named('downloadBundledWindowsMpv')
+    doFirst {
+        java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/libmpv-windows-x64.zip'))
+    }
     inputs.property "version", project.version
+    inputs.property "apiVersion", '1.21'
     from("${rootProject.projectDir}/src/main/resources/assets/videoplayer/native-downloads.json") {
         into 'assets/videoplayer'
     }
-    from(bundledMpvZip) {
-        into 'assets/videoplayer/native'
-    }
     filesMatching("plugin.yml") {
-        expand "version": project.version
+        expand "version": project.version, "apiVersion": '1.21'
     }
 }
 
@@ -118,6 +91,9 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }

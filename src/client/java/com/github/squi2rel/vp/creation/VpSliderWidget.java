@@ -1,16 +1,15 @@
 package com.github.squi2rel.vp.creation;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.gui.widget.SliderWidget;
-import net.minecraft.text.Text;
-
 import java.util.function.IntConsumer;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 
-class VpSliderWidget extends SliderWidget {
+class VpSliderWidget extends AbstractSliderButton {
     private final VpUiTheme theme;
     private final IntConsumer onPreview;
     private final IntConsumer onCommit;
@@ -24,17 +23,17 @@ class VpSliderWidget extends SliderWidget {
 
     VpSliderWidget(int x, int y, int width, int height, String label, int value,
                    IntConsumer onPreview, IntConsumer onCommit, VpUiTheme theme) {
-        this(x, y, width, height, label, value, onPreview, onCommit, value1 -> Text.literal(label + ": " + value1 + "%"), theme);
+        this(x, y, width, height, label, value, onPreview, onCommit, value1 -> Component.literal(label + ": " + value1 + "%"), theme);
     }
 
-    VpSliderWidget(int x, int y, int width, int height, Text label, int value,
+    VpSliderWidget(int x, int y, int width, int height, Component label, int value,
                    IntConsumer onPreview, IntConsumer onCommit, VpUiTheme theme) {
         this(x, y, width, height, "", value, onPreview, onCommit, value1 -> label.copy().append(": " + value1 + "%"), theme);
     }
 
     VpSliderWidget(int x, int y, int width, int height, String label, int value,
                    IntConsumer onPreview, IntConsumer onCommit, TextFormatter messageFormatter, VpUiTheme theme) {
-        super(x, y, Math.max(60, width), height, Text.empty(), Math.clamp(value, 0, 100) / 100.0);
+        super(x, y, Math.max(60, width), height, Component.empty(), Math.clamp(value, 0, 100) / 100.0);
         this.theme = theme;
         this.onPreview = onPreview;
         this.onCommit = onCommit;
@@ -58,7 +57,7 @@ class VpSliderWidget extends SliderWidget {
     }
 
     @Override
-    public void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void renderWidget(GuiGraphics context, int mouseX, int mouseY, float delta) {
         int fill = VpUiRenderer.darken(theme.nodeBodyColor(), active ? 0.04f : 0.12f);
         int border = isHovered() || isFocused() ? VpUiRenderer.blend(theme.panelBorderColor(), theme.accentColor(), 0.48f) : theme.panelBorderColor();
         if (!active) border = VpUiRenderer.blend(border, theme.canvasBackgroundColor(), 0.45f);
@@ -75,17 +74,17 @@ class VpSliderWidget extends SliderWidget {
         int knobX = trackX + Math.clamp(fillW, 0, trackW) - 2;
         context.fill(knobX, trackY - 2, knobX + 4, trackY + 4, theme.primaryTextColor());
 
-        TextRenderer textRenderer = MinecraftClient.getInstance().textRenderer;
+        Font textRenderer = Minecraft.getInstance().font;
         String text = getMessage().getString();
-        String visibleText = textRenderer.getWidth(text) > getWidth() - 8 ? textRenderer.trimToWidth(text, getWidth() - 8) : text;
+        String visibleText = textRenderer.width(text) > getWidth() - 8 ? textRenderer.plainSubstrByWidth(text, getWidth() - 8) : text;
         int textX = getX() + 4;
         int textY = getY() + 2;
         int textColor = active ? theme.secondaryTextColor() : VpUiRenderer.blend(theme.secondaryTextColor(), theme.canvasBackgroundColor(), 0.45f);
         if (theme.textShadow()) {
-            context.drawTextWithShadow(textRenderer, visibleText, textX, textY, textColor);
+            context.drawString(textRenderer, visibleText, textX, textY, textColor);
             return;
         }
-        context.drawText(textRenderer, visibleText, textX, textY, textColor, false);
+        context.drawString(textRenderer, visibleText, textX, textY, textColor, false);
     }
 
     @Override
@@ -103,13 +102,13 @@ class VpSliderWidget extends SliderWidget {
     }
 
     @Override
-    public void onRelease(Click click) {
+    public void onRelease(MouseButtonEvent click) {
         super.onRelease(click);
         onCommit.accept(intValue);
     }
 
     @Override
-    public boolean keyPressed(KeyInput input) {
+    public boolean keyPressed(KeyEvent input) {
         boolean handled = super.keyPressed(input);
         if (handled) onCommit.accept(intValue);
         return handled;
@@ -124,6 +123,6 @@ class VpSliderWidget extends SliderWidget {
 
     @FunctionalInterface
     interface TextFormatter {
-        Text apply(int value);
+        Component apply(int value);
     }
 }

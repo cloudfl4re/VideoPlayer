@@ -1,9 +1,9 @@
 package com.github.squi2rel.vp;
 
 import com.github.squi2rel.vp.mixin.client.MinecraftClientAccessor;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.Framebuffer;
-import net.minecraft.entity.Entity;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.Entity;
 
 public final class CameraRenderer {
     public static boolean rendering;
@@ -14,20 +14,20 @@ public final class CameraRenderer {
     private CameraRenderer() {
     }
 
-    public static void renderWorld(Entity entity, Framebuffer framebuffer, int cameraFov) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.world == null || entity == null || framebuffer == null || rendering) return;
+    public static void renderWorld(Entity entity, RenderTarget framebuffer, int cameraFov) {
+        Minecraft client = Minecraft.getInstance();
+        if (client.level == null || entity == null || framebuffer == null || rendering) return;
         MinecraftClientAccessor access = (MinecraftClientAccessor) client;
-        Framebuffer oldFramebuffer = access.videoplayer$getFramebuffer();
+        RenderTarget oldFramebuffer = access.videoplayer$getFramebuffer();
         Entity oldCamera = client.getCameraEntity();
-        width = framebuffer.textureWidth;
-        height = framebuffer.textureHeight;
+        width = framebuffer.width;
+        height = framebuffer.height;
         fov = Math.clamp(cameraFov, 1, 179);
         rendering = true;
         try {
             access.videoplayer$setFramebuffer(framebuffer);
             client.setCameraEntity(entity);
-            client.gameRenderer.renderWorld(client.getRenderTickCounter());
+            client.gameRenderer.renderLevel(client.getDeltaTracker());
         } finally {
             client.setCameraEntity(oldCamera);
             access.videoplayer$setFramebuffer(oldFramebuffer);

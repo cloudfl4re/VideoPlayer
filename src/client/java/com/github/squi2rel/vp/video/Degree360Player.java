@@ -4,21 +4,21 @@ import com.github.squi2rel.vp.ScreenRenderer;
 import com.github.squi2rel.vp.vivecraft.Vivecraft;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.BuiltBuffer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.VertexFormats;
-import net.minecraft.client.util.BufferAllocator;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.math.MathHelper;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.util.Mth;
 
 import static com.github.squi2rel.vp.VideoPlayerClient.config;
 
@@ -37,17 +37,17 @@ public final class Degree360Player {
     private Degree360Player() {
     }
 
-    public static void drawTexture(int textureId, MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen screen) {
+    public static void drawTexture(int textureId, PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen screen) {
         drawTexture(textureId, matrices, consumers, screen, screen.stereo3d);
     }
 
-    public static void drawTexture(int textureId, MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen screen, boolean is3d) {
+    public static void drawTexture(int textureId, PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen screen, boolean is3d) {
         if (textureId < 0) return;
         boolean rightEye = is3d && Vivecraft.loaded && Vivecraft.isVRActive() && Vivecraft.isRightEye();
         SphereMesh mesh = meshFor(screen, is3d, rightEye);
         if (mesh == null || mesh.vertexBuffer == null || mesh.vertexBuffer.isClosed()) return;
 
-        matrices.push();
+        matrices.pushPose();
         if (screen.sphereSkybox) {
             ScreenRenderer.skybox = true;
         } else {
@@ -59,8 +59,8 @@ public final class Degree360Player {
             );
         }
         applySphereRotation(matrices, screen.sphereRotX, screen.sphereRotY, screen.sphereRotZ);
-        Matrix4f matrix = new Matrix4f(matrices.peek().getPositionMatrix());
-        matrices.pop();
+        Matrix4f matrix = new Matrix4f(matrices.last().pose());
+        matrices.popPose();
 
         int gray = (int) (config.brightness / 100.0 * 255);
         int color = 0xFF000000 | (gray << 16) | (gray << 8) | gray;
@@ -91,17 +91,17 @@ public final class Degree360Player {
                 ? genHemisphereVertices(key.radius(), latSegments, lonSegments, key.u1(), key.u2(), key.v1(), key.v2())
                 : genVertices(key.radius(), latSegments, lonSegments, key.u1(), key.u2(), key.v1(), key.v2());
         int vertexCount = stripVertexCount(latSegments, lonSegments);
-        int size = Math.max(256, vertexCount * VertexFormats.POSITION_TEXTURE_COLOR.getVertexSize());
-        try (BufferAllocator allocator = new BufferAllocator(size)) {
-            BufferBuilder buffer = new BufferBuilder(allocator, VertexFormat.DrawMode.TRIANGLE_STRIP, VertexFormats.POSITION_TEXTURE_COLOR);
+        int size = Math.max(256, vertexCount * DefaultVertexFormat.POSITION_TEX_COLOR.getVertexSize());
+        try (ByteBufferBuilder allocator = new ByteBufferBuilder(size)) {
+            BufferBuilder buffer = new BufferBuilder(allocator, VertexFormat.Mode.TRIANGLE_STRIP, DefaultVertexFormat.POSITION_TEX_COLOR);
             appendSphereStrip(buffer, vertices, latSegments, lonSegments, key.stereo3d, key.rightEye, key.u1(), key.u2());
-            try (BuiltBuffer built = buffer.end()) {
+            try (MeshData built = buffer.buildOrThrow()) {
                 GpuBuffer vertexBuffer = RenderSystem.getDevice().createBuffer(
                         () -> "VideoPlayer 360 sphere mesh",
                         GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST,
-                        built.getBuffer()
+                        built.vertexBuffer()
                 );
-                return new SphereMesh(vertexBuffer, built.getDrawParameters().vertexCount());
+                return new SphereMesh(vertexBuffer, built.drawState().vertexCount());
             }
         }
     }
@@ -138,21 +138,21 @@ public final class Degree360Player {
             float split = (u1 + u2) * 0.5f;
             u = rightEye ? split + (u - u1) * 0.5f : u1 + (u - u1) * 0.5f;
         }
-        consumer.vertex(vertices[idx], vertices[idx + 1], vertices[idx + 2])
-                .texture(u, vertices[idx + 4])
-                .color(0xFFFFFFFF);
+        consumer.addVertex(vertices[idx], vertices[idx + 1], vertices[idx + 2])
+                .setUv(u, vertices[idx + 4])
+                .setColor(0xFFFFFFFF);
     }
 
-    private static void flush(VertexConsumerProvider consumers) {
-        if (consumers instanceof VertexConsumerProvider.Immediate immediate) {
-            immediate.draw();
+    private static void flush(MultiBufferSource consumers) {
+        if (consumers instanceof MultiBufferSource.BufferSource immediate) {
+            immediate.endBatch();
         }
     }
 
-    private static void applySphereRotation(MatrixStack matrices, float x, float y, float z) {
-        if (y != 0) matrices.multiply(tmp.rotationY((float) Math.toRadians(y)));
-        if (x != 0) matrices.multiply(tmp.rotationX((float) Math.toRadians(x)));
-        if (z != 0) matrices.multiply(tmp.rotationZ((float) Math.toRadians(z)));
+    private static void applySphereRotation(PoseStack matrices, float x, float y, float z) {
+        if (y != 0) matrices.mulPose(tmp.rotationY((float) Math.toRadians(y)));
+        if (x != 0) matrices.mulPose(tmp.rotationX((float) Math.toRadians(x)));
+        if (z != 0) matrices.mulPose(tmp.rotationZ((float) Math.toRadians(z)));
     }
 
     static float[] genVertices(float radius, int latSegments, int lonSegments, float us, float ue, float vs, float ve) {
@@ -191,9 +191,9 @@ public final class Degree360Player {
                 float x2 = (float) (r2 * Math.cos(phi));
                 float z1 = (float) (r1 * Math.sin(phi));
                 float z2 = (float) (r2 * Math.sin(phi));
-                float u = MathHelper.lerp((float) lon / lonSegments, us, ue);
-                float v1 = MathHelper.lerp((float) lat / latSegments, vs, ve);
-                float v2 = MathHelper.lerp((float) (lat + 1) / latSegments, vs, ve);
+                float u = Mth.lerp((float) lon / lonSegments, us, ue);
+                float v1 = Mth.lerp((float) lat / latSegments, vs, ve);
+                float v2 = Mth.lerp((float) (lat + 1) / latSegments, vs, ve);
                 data[idx++] = x1;
                 data[idx++] = y1;
                 data[idx++] = z1;

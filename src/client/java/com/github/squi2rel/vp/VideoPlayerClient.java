@@ -43,22 +43,27 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
+import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
+import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.hud.ClientBossBar;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.CustomModelDataComponent;
-import net.minecraft.entity.boss.BossBar;
-import net.minecraft.item.ItemStack;
-import net.minecraft.network.packet.s2c.play.BossBarS2CPacket;
-import net.minecraft.registry.Registries;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-import net.minecraft.util.Hand;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.profiler.Profiler;
-import net.minecraft.util.profiler.Profilers;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.LerpingBossEvent;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundBossEventPacket;
+import net.minecraft.resources.Identifier;
+import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.resources.ResourceManager;
+import net.minecraft.util.profiling.Profiler;
+import net.minecraft.util.profiling.ProfilerFiller;
+import net.minecraft.world.BossEvent;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomModelData;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
 import org.joml.Vector3f;
 
@@ -75,12 +80,13 @@ import java.util.stream.Collectors;
 import static com.github.squi2rel.vp.VideoPlayerMain.LOGGER;
 import static com.github.squi2rel.vp.VideoPlayerMain.error;
 
+
 @SuppressWarnings({"DataFlowIssue"})
 public class VideoPlayerClient implements ClientModInitializer {
     private static final long HANDSHAKE_TIMEOUT_MS = 10_000L;
     public static final Path configPath = FabricLoader.getInstance().getConfigDir().resolve("videoplayer").resolve("videoplayer-client.json");
     private static final Path startupGuideVersionPath = configPath.getParent().resolve("startup-guide-version.txt");
-    public static final MinecraftClient client = MinecraftClient.getInstance();
+    public static final Minecraft client = Minecraft.getInstance();
     private static final VideoConnectionDiagnostics connectionDiagnostics = new VideoConnectionDiagnostics(
             HANDSHAKE_TIMEOUT_MS,
             System::currentTimeMillis,
@@ -95,7 +101,7 @@ public class VideoPlayerClient implements ClientModInitializer {
     private static final TouchHandler touchHandler = new TouchHandler();
     private static ClientVideoScreen currentLooking, currentScreen;
     private static boolean isInArea = false;
-    private static final BossBar bossBar = new ClientBossBar(UUID.randomUUID(), Text.of(""), 0, BossBar.Color.WHITE, BossBar.Style.PROGRESS, false, false, false);
+    private static final BossEvent bossBar = new LerpingBossEvent(UUID.randomUUID(), Component.nullToEmpty(""), 0, BossEvent.BossBarColor.WHITE, BossEvent.BossBarOverlay.PROGRESS, false, false, false);
     private static boolean bossBarAdded = false;
     private static boolean keyPressed = false;
     private static boolean startupGuideOpened = false;
@@ -153,13 +159,14 @@ public class VideoPlayerClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         if (error != null) {
-            ClientPlayConnectionEvents.JOIN.register((h, s, c) -> c.player.sendMessage(VpTexts.tr(
+            ClientPlayConnectionEvents.JOIN.register((h, s, c) -> c.player.displayClientMessage(VpTexts.tr(
                     "message.videoplayer.backend_load_failed",
                     "VideoPlayer error: video backend failed to load\n%s\nSee logs for more information",
                     error
-            ).formatted(Formatting.RED), false));
+            ).withStyle(ChatFormatting.RED), false));
         }
         loadConfig();
+        registerExternalTextureReload();
         activeAudioChannelMode = AudioChannelMode.normalize(config.audioChannelMode);
         BiliBiliProvider.setCookieSupplier(BiliCookie::header);
         YouTubeProvider.configureMissingYtdlHandler(() -> {
@@ -258,7 +265,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                     int v = s.getArgument("volume", Integer.class);
                                     config.volume = v;
                                     saveConfig();
-                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.volume_set", "Volume set to %s%%", v).formatted(Formatting.GREEN));
+                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.volume_set", "Volume set to %s%%", v).withStyle(ChatFormatting.GREEN));
                                     applyConfiguredVolume();
                                     return 1;
                                 })))
@@ -268,7 +275,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                         .then(ClientCommandManager.literal(VideoBackends.MPV)
                                 .executes(s -> setVideoBackend(s, VideoBackends.MPV)))
                         .executes(s -> {
-                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.current_backend", "Current playback backend: %s", VideoBackends.normalize(config.videoBackend)).formatted(Formatting.GREEN));
+                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.current_backend", "Current playback backend: %s", VideoBackends.normalize(config.videoBackend)).withStyle(ChatFormatting.GREEN));
                             return 1;
                         }))
                 .then(ClientCommandManager.literal("audio")
@@ -290,7 +297,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                             boolean enabled = ClientDanmakuController.toggleGlobal();
                             s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.danmaku_state", "Danmaku: %s",
                                     (enabled ? VpTexts.tr("label.videoplayer.on", "On") : VpTexts.tr("label.videoplayer.off", "Off")).getString()
-                            ).formatted(Formatting.GREEN));
+                            ).withStyle(ChatFormatting.GREEN));
                             return 1;
                         }))
                 .then(ClientCommandManager.literal("createArea")
@@ -403,7 +410,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                             s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.queue_list", "Video area %s screen %s\n%s",
                                     currentScreen.area.name, currentScreen.name,
                                     str.isEmpty() ? VpTexts.tr("message.videoplayer.queue_empty", "Queue is empty").getString() : str
-                            ).formatted(Formatting.GOLD));
+                            ).withStyle(ChatFormatting.GOLD));
                             return 1;
                         }))
                 .then(ClientCommandManager.literal("sync")
@@ -416,7 +423,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                         .then(ClientCommandManager.argument("brightness", IntegerArgumentType.integer(0, 100))
                                 .executes(s -> {
                                     config.brightness = s.getArgument("brightness", Integer.class);
-                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.brightness_set", "Brightness set to %s%%", config.brightness).formatted(Formatting.GREEN));
+                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.brightness_set", "Brightness set to %s%%", config.brightness).withStyle(ChatFormatting.GREEN));
                                     saveConfig();
                                     return 1;
                                 })))
@@ -485,7 +492,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                                     if (screen == null) return 0;
                                                                     String key = s.getArgument("key", String.class);
                                                                     MetaValue value = screen.metadata.get(key);
-                                                                    s.getSource().sendFeedback(Text.of(key + "=" + (value == null ? "null" : value.toDisplayString())));
+                                                                    s.getSource().sendFeedback(Component.literal(key + "=" + (value == null ? "null" : value.toDisplayString())));
                                                                     return 1;
                                                                 })))
                                                 .then(ClientCommandManager.literal("remove")
@@ -500,7 +507,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                                         .executes(s -> {
                                                             ClientVideoScreen screen = getScreen(s);
                                                             if (screen == null) return 0;
-                                                            s.getSource().sendFeedback(Text.of(screen.metadata.entries().toString()));
+                                                            s.getSource().sendFeedback(Component.literal(screen.metadata.entries().toString()));
                                                             return 1;
                                                         })))
                                 )))
@@ -531,14 +538,14 @@ public class VideoPlayerClient implements ClientModInitializer {
                     .redirect(videoplayerRoot));
         });
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (client.player == null || client.world == null || client.currentScreen != null || currentLooking == null) return;
-            boolean pressed = client.options.useKey.isPressed();
+            if (client.player == null || client.level == null || client.screen != null || currentLooking == null) return;
+            boolean pressed = client.options.keyUse.isDown();
             if (pressed && !keyPressed) {
                 keyPressed = true;
-                if (remoteControl || client.player.getStackInHand(Hand.MAIN_HAND).isEmpty() && client.player.getStackInHand(Hand.OFF_HAND).isEmpty()) {
+                if (remoteControl || client.player.getItemInHand(InteractionHand.MAIN_HAND).isEmpty() && client.player.getItemInHand(InteractionHand.OFF_HAND).isEmpty()) {
                     ClientVideoScreen selected = currentLooking;
                     ClientPacketHandler.openMenu(selected, result -> {
-                        if (!ClientPacketHandler.failed(result) && client.currentScreen == null) {
+                        if (!ClientPacketHandler.failed(result) && client.screen == null) {
                             VideoCreationEditor.instance().openConfigScreen(selected);
                         }
                     });
@@ -572,7 +579,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             context.getSource().sendFeedback(VpTexts.tr(
                     "command.videoplayer.help.header",
                     "VideoPlayer client commands. Use /videoplayer help <subcommand> for details."
-            ).formatted(Formatting.GOLD));
+            ).withStyle(ChatFormatting.GOLD));
             for (VideoPlayerCommandHelp.Entry entry : VideoPlayerCommandHelp.entries()) {
                 String detailKey = "command.videoplayer.help." + entry.name().toLowerCase(Locale.ROOT) + ".detail";
                 context.getSource().sendFeedback(VpTexts.tr(
@@ -585,7 +592,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             context.getSource().sendFeedback(VpTexts.tr(
                     "command.videoplayer.help.alias",
                     "/vlc remains a compatible alias for /videoplayer."
-            ).formatted(Formatting.GRAY));
+            ).withStyle(ChatFormatting.GRAY));
             return 1;
         }
         Optional<VideoPlayerCommandHelp.Entry> found = VideoPlayerCommandHelp.find(subcommand);
@@ -594,14 +601,14 @@ public class VideoPlayerClient implements ClientModInitializer {
                     "command.videoplayer.help.unknown",
                     "Unknown subcommand '%s'. Use /videoplayer help to list available commands.",
                     subcommand
-            ).formatted(Formatting.RED));
+            ).withStyle(ChatFormatting.RED));
             return 0;
         }
         VideoPlayerCommandHelp.Entry entry = found.get();
         String usage = entry.usage().isBlank()
                 ? "/videoplayer " + entry.name()
                 : "/videoplayer " + entry.name() + " " + entry.usage();
-        context.getSource().sendFeedback(Text.literal(usage).formatted(Formatting.AQUA));
+        context.getSource().sendFeedback(Component.literal(usage).withStyle(ChatFormatting.AQUA));
         context.getSource().sendFeedback(VpTexts.tr(
                 "command.videoplayer.help." + entry.name().toLowerCase(Locale.ROOT) + ".detail",
                 entry.details()
@@ -618,18 +625,18 @@ public class VideoPlayerClient implements ClientModInitializer {
                         .then(ClientCommandManager.argument("cookie", StringArgumentType.greedyString())
                                 .executes(s -> {
                                     BiliCookie.set(s.getArgument("cookie", String.class));
-                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.bilibili_cookie_saved", "Bilibili auth saved locally").formatted(Formatting.GREEN));
+                                    s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.bilibili_cookie_saved", "Bilibili auth saved locally").withStyle(ChatFormatting.GREEN));
                                     return 1;
                                 })))
                 .then(ClientCommandManager.literal("clear")
                         .executes(s -> {
                             BiliCookie.clear();
-                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.bilibili_cookie_cleared", "Bilibili auth cleared").formatted(Formatting.GREEN));
+                            s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.bilibili_cookie_cleared", "Bilibili auth cleared").withStyle(ChatFormatting.GREEN));
                             return 1;
                         }))
                 .then(ClientCommandManager.literal("status")
                         .executes(s -> {
-                            s.getSource().sendFeedback(VpTexts.text(BiliCookie.status()).formatted(Formatting.GREEN));
+                            s.getSource().sendFeedback(VpTexts.text(BiliCookie.status()).withStyle(ChatFormatting.GREEN));
                             return 1;
                         }));
     }
@@ -654,7 +661,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                             s.getSource().sendFeedback(VpTexts.tr(
                                     "message.videoplayer.youtube_auth_cleared",
                                     "YouTube authentication settings cleared"
-                            ).formatted(Formatting.GREEN));
+                            ).withStyle(ChatFormatting.GREEN));
                             return 1;
                         }))
                 .then(ClientCommandManager.literal("status")
@@ -668,7 +675,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                                     "YouTube authentication: cookie file=%s, browser profile=%s",
                                     file ? configured : notConfigured,
                                     browser ? configured : notConfigured
-                            ).formatted(Formatting.GREEN));
+                            ).withStyle(ChatFormatting.GREEN));
                             return 1;
                         }));
     }
@@ -692,10 +699,10 @@ public class VideoPlayerClient implements ClientModInitializer {
             s.getSource().sendFeedback(VpTexts.tr(
                     "message.videoplayer.backend_mpv_unavailable",
                     "MPV is unavailable. The setup guide will open; download the MPV runtime there. New videos use VLC until installation finishes."
-            ).formatted(Formatting.YELLOW));
+            ).withStyle(ChatFormatting.YELLOW));
             return 1;
         }
-        s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.backend_set", "Playback backend set to %s. Only newly started videos are affected.", config.videoBackend).formatted(Formatting.GREEN));
+        s.getSource().sendFeedback(VpTexts.tr("message.videoplayer.backend_set", "Playback backend set to %s. Only newly started videos are affected.", config.videoBackend).withStyle(ChatFormatting.GREEN));
         return 1;
     }
 
@@ -709,7 +716,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                         : "Audio channel mode: configured %s, active %s.",
                 audioChannelModeLabel(configured).getString(),
                 audioChannelModeLabel(activeAudioChannelMode).getString()
-        ).formatted(restartRequired ? Formatting.YELLOW : Formatting.GREEN));
+        ).withStyle(restartRequired ? ChatFormatting.YELLOW : ChatFormatting.GREEN));
         return 1;
     }
 
@@ -723,11 +730,11 @@ public class VideoPlayerClient implements ClientModInitializer {
                         ? "Audio channel mode saved as %s. Restart Minecraft to apply."
                         : "Audio channel mode saved as %s and is already active.",
                 audioChannelModeLabel(mode).getString()
-        ).formatted(restartRequired ? Formatting.YELLOW : Formatting.GREEN));
+        ).withStyle(restartRequired ? ChatFormatting.YELLOW : ChatFormatting.GREEN));
         return 1;
     }
 
-    private static Text audioChannelModeLabel(AudioChannelMode mode) {
+    private static Component audioChannelModeLabel(AudioChannelMode mode) {
         return VpTexts.tr(
                 "label.videoplayer.audio_channel_mode." + mode.configValue(),
                 mode == AudioChannelMode.AUTO ? "Auto" : "Stereo"
@@ -739,7 +746,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         String name = s.getArgument("area", String.class);
         ClientVideoArea area = areas.get(name);
         if (area == null) {
-            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.area_named_not_found", "No video area named %s", name).formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.area_named_not_found", "No video area named %s", name).withStyle(ChatFormatting.RED));
             return null;
         }
         return area;
@@ -752,7 +759,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         String name = s.getArgument("screen", String.class);
         ClientVideoScreen screen = area.getScreen(name);
         if (screen == null) {
-            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.screen_not_found", "Screen not found").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.screen_not_found", "Screen not found").withStyle(ChatFormatting.RED));
             return null;
         }
         return screen;
@@ -760,14 +767,14 @@ public class VideoPlayerClient implements ClientModInitializer {
 
     private boolean checkInvalid(CommandContext<FabricClientCommandSource> s, boolean checkScreen) {
         if (!connected && !config.alwaysConnected) {
-            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").withStyle(ChatFormatting.RED));
             return true;
         }
         if (checkScreen && currentScreen == null) {
             if (isInArea) {
-                s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.current_area_no_main_screen", "Current video area has no main screen").formatted(Formatting.RED));
+                s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.current_area_no_main_screen", "Current video area has no main screen").withStyle(ChatFormatting.RED));
             } else {
-                s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_inside_area", "You are not inside a video area").formatted(Formatting.RED));
+                s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_inside_area", "You are not inside a video area").withStyle(ChatFormatting.RED));
             }
             return true;
         }
@@ -776,25 +783,25 @@ public class VideoPlayerClient implements ClientModInitializer {
 
     private boolean checkInvalidLooking(CommandContext<FabricClientCommandSource> s) {
         if (!connected && !config.alwaysConnected) {
-            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").withStyle(ChatFormatting.RED));
             return true;
         }
         if (currentLooking == null) {
-            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_looking_at_screen", "You are not looking at a screen").formatted(Formatting.RED));
+            s.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_looking_at_screen", "You are not looking at a screen").withStyle(ChatFormatting.RED));
             return true;
         }
         return false;
     }
 
     private static void updateBossBar() {
-        ClientPlayNetworkHandler handler = client.getNetworkHandler();
+        ClientPacketListener handler = client.getConnection();
         if (handler == null) {
             bossBarAdded = false;
             return;
         }
         if (currentLooking != null) {
             if (!bossBarAdded) {
-                handler.onBossBar(BossBarS2CPacket.add(bossBar));
+                handler.handleBossUpdate(ClientboundBossEventPacket.createAddPacket(bossBar));
                 bossBarAdded = true;
             }
             ClientVideoScreen screen = currentLooking.getScreen();
@@ -807,26 +814,26 @@ public class VideoPlayerClient implements ClientModInitializer {
                 if (totalProgress > 0) {
                     boolean showHour = progress >= 3600000 || totalProgress >= 3600000;
                     time = formatDuration(progress, showHour) + "/" + formatDuration(totalProgress, showHour);
-                    bossBar.setPercent((float) progress / totalProgress);
+                    bossBar.setProgress((float) progress / totalProgress);
                 } else {
                     time = formatDuration(progress, progress >= 3600000) + "/LIVE";
-                    bossBar.setPercent(0);
+                    bossBar.setProgress(0);
                 }
-                bossBar.setName(Text.of(name + " " + time));
+                bossBar.setName(Component.nullToEmpty(name + " " + time));
             } else {
                 bossBar.setName(VpTexts.tr("label.videoplayer.none", "None"));
-                bossBar.setPercent(1);
+                bossBar.setProgress(1);
             }
-            handler.onBossBar(BossBarS2CPacket.updateName(bossBar));
-            handler.onBossBar(BossBarS2CPacket.updateProgress(bossBar));
+            handler.handleBossUpdate(ClientboundBossEventPacket.createUpdateNamePacket(bossBar));
+            handler.handleBossUpdate(ClientboundBossEventPacket.createUpdateProgressPacket(bossBar));
         } else if (bossBarAdded) {
-            handler.onBossBar(BossBarS2CPacket.remove(bossBar.getUuid()));
+            handler.handleBossUpdate(ClientboundBossEventPacket.createRemovePacket(bossBar.getId()));
             bossBarAdded = false;
         }
     }
 
     private static void checkInteract() {
-        MinecraftClient client = VideoPlayerClient.client;
+        Minecraft client = VideoPlayerClient.client;
         if (client == null) return;
 
         isInArea = false;
@@ -837,22 +844,22 @@ public class VideoPlayerClient implements ClientModInitializer {
             return;
         }
 
-        float delta = VideoPlayerClient.client.getRenderTickCounter().getTickProgress(true);
-        Vec3d eyePos = client.player.getCameraPosVec(delta);
-        Vec3d lookVec = client.player.getRotationVec(delta);
+        float delta = VideoPlayerClient.client.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+        Vec3 eyePos = client.player.getEyePosition(delta);
+        Vec3 lookVec = client.player.getViewVector(delta);
 
         Vector3d lineStart = new Vector3d(eyePos.x, eyePos.y, eyePos.z);
 
         remoteControl = false;
-        for (ItemStack item : List.of(client.player.getMainHandStack(), client.player.getOffHandStack())) {
-            if (!Registries.ITEM.getId(item.getItem()).toString().equals(remoteControlName)) continue;
-            CustomModelDataComponent data = item.getComponents().get(DataComponentTypes.CUSTOM_MODEL_DATA);
+        for (ItemStack item : List.of(client.player.getMainHandItem(), client.player.getOffhandItem())) {
+            if (!BuiltInRegistries.ITEM.getKey(item.getItem()).toString().equals(remoteControlName)) continue;
+            CustomModelData data = item.getComponents().get(DataComponents.CUSTOM_MODEL_DATA);
             if (data == null) continue;
             List<Float> id = data.floats();
             if (id.isEmpty() || !id.contains(remoteControlId)) continue;
             remoteControl = true;
         }
-        Vec3d end = eyePos.add(lookVec.multiply(remoteControl ? remoteControlRange : noControlRange));
+        Vec3 end = eyePos.add(lookVec.scale(remoteControl ? remoteControlRange : noControlRange));
         Vector3d lineEnd = new Vector3d(end.x, end.y, end.z);
 
         ArrayList<Intersection.Result> list = new ArrayList<>();
@@ -893,7 +900,7 @@ public class VideoPlayerClient implements ClientModInitializer {
     public static void update() {
         ClientPacketHandler.tickPendingRequests();
         if (updated) return;
-        Profiler profiler = Profilers.get();
+        ProfilerFiller profiler = Profiler.get();
         profiler.push("video");
         profiler.push("updateFrame");
         for (ClientVideoScreen screen : screens) {
@@ -901,19 +908,19 @@ public class VideoPlayerClient implements ClientModInitializer {
             screen.swapTexture();
             screen.update();
         }
-        profiler.swap("checkInteract");
+        profiler.popPush("checkInteract");
         checkInteract();
-        profiler.swap("updateBossBar");
+        profiler.popPush("updateBossBar");
         updateBossBar();
         profiler.pop();
         profiler.pop();
     }
 
     private static void cleanupClientState() {
-        if (client.currentScreen instanceof ServerStateScreen) {
+        if (client.screen instanceof ServerStateScreen) {
             client.setScreen(null);
             if (client.player != null) {
-                client.player.sendMessage(VpTexts.tr("error.videoplayer.server_state_reset", "VideoPlayer server state was reset").formatted(Formatting.RED), false);
+                client.player.displayClientMessage(VpTexts.tr("error.videoplayer.server_state_reset", "VideoPlayer server state was reset").withStyle(ChatFormatting.RED), false);
             }
         }
         connected = false;
@@ -927,6 +934,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             screen.cleanup();
         }
         screens.clear();
+        ScreenRenderer.clearExternalTextures();
         ClientPacketHandler.resetPendingRequests();
         ScreenVolumeCache.clear();
         ClientDanmakuRenderer.clearCache();
@@ -937,7 +945,7 @@ public class VideoPlayerClient implements ClientModInitializer {
         currentScreen = null;
         remoteControl = false;
         touchHandler.handle(null);
-        if (client.getNetworkHandler() != null) {
+        if (client.getConnection() != null) {
             updateBossBar();
         } else {
             bossBarAdded = false;
@@ -945,9 +953,23 @@ public class VideoPlayerClient implements ClientModInitializer {
         VideoCreationEditor.instance().clear();
     }
 
+    private static void registerExternalTextureReload() {
+        ResourceManagerHelper.get(PackType.CLIENT_RESOURCES).registerReloadListener(new SimpleSynchronousResourceReloadListener() {
+            @Override
+            public Identifier getFabricId() {
+                return Identifier.fromNamespaceAndPath("videoplayer", "external_textures");
+            }
+
+            @Override
+            public void onResourceManagerReload(ResourceManager resourceManager) {
+                ScreenRenderer.clearExternalTextures();
+            }
+        });
+    }
+
     private static int openDiagnostics(CommandContext<FabricClientCommandSource> context) {
         if (!connected && !config.alwaysConnected) {
-            context.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").formatted(Formatting.RED));
+            context.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").withStyle(ChatFormatting.RED));
             return 0;
         }
         ClientVideoScreen selected = currentLooking != null ? currentLooking : currentScreen;
@@ -958,7 +980,7 @@ public class VideoPlayerClient implements ClientModInitializer {
             return 1;
         }
         ClientPacketHandler.openMenu(target, result -> {
-            if (!ClientPacketHandler.failed(result) && client.currentScreen == null) {
+            if (!ClientPacketHandler.failed(result) && client.screen == null) {
                 client.setScreen(VideoManagementScreen.diagnostics(VideoCreationEditor.instance(), target));
             }
         });
@@ -1002,15 +1024,15 @@ public class VideoPlayerClient implements ClientModInitializer {
         if (connectionDiagnostics.snapshot().trigger() == VideoConnectionDiagnostics.Trigger.MANUAL_RETRY
                 || protocolMismatchShown || client.player == null) return;
         protocolMismatchShown = true;
-        client.player.sendMessage(VpTexts.tr(
+        client.player.displayClientMessage(VpTexts.tr(
                 "message.videoplayer.version_mismatch",
                 "VideoPlayer client version %s is not compatible with server %s",
                 VideoPlayerMain.version, remoteVersion == null || remoteVersion.isBlank() ? "unknown" : remoteVersion
-        ).formatted(Formatting.RED), false);
+        ).withStyle(ChatFormatting.RED), false);
     }
 
-    private static void tickHandshake(MinecraftClient client) {
-        if (client.getNetworkHandler() == null || client.player == null) {
+    private static void tickHandshake(Minecraft client) {
+        if (client.getConnection() == null || client.player == null) {
             joinHandshakePending = false;
             connectionDiagnostics.disconnected();
             return;
@@ -1034,7 +1056,7 @@ public class VideoPlayerClient implements ClientModInitializer {
     }
 
     public static void reconnectServer() {
-        if (client.getNetworkHandler() == null || client.player == null) {
+        if (client.getConnection() == null || client.player == null) {
             LOGGER.warn("VideoPlayer connection: trigger=manual_retry address={} state=failed reason=no_active_minecraft_connection",
                     logField(currentServerAddress()));
             return;
@@ -1054,9 +1076,9 @@ public class VideoPlayerClient implements ClientModInitializer {
     }
 
     private static String currentServerAddress() {
-        var server = client.getCurrentServerEntry();
-        if (server == null || server.address == null || server.address.isBlank()) return "local";
-        return server.address;
+        var server = client.getCurrentServer();
+        if (server == null || server.ip == null || server.ip.isBlank()) return "local";
+        return server.ip;
     }
 
     private static void logConnectionEvent(VideoConnectionDiagnostics.Event event) {
@@ -1095,33 +1117,33 @@ public class VideoPlayerClient implements ClientModInitializer {
     private static void notifyManualReconnect(VideoConnectionDiagnostics.Event event) {
         VideoConnectionDiagnostics.Snapshot snapshot = event.snapshot();
         if (snapshot.trigger() != VideoConnectionDiagnostics.Trigger.MANUAL_RETRY || client.player == null) return;
-        Text message;
-        Formatting formatting;
+        Component message;
+        ChatFormatting formatting;
         switch (event.type()) {
             case ATTEMPT_STARTED -> {
                 message = VpTexts.tr("message.videoplayer.reconnect_started", "Reconnecting to the VideoPlayer server...");
-                formatting = Formatting.YELLOW;
+                formatting = ChatFormatting.YELLOW;
             }
             case CHANNEL_UNAVAILABLE -> {
                 message = VpTexts.tr("message.videoplayer.reconnect_channel_unavailable",
                         "VideoPlayer server reconnect failed: the server did not register the communication channel");
-                formatting = Formatting.RED;
+                formatting = ChatFormatting.RED;
             }
             case TIMED_OUT -> {
                 message = VpTexts.tr("message.videoplayer.reconnect_timed_out",
                         "VideoPlayer server reconnect failed: no handshake response within 10 seconds");
-                formatting = Formatting.RED;
+                formatting = ChatFormatting.RED;
             }
             case CONNECTED -> {
                 message = VpTexts.tr("message.videoplayer.reconnect_success",
                         "VideoPlayer server reconnected. Server version: %s", reconnectVersion(snapshot.remoteVersion()));
-                formatting = Formatting.GREEN;
+                formatting = ChatFormatting.GREEN;
             }
             case VERSION_MISMATCH, RETRY_BLOCKED -> {
                 message = VpTexts.tr("message.videoplayer.reconnect_version_mismatch",
                         "VideoPlayer server reconnect failed: local version %s is incompatible with server version %s",
                         reconnectVersion(snapshot.localVersion()), reconnectVersion(snapshot.remoteVersion()));
-                formatting = Formatting.RED;
+                formatting = ChatFormatting.RED;
             }
             case CHANNEL_AVAILABLE, DISCONNECTED -> {
                 return;
@@ -1130,7 +1152,7 @@ public class VideoPlayerClient implements ClientModInitializer {
                 return;
             }
         }
-        client.player.sendMessage(message.copy().formatted(formatting), false);
+        client.player.displayClientMessage(message.copy().withStyle(formatting), false);
     }
 
     private static String reconnectVersion(String version) {
@@ -1151,7 +1173,7 @@ public class VideoPlayerClient implements ClientModInitializer {
     public static void postUpdate() {
         if (updated) return;
         updated = true;
-        Profiler profiler = Profilers.get();
+        ProfilerFiller profiler = Profiler.get();
         profiler.push("video");
         profiler.push("updateFrame");
         for (ClientVideoScreen screen : screens) {
@@ -1356,9 +1378,9 @@ public class VideoPlayerClient implements ClientModInitializer {
     private static void registerStartupGuide() {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (startupGuideOpened || config == null || Boolean.TRUE.equals(config.startupGuideShown)) return;
-            if (client.world != null || client.currentScreen == null || client.currentScreen instanceof StartupGuideScreen) return;
+            if (client.level != null || client.screen == null || client.screen instanceof StartupGuideScreen) return;
             startupGuideOpened = true;
-            client.setScreen(new StartupGuideScreen(client.currentScreen));
+            client.setScreen(new StartupGuideScreen(client.screen));
         });
     }
 
@@ -1366,8 +1388,8 @@ public class VideoPlayerClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (!pendingStartupGuideScreen) return;
             pendingStartupGuideScreen = false;
-            if (client.currentScreen instanceof StartupGuideScreen) return;
-            client.setScreen(new StartupGuideScreen(client.currentScreen));
+            if (client.screen instanceof StartupGuideScreen) return;
+            client.setScreen(new StartupGuideScreen(client.screen));
         });
     }
 
@@ -1375,8 +1397,8 @@ public class VideoPlayerClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (!pendingBiliLoginScreen) return;
             pendingBiliLoginScreen = false;
-            if (client.currentScreen instanceof BiliLoginScreen) return;
-            client.setScreen(new BiliLoginScreen(client.currentScreen));
+            if (client.screen instanceof BiliLoginScreen) return;
+            client.setScreen(new BiliLoginScreen(client.screen));
         });
     }
 
@@ -1389,8 +1411,8 @@ public class VideoPlayerClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (!pendingYouTubeAuthScreen) return;
             pendingYouTubeAuthScreen = false;
-            if (client.currentScreen instanceof YouTubeAuthScreen) return;
-            client.setScreen(new YouTubeAuthScreen(client.currentScreen));
+            if (client.screen instanceof YouTubeAuthScreen) return;
+            client.setScreen(new YouTubeAuthScreen(client.screen));
         });
     }
 

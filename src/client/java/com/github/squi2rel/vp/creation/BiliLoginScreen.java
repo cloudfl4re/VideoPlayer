@@ -9,15 +9,7 @@ import com.google.zxing.WriterException;
 import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.client.texture.TextureManager;
-import net.minecraft.text.Text;
-import net.minecraft.util.Identifier;
-
+import com.mojang.blaze3d.platform.NativeImage;
 import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
 import java.util.Map;
@@ -25,6 +17,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.renderer.texture.TextureManager;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 
 public class BiliLoginScreen extends Screen {
     private static final VpUiTheme THEME = VpUiTheme.classic();
@@ -47,7 +46,7 @@ public class BiliLoginScreen extends Screen {
     private boolean closing;
 
     private Identifier qrIdentifier;
-    private NativeImageBackedTexture qrTexture;
+    private DynamicTexture qrTexture;
 
     public BiliLoginScreen(Screen parent) {
         super(VpTexts.tr("screen.videoplayer.bili_login", "Bilibili Login"));
@@ -67,9 +66,9 @@ public class BiliLoginScreen extends Screen {
         refreshButton = new VpButtonWidget(rightButtonX - gap - buttonW, buttonY, buttonW, 22,
                 VpTexts.tr("button.videoplayer.refresh", "Refresh"), ignored -> startGenerate(), THEME);
         closeButton = new VpButtonWidget(rightButtonX, buttonY, buttonW, 22,
-                VpTexts.tr("button.videoplayer.close", "Close"), ignored -> close(), THEME);
-        addDrawableChild(refreshButton);
-        addDrawableChild(closeButton);
+                VpTexts.tr("button.videoplayer.close", "Close"), ignored -> onClose(), THEME);
+        addRenderableWidget(refreshButton);
+        addRenderableWidget(closeButton);
         syncButtons();
 
         if (qrCode == null && activeRequest == null) {
@@ -91,9 +90,9 @@ public class BiliLoginScreen extends Screen {
     }
 
     @Override
-    public void close() {
-        if (client != null) {
-            client.setScreen(parent);
+    public void onClose() {
+        if (minecraft != null) {
+            minecraft.setScreen(parent);
         }
     }
 
@@ -108,12 +107,12 @@ public class BiliLoginScreen extends Screen {
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, 0xB0000000);
 
         int panelW = panelWidth();
@@ -124,20 +123,20 @@ public class BiliLoginScreen extends Screen {
         int bottom = top + panelH;
 
         context.fill(left, top, right, bottom, THEME.panelBackgroundColor());
-        context.drawStrokedRectangle(left, top, panelW, panelH, THEME.panelBorderColor());
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, top + 14, THEME.primaryTextColor());
+        context.renderOutline(left, top, panelW, panelH, THEME.panelBorderColor());
+        context.drawCenteredString(font, title, width / 2, top + 14, THEME.primaryTextColor());
 
         int qrSize = qrDisplaySize(panelW, panelH);
         int qrX = left + (panelW - qrSize) / 2;
         int qrY = top + 42;
         VpUiRenderer.drawBox(context, qrX - 4, qrY - 4, qrSize + 8, qrSize + 8, 0xFFFFFFFF, THEME.panelBorderColor());
         if (qrIdentifier != null) {
-            context.drawTexturedQuad(qrIdentifier, qrX, qrY, qrX + qrSize, qrY + qrSize, 0, 1, 0, 1);
+            context.blit(qrIdentifier, qrX, qrY, qrX + qrSize, qrY + qrSize, 0, 1, 0, 1);
         }
 
-        Text statusText = VpTexts.text(status);
+        Component statusText = VpTexts.text(status);
         int statusY = Math.min(bottom - 62, qrY + qrSize + 16);
-        context.drawCenteredTextWithShadow(textRenderer, statusText, width / 2, statusY, statusColor());
+        context.drawCenteredString(font, statusText, width / 2, statusY, statusColor());
 
         super.render(context, mouseX, mouseY, delta);
     }
@@ -202,12 +201,12 @@ public class BiliLoginScreen extends Screen {
 
     private void createQrTexture(String url) throws WriterException {
         NativeImage image = createQrImage(url);
-        Identifier identifier = Identifier.of("videoplayer", "bili_login/qr/" + TEXTURE_COUNTER.incrementAndGet());
-        NativeImageBackedTexture texture = null;
+        Identifier identifier = Identifier.fromNamespaceAndPath("videoplayer", "bili_login/qr/" + TEXTURE_COUNTER.incrementAndGet());
+        DynamicTexture texture = null;
         boolean registered = false;
         try {
-            texture = new NativeImageBackedTexture(() -> "VideoPlayer Bilibili QR", image);
-            MinecraftClient.getInstance().getTextureManager().registerTexture(identifier, texture);
+            texture = new DynamicTexture(() -> "VideoPlayer Bilibili QR", image);
+            Minecraft.getInstance().getTextureManager().register(identifier, texture);
             registered = true;
             qrIdentifier = identifier;
             qrTexture = texture;
@@ -228,7 +227,7 @@ public class BiliLoginScreen extends Screen {
         NativeImage image = new NativeImage(QR_PIXELS, QR_PIXELS, false);
         for (int y = 0; y < QR_PIXELS; y++) {
             for (int x = 0; x < QR_PIXELS; x++) {
-                image.setColorArgb(x, y, matrix.get(x, y) ? 0xFF000000 : 0xFFFFFFFF);
+                image.setPixel(x, y, matrix.get(x, y) ? 0xFF000000 : 0xFFFFFFFF);
             }
         }
         return image;
@@ -236,13 +235,13 @@ public class BiliLoginScreen extends Screen {
 
     private void destroyQrTexture() {
         Identifier identifier = qrIdentifier;
-        NativeImageBackedTexture texture = qrTexture;
+        DynamicTexture texture = qrTexture;
         qrIdentifier = null;
         qrTexture = null;
         if (identifier != null) {
-            TextureManager textureManager = MinecraftClient.getInstance().getTextureManager();
+            TextureManager textureManager = Minecraft.getInstance().getTextureManager();
             try {
-                textureManager.destroyTexture(identifier);
+                textureManager.release(identifier);
                 return;
             } catch (RuntimeException ignored) {
                 // Fall through to close the texture directly.
@@ -281,7 +280,7 @@ public class BiliLoginScreen extends Screen {
     }
 
     private void runOnClient(Runnable task) {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
         if (client == null) return;
         client.execute(task);
     }

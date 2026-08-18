@@ -1,16 +1,16 @@
 package com.github.squi2rel.vp.video;
 
 import com.github.squi2rel.vp.ScreenRenderer;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.math.MatrixStack;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import org.joml.Matrix4f;
 import org.joml.Vector2f;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.rendertype.RenderType;
 
 import static com.github.squi2rel.vp.VideoPlayerClient.config;
 
@@ -22,7 +22,7 @@ final class VideoPlayerRenderer {
     private VideoPlayerRenderer() {
     }
 
-    static void draw(IVideoPlayer player, MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen target) {
+    static void draw(IVideoPlayer player, PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen target) {
         ClientVideoScreen source = player.screen();
         if (source == null || source.player == null) return;
         if (player.getTextureId() < 0) return;
@@ -35,10 +35,10 @@ final class VideoPlayerRenderer {
         }
 
         Vector3f relativeOrigin = geometry.relativeOrigin(ScreenRenderer.preciseCameraX, ScreenRenderer.preciseCameraY, ScreenRenderer.preciseCameraZ);
-        matrices.push();
+        matrices.pushPose();
         matrices.translate(relativeOrigin.x, relativeOrigin.y, relativeOrigin.z);
-        Matrix4f mat = matrices.peek().getPositionMatrix();
-        matrices.pop();
+        Matrix4f mat = matrices.last().pose();
+        matrices.popPose();
 
         boolean fx = player.flippedX();
         boolean fy = player.flippedY();
@@ -62,7 +62,7 @@ final class VideoPlayerRenderer {
             drawBackingTriangle(mat, backingConsumer, target, geometry, vertices, triangles, i, bounds, mappedUvs, normal);
         }
 
-        RenderLayer layer = ScreenRenderer.getLayer(player.getTextureId());
+        RenderType layer = ScreenRenderer.getLayer(player.getTextureId());
         VertexConsumer consumer = consumers.getBuffer(layer);
         for (int i = 0; i < triangles.length; i += 3) {
             drawTriangle(player, mat, consumer, target, geometry, vertices, triangles, i, bounds, fx, fy, mappedUvs, normal);
@@ -70,7 +70,7 @@ final class VideoPlayerRenderer {
     }
 
     static void drawTexture(int textureId, int textureWidth, int textureHeight,
-                            MatrixStack matrices, VertexConsumerProvider consumers, ClientVideoScreen target) {
+                            PoseStack matrices, MultiBufferSource consumers, ClientVideoScreen target) {
         if (textureId < 0) return;
 
         ScreenGeometry geometry;
@@ -81,10 +81,10 @@ final class VideoPlayerRenderer {
         }
 
         Vector3f relativeOrigin = geometry.relativeOrigin(ScreenRenderer.preciseCameraX, ScreenRenderer.preciseCameraY, ScreenRenderer.preciseCameraZ);
-        matrices.push();
+        matrices.pushPose();
         matrices.translate(relativeOrigin.x, relativeOrigin.y, relativeOrigin.z);
-        Matrix4f mat = matrices.peek().getPositionMatrix();
-        matrices.pop();
+        Matrix4f mat = matrices.last().pose();
+        matrices.popPose();
 
         float[] bounds = geometry.contentBounds(
                 target.u1,
@@ -106,7 +106,7 @@ final class VideoPlayerRenderer {
             drawBackingTriangle(mat, backingConsumer, target, geometry, vertices, triangles, i, bounds, mappedUvs, normal);
         }
 
-        RenderLayer layer = ScreenRenderer.getLayer(textureId);
+        RenderType layer = ScreenRenderer.getLayer(textureId);
         VertexConsumer consumer = consumers.getBuffer(layer);
         for (int i = 0; i < triangles.length; i += 3) {
             drawTextureTriangle(mat, consumer, target, geometry, vertices, triangles, i, bounds, mappedUvs, normal);

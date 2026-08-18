@@ -2,13 +2,12 @@ package com.github.squi2rel.vp.creation;
 
 import com.github.squi2rel.vp.VideoPlayerClient;
 import com.github.squi2rel.vp.i18n.VpTexts;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.text.OrderedText;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
-
 import java.util.List;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
+import net.minecraft.util.FormattedCharSequence;
 
 public final class YouTubeAuthScreen extends Screen {
     private static final VpUiTheme THEME = VpUiTheme.classic();
@@ -25,7 +24,7 @@ public final class YouTubeAuthScreen extends Screen {
     private VpButtonWidget save;
     private VpButtonWidget clear;
     private VpButtonWidget close;
-    private Text status = Text.empty();
+    private Component status = Component.empty();
 
     public YouTubeAuthScreen(Screen parent) {
         super(VpTexts.tr("screen.videoplayer.youtube_auth", "YouTube Authentication"));
@@ -36,44 +35,44 @@ public final class YouTubeAuthScreen extends Screen {
     protected void init() {
         Layout layout = layout();
         int fieldWidth = layout.panelWidth - 48;
-        cookiesFile = new VpTextFieldWidget(textRenderer, layout.left + 24, layout.top + 42, fieldWidth, CONTROL_HEIGHT,
+        cookiesFile = new VpTextFieldWidget(font, layout.left + 24, layout.top + 42, fieldWidth, CONTROL_HEIGHT,
                 VpTexts.tr("label.videoplayer.youtube_cookies_file", "Netscape cookie file"), THEME);
         cookiesFile.setMaxLength(4096);
-        cookiesFile.setText(currentCookiesFile());
-        browserSpec = new VpTextFieldWidget(textRenderer, layout.left + 24, layout.top + 80, fieldWidth, CONTROL_HEIGHT,
+        cookiesFile.setValue(currentCookiesFile());
+        browserSpec = new VpTextFieldWidget(font, layout.left + 24, layout.top + 80, fieldWidth, CONTROL_HEIGHT,
                 VpTexts.tr("label.videoplayer.youtube_browser", "Browser profile (yt-dlp)"), THEME);
         browserSpec.setMaxLength(256);
-        browserSpec.setText(currentBrowserSpec());
+        browserSpec.setValue(currentBrowserSpec());
         save = new VpButtonWidget(layout.left + 24, layout.buttonY(), 96, CONTROL_HEIGHT,
                 VpTexts.tr("button.videoplayer.save", "Save"), ignored -> saveValues(), THEME);
         clear = new VpButtonWidget(layout.left + 128, layout.buttonY(), 96, CONTROL_HEIGHT,
                 VpTexts.tr("button.videoplayer.clear", "Clear"), ignored -> clearValues(), THEME);
         close = new VpButtonWidget(layout.left + layout.panelWidth - 120, layout.buttonY(), 96, CONTROL_HEIGHT,
-                VpTexts.tr("button.videoplayer.close", "Close"), ignored -> close(), THEME);
-        addDrawableChild(cookiesFile);
-        addDrawableChild(browserSpec);
-        addDrawableChild(save);
-        addDrawableChild(clear);
-        addDrawableChild(close);
+                VpTexts.tr("button.videoplayer.close", "Close"), ignored -> onClose(), THEME);
+        addRenderableWidget(cookiesFile);
+        addRenderableWidget(browserSpec);
+        addRenderableWidget(save);
+        addRenderableWidget(clear);
+        addRenderableWidget(close);
     }
 
     @Override
-    public void close() {
-        if (client != null) client.setScreen(parent);
+    public void onClose() {
+        if (minecraft != null) minecraft.setScreen(parent);
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         context.fill(0, 0, width, height, 0xB0000000);
         Layout layout = layout();
         context.fill(layout.left, layout.top, layout.left + layout.panelWidth, layout.top + layout.panelHeight, THEME.panelBackgroundColor());
-        context.drawStrokedRectangle(layout.left, layout.top, layout.panelWidth, layout.panelHeight, THEME.panelBorderColor());
-        context.drawCenteredTextWithShadow(textRenderer, title, width / 2, layout.top + 8, THEME.primaryTextColor());
+        context.renderOutline(layout.left, layout.top, layout.panelWidth, layout.panelHeight, THEME.panelBorderColor());
+        context.drawCenteredString(font, title, width / 2, layout.top + 8, THEME.primaryTextColor());
         drawTrimmedLabel(context, VpTexts.tr("label.videoplayer.youtube_cookies_file", "Netscape cookie file"), layout.left + 24, layout.top + 30, layout.contentWidth);
         drawTrimmedLabel(context, VpTexts.tr("label.videoplayer.youtube_browser", "Browser profile (yt-dlp)"), layout.left + 24, layout.top + 68, layout.contentWidth);
         int hintY = layout.top + HINT_TOP;
@@ -87,18 +86,18 @@ public final class YouTubeAuthScreen extends Screen {
 
     private void saveValues() {
         if (VideoPlayerClient.config == null) return;
-        VideoPlayerClient.config.youtubeCookiesFile = cookiesFile.getText().trim();
-        VideoPlayerClient.config.youtubeCookiesFromBrowser = browserSpec.getText().trim();
+        VideoPlayerClient.config.youtubeCookiesFile = cookiesFile.getValue().trim();
+        VideoPlayerClient.config.youtubeCookiesFromBrowser = browserSpec.getValue().trim();
         VideoPlayerClient.saveConfig();
         VideoPlayerClient.applyNativePlatformConfig();
-        status = VpTexts.tr("message.videoplayer.youtube_auth_saved", "YouTube authentication settings saved").formatted(Formatting.GREEN);
+        status = VpTexts.tr("message.videoplayer.youtube_auth_saved", "YouTube authentication settings saved").withStyle(ChatFormatting.GREEN);
     }
 
     private void clearValues() {
-        cookiesFile.setText("");
-        browserSpec.setText("");
+        cookiesFile.setValue("");
+        browserSpec.setValue("");
         saveValues();
-        status = VpTexts.tr("message.videoplayer.youtube_auth_cleared", "YouTube authentication settings cleared").formatted(Formatting.GREEN);
+        status = VpTexts.tr("message.videoplayer.youtube_auth_cleared", "YouTube authentication settings cleared").withStyle(ChatFormatting.GREEN);
     }
 
     private String currentCookiesFile() {
@@ -114,11 +113,11 @@ public final class YouTubeAuthScreen extends Screen {
     private Layout layout() {
         int panelWidth = Math.min(PANEL_WIDTH, Math.max(260, width - 24));
         int contentWidth = panelWidth - 48;
-        List<OrderedText> fileHintLines = textRenderer.wrapLines(VpTexts.tr(
+        List<FormattedCharSequence> fileHintLines = font.split(VpTexts.tr(
                 "hint.videoplayer.youtube_auth_file",
                 "Export a Netscape cookies.txt file from a signed-in browser. A cookie file takes priority; otherwise use a yt-dlp browser profile. Do not enter your password."
         ), contentWidth);
-        List<OrderedText> serverHintLines = textRenderer.wrapLines(VpTexts.tr(
+        List<FormattedCharSequence> serverHintLines = font.split(VpTexts.tr(
                 "hint.videoplayer.youtube_auth_server",
                 "This setting applies only to this client. Configure server cookies separately for server-side streams and live playback."
         ), contentWidth);
@@ -141,26 +140,26 @@ public final class YouTubeAuthScreen extends Screen {
                 fileHintLines.subList(0, fileLines), serverHintLines.subList(0, serverLines));
     }
 
-    private int drawWrappedLabel(DrawContext context, List<OrderedText> lines, int x, int y) {
+    private int drawWrappedLabel(GuiGraphics context, List<FormattedCharSequence> lines, int x, int y) {
         int currentY = y;
-        for (OrderedText line : lines) {
-            context.drawTextWithShadow(textRenderer, line, x, currentY, THEME.secondaryTextColor());
+        for (FormattedCharSequence line : lines) {
+            context.drawString(font, line, x, currentY, THEME.secondaryTextColor());
             currentY += HINT_LINE_HEIGHT;
         }
         return currentY;
     }
 
-    private void drawTrimmedLabel(DrawContext context, Text text, int x, int y, int maxWidth) {
-        Text visible = Text.literal(textRenderer.trimToWidth(text, Math.max(1, maxWidth)).getString());
+    private void drawTrimmedLabel(GuiGraphics context, Component text, int x, int y, int maxWidth) {
+        Component visible = Component.literal(font.substrByWidth(text, Math.max(1, maxWidth)).getString());
         drawLabel(context, visible, x, y);
     }
 
-    private void drawLabel(DrawContext context, Text text, int x, int y) {
-        context.drawTextWithShadow(textRenderer, text, x, y, THEME.secondaryTextColor());
+    private void drawLabel(GuiGraphics context, Component text, int x, int y) {
+        context.drawString(font, text, x, y, THEME.secondaryTextColor());
     }
 
     private record Layout(int panelWidth, int panelHeight, int contentWidth, int left, int top,
-                          List<OrderedText> fileHintLines, List<OrderedText> serverHintLines) {
+                          List<FormattedCharSequence> fileHintLines, List<FormattedCharSequence> serverHintLines) {
         private int buttonY() {
             return top + panelHeight - 26;
         }

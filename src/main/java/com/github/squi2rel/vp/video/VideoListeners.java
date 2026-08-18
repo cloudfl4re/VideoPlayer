@@ -4,7 +4,27 @@ import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.bilibili.BiliBiliVideoProvider;
 import com.github.squi2rel.vp.provider.YouTubeProvider;
 
+import java.util.function.Function;
+
 public class VideoListeners {
+    public static IVideoListener from(VideoScreen screen, VideoInfo info) {
+        return from(screen, info, StreamListener::telemetryProbe);
+    }
+
+    static IVideoListener from(VideoScreen screen, VideoInfo info,
+                               Function<VideoInfo, IVideoListener> telemetryFactory) {
+        IVideoListener playback = from(info);
+        if (playback == null || telemetryFactory == null || !supportsNativeTelemetry(screen, info)) return playback;
+        IVideoListener telemetry = null;
+        if (PlaybackTelemetryRegistry.requested(ScreenKey.of(screen))) {
+            try {
+                telemetry = telemetryFactory.apply(info);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return new TelemetryVideoListener(playback, telemetry);
+    }
+
     public static IVideoListener from(VideoInfo info) {
         if (PlayerListener.accept(info)) {
             return new PlayerListener();
@@ -22,6 +42,18 @@ public class VideoListeners {
             return new StreamListener(info);
         }
         return null;
+    }
+
+    static boolean requiresNativeTelemetry(VideoScreen screen, VideoInfo info) {
+        return supportsNativeTelemetry(screen, info)
+                && PlaybackTelemetryRegistry.requested(ScreenKey.of(screen));
+    }
+
+    private static boolean supportsNativeTelemetry(VideoScreen screen, VideoInfo info) {
+        return screen != null
+                && info != null
+                && StreamListener.accept(info)
+                && !PlayerListener.accept(info);
     }
 
     public static boolean requiresNativeStreamListener(VideoInfo info) {

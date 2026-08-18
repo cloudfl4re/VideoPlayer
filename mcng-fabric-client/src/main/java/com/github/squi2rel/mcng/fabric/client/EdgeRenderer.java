@@ -1,9 +1,8 @@
 package com.github.squi2rel.mcng.fabric.client;
 
-import net.minecraft.client.gui.DrawContext;
-
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.gui.GuiGraphics;
 
 public final class EdgeRenderer {
 	private static final int MIN_CONTROL_OFFSET = 28;
@@ -16,7 +15,7 @@ public final class EdgeRenderer {
 	}
 
 	public static void drawEdge(
-		DrawContext context,
+		GuiGraphics context,
 		int startX,
 		int startY,
 		int endX,
@@ -34,12 +33,12 @@ public final class EdgeRenderer {
 		}
 	}
 
-	private static void drawStraight(DrawContext context, int startX, int startY, int endX, int endY, int startColor, int endColor) {
+	private static void drawStraight(GuiGraphics context, int startX, int startY, int endX, int endY, int startColor, int endColor) {
 		drawGradientSegment(context, startX, startY, endX, endY, startColor, endColor, 0.0, 1.0);
 	}
 
 	private static void drawOrthogonal(
-		DrawContext context,
+		GuiGraphics context,
 		int startX,
 		int startY,
 		int endX,
@@ -74,7 +73,7 @@ public final class EdgeRenderer {
 	}
 
 	private static void drawCurve(
-		DrawContext context,
+		GuiGraphics context,
 		int startX,
 		int startY,
 		int endX,
@@ -113,7 +112,7 @@ public final class EdgeRenderer {
 		);
 	}
 
-	private static void drawGradientPolyline(DrawContext context, List<Point> points, int startColor, int endColor) {
+	private static void drawGradientPolyline(GuiGraphics context, List<Point> points, int startColor, int endColor) {
 		double totalLength = 0.0;
 		for (int index = 1; index < points.size(); index++) {
 			totalLength += distance(points.get(index - 1), points.get(index));
@@ -134,7 +133,7 @@ public final class EdgeRenderer {
 		}
 	}
 
-	private static void drawGradientOrthogonalPolyline(DrawContext context, List<Point> points, int startColor, int endColor) {
+	private static void drawGradientOrthogonalPolyline(GuiGraphics context, List<Point> points, int startColor, int endColor) {
 		double totalLength = 0.0;
 		for (int index = 1; index < points.size(); index++) {
 			totalLength += distance(points.get(index - 1), points.get(index));
@@ -159,7 +158,7 @@ public final class EdgeRenderer {
 	}
 
 	private static void drawGradientSegment(
-		DrawContext context,
+		GuiGraphics context,
 		double startX,
 		double startY,
 		double endX,
@@ -181,7 +180,7 @@ public final class EdgeRenderer {
 	}
 
 	private static void drawGradientOrthogonalSegment(
-		DrawContext context,
+		GuiGraphics context,
 		Point from,
 		Point to,
 		int startColor,

@@ -1,6 +1,6 @@
 package com.github.squi2rel.mcng.fabric.client;
 
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.GuiGraphics;
 
 final class EditorStyleRenderer {
 	private static final int DEFAULT_RADIUS = 6;
@@ -8,11 +8,11 @@ final class EditorStyleRenderer {
 	private EditorStyleRenderer() {
 	}
 
-	static void drawBorder(DrawContext context, int x, int y, int width, int height, int color) {
-		context.drawStrokedRectangle(x, y, width, height, color);
+	static void drawBorder(GuiGraphics context, int x, int y, int width, int height, int color) {
+		context.renderOutline(x, y, width, height, color);
 	}
 
-	static void drawBox(DrawContext context, int x, int y, int width, int height, int fillColor, int borderColor, GraphEditorUiConfig config) {
+	static void drawBox(GuiGraphics context, int x, int y, int width, int height, int fillColor, int borderColor, GraphEditorUiConfig config) {
 		if (config.nodeCornerStyle() == NodeCornerStyle.ROUNDED) {
 			fillRoundedRect(context, x, y, width, height, fillColor, DEFAULT_RADIUS);
 			drawRoundedOutline(context, x, y, width, height, borderColor, DEFAULT_RADIUS);
@@ -22,7 +22,7 @@ final class EditorStyleRenderer {
 		drawBorder(context, x, y, width, height, borderColor);
 	}
 
-	static void drawNodeBox(DrawContext context, NodeWidget widget, int bodyColor, int headerColor, int borderColor, GraphEditorUiConfig config) {
+	static void drawNodeBox(GuiGraphics context, NodeWidget widget, int bodyColor, int headerColor, int borderColor, GraphEditorUiConfig config) {
 		drawBox(context, widget.x(), widget.y(), widget.width(), widget.height(), bodyColor, borderColor, config);
 		if (!widget.hasHeader()) {
 			return;
@@ -40,7 +40,7 @@ final class EditorStyleRenderer {
 		);
 	}
 
-	static void drawPort(DrawContext context, int centerX, int centerY, int radius, int color, PortShape portShape) {
+	static void drawPort(GuiGraphics context, int centerX, int centerY, int radius, int color, PortShape portShape) {
 		if (portShape == PortShape.SQUARE) {
 			context.fill(centerX - radius, centerY - radius, centerX + radius + 1, centerY + radius + 1, color);
 			return;
@@ -64,7 +64,7 @@ final class EditorStyleRenderer {
 		return blend(color, 0xFF000000, amount);
 	}
 
-	private static void fillCircle(DrawContext context, int centerX, int centerY, int radius, int color) {
+	private static void fillCircle(GuiGraphics context, int centerX, int centerY, int radius, int color) {
 		for (int dy = -radius; dy <= radius; dy++) {
 			double distance = Math.sqrt(Math.max(0, (radius * radius) - (dy * dy)));
 			int xOffset = (int) Math.floor(distance);
@@ -72,7 +72,7 @@ final class EditorStyleRenderer {
 		}
 	}
 
-	private static void fillRoundedRect(DrawContext context, int x, int y, int width, int height, int color, int radius) {
+	private static void fillRoundedRect(GuiGraphics context, int x, int y, int width, int height, int color, int radius) {
 		if (width <= 0 || height <= 0) {
 			return;
 		}
@@ -88,7 +88,7 @@ final class EditorStyleRenderer {
 		}
 	}
 
-	private static void drawRoundedOutline(DrawContext context, int x, int y, int width, int height, int color, int radius) {
+	private static void drawRoundedOutline(GuiGraphics context, int x, int y, int width, int height, int color, int radius) {
 		if (width <= 0 || height <= 0) {
 			return;
 		}
@@ -133,7 +133,7 @@ final class EditorStyleRenderer {
 		}
 	}
 
-	private static void fillTopRoundedRect(DrawContext context, int x, int y, int width, int height, int color, int radius) {
+	private static void fillTopRoundedRect(GuiGraphics context, int x, int y, int width, int height, int color, int radius) {
 		if (width <= 0 || height <= 0) {
 			return;
 		}

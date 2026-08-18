@@ -9,7 +9,15 @@ pluginManagement {
 	}
 }
 
+plugins {
+	id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
 rootProject.name = "VideoPlayer"
 include "paper-plugin"
+include "paper-plugin-26.2"
+include "fabric-1.21.11"
+include "fabric-26.2"
 include "mcng-core"
 include "mcng-fabric-client"
+include "mcng-fabric-client-26.2"

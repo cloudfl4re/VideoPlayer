@@ -36,10 +36,9 @@ import io.netty.buffer.ByteBuf;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -126,7 +125,7 @@ public class ClientPacketHandler {
                 if (!screen.acceptServerPlaybackGeneration(generation)) return;
                 IVideoPlayer player = screen.player;
                 screen.clearPlaybackState();
-                if (player != null) MinecraftClient.getInstance().execute(player::stop);
+                if (player != null) Minecraft.getInstance().execute(player::stop);
             }
             case EXECUTE -> handleExecute(buf);
             case IDLE_PLAY -> {
@@ -242,8 +241,8 @@ public class ClientPacketHandler {
         }
         if ((status == RequestResultStatus.ERROR || status == RequestResultStatus.DENIED)
                 && message != null && !message.isEmpty()) {
-            ClientPlayerEntity player = MinecraftClient.getInstance().player;
-            if (player != null) player.sendMessage(VpTexts.text(message).copy().formatted(Formatting.RED), false);
+            LocalPlayer player = Minecraft.getInstance().player;
+            if (player != null) player.displayClientMessage(VpTexts.text(message).copy().withStyle(ChatFormatting.RED), false);
         }
         if (pending.callback() != null) {
             pending.callback().accept(new RequestResult(requestId, status, message));
@@ -263,9 +262,9 @@ public class ClientPacketHandler {
         VideoPackets.readName(buf);
         boolean error = buf.readBoolean();
         VpTranslation message = VideoPackets.readTranslation(buf);
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        LocalPlayer player = Minecraft.getInstance().player;
         if (player != null && message != null && !message.isEmpty()) {
-            player.sendMessage(VpTexts.text(message).copy().formatted(error ? Formatting.RED : Formatting.YELLOW), false);
+            player.displayClientMessage(VpTexts.text(message).copy().withStyle(error ? ChatFormatting.RED : ChatFormatting.YELLOW), false);
         }
     }
 
@@ -350,7 +349,7 @@ public class ClientPacketHandler {
         boolean idle = buf.readBoolean();
         ClientVideoScreen screen = screenOrNull(areaName, screenName);
         if (screen == null) return;
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        LocalPlayer player = Minecraft.getInstance().player;
         if (player == null) return;
         int playbackToken = screen.beginServerPlaybackRequest(generation);
         if (playbackToken < 0) return;
@@ -360,17 +359,17 @@ public class ClientPacketHandler {
         screen.trackPlaybackFuture(playbackToken, video);
         video.whenComplete((v, error) -> {
             if (error != null || v == null) {
-                MinecraftClient.getInstance().execute(() -> {
+                Minecraft.getInstance().execute(() -> {
                     if (screen.canAcceptPlayback(playbackToken)) {
                         screen.setServerPlaybackResolution(generation, null);
                         reportClientPlaybackResolution(screen, info, generation, null);
                         screen.failPlaybackRequest(playbackToken);
-                        player.sendMessage(VpTexts.tr("message.videoplayer.source_unresolved", "Unable to resolve video source"), false);
+                        player.displayClientMessage(VpTexts.tr("message.videoplayer.source_unresolved", "Unable to resolve video source"), false);
                     }
                 });
                 return;
             }
-            MinecraftClient.getInstance().execute(() -> {
+            Minecraft.getInstance().execute(() -> {
                 if (!screen.canAcceptPlayback(playbackToken)) return;
                 if (v.seekable() && progress >= 0) {
                     long transport = Math.max(0L, receivedAt - serverSentAt);
@@ -428,6 +427,7 @@ public class ClientPacketHandler {
     }
 
     private static CompletableFuture<VideoInfo> resolveLocalProvider(ClientVideoScreen screen, VideoInfo info) {
+        if (!LocalPlaybackResolutionPolicy.shouldResolve(info)) return null;
         int localQuality = VideoPlayerClient.config == null ? BiliQuality.DEFAULT_QN : VideoPlayerClient.config.bilibiliQuality;
         int screenLimit = screen == null || screen.metadata == null
                 ? BiliQuality.UNLIMITED
@@ -460,15 +460,15 @@ public class ClientPacketHandler {
         video.whenComplete((resolved, error) -> {
             if (error != null) {
                 LOGGER.warn("Failed to reload quality-limited source {}", VideoProviders.redactedSource(current.rawPath()), error);
-                MinecraftClient.getInstance().execute(() -> screen.failPlaybackRequest(playbackToken));
+                Minecraft.getInstance().execute(() -> screen.failPlaybackRequest(playbackToken));
                 return;
             }
             if (!LocalPlaybackInfo.playable(resolved)) {
-                MinecraftClient.getInstance().execute(() -> screen.failPlaybackRequest(playbackToken));
+                Minecraft.getInstance().execute(() -> screen.failPlaybackRequest(playbackToken));
                 return;
             }
             VideoInfo selected = LocalPlaybackInfo.select(current, resolved);
-            MinecraftClient.getInstance().execute(() -> {
+            Minecraft.getInstance().execute(() -> {
                 if (!screen.canAcceptPlayback(playbackToken)) return;
                 if (progress > 0) screen.setToSeek(progress);
                 screen.play(selected, idle);
@@ -518,7 +518,7 @@ public class ClientPacketHandler {
             screen.trackPlaybackFuture(playbackToken, video);
             video.whenComplete((resolved, error) -> {
                 if (error != null || resolved == null) {
-                    MinecraftClient.getInstance().execute(() -> {
+                    Minecraft.getInstance().execute(() -> {
                         if (!screen.isPlaybackRequestCurrent(playbackToken)) return;
                         screen.setServerPlaybackResolution(generation, null);
                         reportClientPlaybackResolution(screen, info, generation, null);
@@ -526,7 +526,7 @@ public class ClientPacketHandler {
                     });
                     return;
                 }
-                MinecraftClient.getInstance().execute(() -> {
+                Minecraft.getInstance().execute(() -> {
                     if (!screen.isPlaybackRequestCurrent(playbackToken)) return;
                     if (resolved.seekable() && seek >= 0) {
                         screen.setToSeek(seek + Math.max(0L, System.currentTimeMillis() - receivedAt));
@@ -567,13 +567,13 @@ public class ClientPacketHandler {
     }
 
     private static void handleExecute(ByteBuf buf) {
-        MinecraftClient client = MinecraftClient.getInstance();
+        Minecraft client = Minecraft.getInstance();
         CommandDispatcher<FabricClientCommandSource> dispatcher = ClientCommandManager.getActiveDispatcher();
         if (dispatcher == null || client.player == null) return;
         try {
-            dispatcher.execute("vlc " + ByteBufUtils.readString(buf, 1024), (FabricClientCommandSource) client.player.networkHandler.getCommandSource());
+            dispatcher.execute("vlc " + ByteBufUtils.readString(buf, 1024), (FabricClientCommandSource) client.player.connection.getSuggestionsProvider());
         } catch (CommandSyntaxException e) {
-            client.player.sendMessage(VpTexts.tr("message.videoplayer.command_failed", "Command failed: %s", e).formatted(Formatting.RED), false);
+            client.player.displayClientMessage(VpTexts.tr("message.videoplayer.command_failed", "Command failed: %s", e).withStyle(ChatFormatting.RED), false);
         }
     }
 
@@ -707,9 +707,7 @@ public class ClientPacketHandler {
     }
 
     public static void config(String version) {
-        ByteBuf buf = VideoPackets.create(VideoPacketType.CONFIG);
-        writeString(buf, VideoProtocol.token(version));
-        send(VideoPackets.toByteArray(buf));
+        send(VideoPackets.clientConfig(version));
     }
 
     private static void handshakeAck(long nonce) {

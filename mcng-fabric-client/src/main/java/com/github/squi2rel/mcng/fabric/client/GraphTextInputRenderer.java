@@ -1,7 +1,7 @@
 package com.github.squi2rel.mcng.fabric.client;
 
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 
 final class GraphTextInputRenderer {
 	static final int CONTENT_PADDING_X = 4;
@@ -11,8 +11,8 @@ final class GraphTextInputRenderer {
 	}
 
 	static void render(
-		DrawContext context,
-		TextRenderer textRenderer,
+		GuiGraphics context,
+		Font textRenderer,
 		NodeWidget.Bounds bounds,
 		GraphTextInputState state,
 		GraphEditorTheme theme,
@@ -24,7 +24,7 @@ final class GraphTextInputRenderer {
 	}
 
 	static void renderFrame(
-		DrawContext context,
+		GuiGraphics context,
 		NodeWidget.Bounds bounds,
 		GraphEditorTheme theme,
 		GraphEditorUiConfig uiConfig
@@ -33,7 +33,7 @@ final class GraphTextInputRenderer {
 	}
 
 	static void renderFrame(
-		DrawContext context,
+		GuiGraphics context,
 		NodeWidget.Bounds bounds,
 		GraphEditorTheme theme,
 		GraphEditorUiConfig uiConfig,
@@ -52,8 +52,8 @@ final class GraphTextInputRenderer {
 	}
 
 	static void renderContent(
-		DrawContext context,
-		TextRenderer textRenderer,
+		GuiGraphics context,
+		Font textRenderer,
 		NodeWidget.Bounds bounds,
 		GraphTextInputState state,
 		GraphEditorTheme theme,
@@ -61,15 +61,15 @@ final class GraphTextInputRenderer {
 	) {
 		int innerX = bounds.x() + CONTENT_PADDING_X;
 		int innerWidth = Math.max(1, bounds.width() - (CONTENT_PADDING_X * 2));
-		int baselineY = bounds.y() + Math.max(2, (bounds.height() - textRenderer.fontHeight) / 2);
+		int baselineY = bounds.y() + Math.max(2, (bounds.height() - textRenderer.lineHeight) / 2);
 		String text = state.text();
 		VisibleTextSlice visible = visibleSlice(textRenderer, state, innerWidth);
-		int prefixWidth = textRenderer.getWidth(text.substring(0, visible.start()));
+		int prefixWidth = textRenderer.width(text.substring(0, visible.start()));
 		int textX = innerX + prefixWidth - state.scrollX();
 
 		if (focused && state.hasSelection()) {
-			int selectionStartX = innerX + textRenderer.getWidth(text.substring(0, state.selectionStart())) - state.scrollX();
-			int selectionWidth = textRenderer.getWidth(text.substring(state.selectionStart(), state.selectionEnd()));
+			int selectionStartX = innerX + textRenderer.width(text.substring(0, state.selectionStart())) - state.scrollX();
+			int selectionWidth = textRenderer.width(text.substring(state.selectionStart(), state.selectionEnd()));
 			context.fill(
 				selectionStartX,
 				bounds.y() + CONTENT_PADDING_Y,
@@ -79,14 +79,14 @@ final class GraphTextInputRenderer {
 			);
 		}
 
-		context.drawText(textRenderer, visible.text(), textX, baselineY, theme.primaryTextColor(), false);
+		context.drawString(textRenderer, visible.text(), textX, baselineY, theme.primaryTextColor(), false);
 		if (focused && (System.currentTimeMillis() / 530L) % 2L == 0L) {
-			int cursorX = innerX + textRenderer.getWidth(text.substring(0, state.cursor())) - state.scrollX();
+			int cursorX = innerX + textRenderer.width(text.substring(0, state.cursor())) - state.scrollX();
 			context.fill(cursorX, bounds.y() + CONTENT_PADDING_Y, cursorX + 1, bounds.y() + bounds.height() - CONTENT_PADDING_Y, theme.primaryTextColor());
 		}
 	}
 
-	private static VisibleTextSlice visibleSlice(TextRenderer textRenderer, GraphTextInputState state, int innerWidth) {
+	private static VisibleTextSlice visibleSlice(Font textRenderer, GraphTextInputState state, int innerWidth) {
 		String text = state.text();
 		if (text.isEmpty()) {
 			return new VisibleTextSlice(0, 0, "");
@@ -94,7 +94,7 @@ final class GraphTextInputRenderer {
 
 		int start = 0;
 		while (start < text.length()) {
-			int nextWidth = textRenderer.getWidth(text.substring(0, start + 1));
+			int nextWidth = textRenderer.width(text.substring(0, start + 1));
 			if (nextWidth > state.scrollX()) {
 				break;
 			}
@@ -104,7 +104,7 @@ final class GraphTextInputRenderer {
 		int end = start;
 		int visibleRight = state.scrollX() + innerWidth;
 		while (end < text.length()) {
-			int nextWidth = textRenderer.getWidth(text.substring(0, end + 1));
+			int nextWidth = textRenderer.width(text.substring(0, end + 1));
 			if (nextWidth > visibleRight) {
 				break;
 			}

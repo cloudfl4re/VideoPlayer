@@ -1,0 +1,22 @@
+{
+  "required": true,
+  "package": "com.github.squi2rel.vp.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "CameraMixin",
+    "ClientPlayNetworkHandlerMixin",
+    "DrawContextAccessor",
+    "GameRendererMixin",
+    "GameRendererTargetAccessor",
+    "GlDeviceAccessor",
+    "GpuDeviceAccessor",
+    "MinecraftClientMixin",
+    "VoxyThreadUtilsMixin",
+    "WindowMixin",
+    "WorldRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "mixins": []
+}

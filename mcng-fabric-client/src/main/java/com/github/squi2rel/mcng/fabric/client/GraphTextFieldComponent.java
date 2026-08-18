@@ -1,12 +1,12 @@
 package com.github.squi2rel.mcng.fabric.client;
 
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 
 final class GraphTextFieldComponent {
 	private final Supplier<String> clipboardReader;
@@ -64,7 +64,7 @@ final class GraphTextFieldComponent {
 		}
 	}
 
-	void render(DrawContext context, TextRenderer textRenderer, GraphEditorTheme theme, GraphEditorUiConfig uiConfig) {
+	void render(GuiGraphics context, Font textRenderer, GraphEditorTheme theme, GraphEditorUiConfig uiConfig) {
 		GraphTextInputRenderer.renderFrame(context, bounds, theme, uiConfig, focused);
 		String placeholder = placeholderSupplier.get();
 		int scissorLeft = bounds.x() + GraphTextInputRenderer.CONTENT_PADDING_X;
@@ -76,8 +76,8 @@ final class GraphTextFieldComponent {
 			if (!state.text().isEmpty()) {
 				GraphTextInputRenderer.renderContent(context, textRenderer, bounds, state, theme, focused);
 			} else {
-				int baselineY = bounds.y() + Math.max(2, (bounds.height() - textRenderer.fontHeight) / 2);
-				context.drawText(textRenderer, placeholder, bounds.x() + GraphTextInputRenderer.CONTENT_PADDING_X, baselineY, theme.secondaryTextColor(), false);
+				int baselineY = bounds.y() + Math.max(2, (bounds.height() - textRenderer.lineHeight) / 2);
+				context.drawString(textRenderer, placeholder, bounds.x() + GraphTextInputRenderer.CONTENT_PADDING_X, baselineY, theme.secondaryTextColor(), false);
 				if (focused && (System.currentTimeMillis() / 530L) % 2L == 0L) {
 					int cursorX = bounds.x() + GraphTextInputRenderer.CONTENT_PADDING_X;
 					context.fill(cursorX, bounds.y() + GraphTextInputRenderer.CONTENT_PADDING_Y, cursorX + 1, bounds.y() + bounds.height() - GraphTextInputRenderer.CONTENT_PADDING_Y, theme.primaryTextColor());
@@ -88,7 +88,7 @@ final class GraphTextFieldComponent {
 		}
 	}
 
-	boolean mouseClicked(double mouseX, double mouseY, int button, TextRenderer textRenderer) {
+	boolean mouseClicked(double mouseX, double mouseY, int button, Font textRenderer) {
 		if (button != 0) {
 			return false;
 		}
@@ -101,7 +101,7 @@ final class GraphTextFieldComponent {
 		return true;
 	}
 
-	boolean mouseDragged(double mouseX, int button, TextRenderer textRenderer) {
+	boolean mouseDragged(double mouseX, int button, Font textRenderer) {
 		if (!focused || button != 0 || !draggingPointer) {
 			return false;
 		}
@@ -118,7 +118,7 @@ final class GraphTextFieldComponent {
 		return focused;
 	}
 
-	boolean keyPressed(int keyCode, int scanCode, int modifiers, TextRenderer textRenderer) {
+	boolean keyPressed(int keyCode, int scanCode, int modifiers, Font textRenderer) {
 		if (!focused) {
 			return false;
 		}
@@ -185,7 +185,7 @@ final class GraphTextFieldComponent {
 		return true;
 	}
 
-	boolean charTyped(char chr, int modifiers, TextRenderer textRenderer) {
+	boolean charTyped(char chr, int modifiers, Font textRenderer) {
 		if (!focused) {
 			return false;
 		}
@@ -198,7 +198,7 @@ final class GraphTextFieldComponent {
 		return true;
 	}
 
-	private void handlePointerDown(TextRenderer textRenderer, double screenX, long timeMs) {
+	private void handlePointerDown(Font textRenderer, double screenX, long timeMs) {
 		int index = indexForScreenX(textRenderer, screenX);
 		if ((timeMs - lastPointerDownAt) <= 250L && Math.abs(index - lastPointerIndex) <= 1) {
 			state.selectWordAt(index);
@@ -212,12 +212,12 @@ final class GraphTextFieldComponent {
 		ensureCursorVisible(textRenderer);
 	}
 
-	private int indexForScreenX(TextRenderer textRenderer, double screenX) {
+	private int indexForScreenX(Font textRenderer, double screenX) {
 		double localX = screenX - (bounds.x() + GraphTextInputRenderer.CONTENT_PADDING_X) + state.scrollX();
 		return state.indexForX(textRenderer, localX);
 	}
 
-	private void ensureCursorVisible(TextRenderer textRenderer) {
+	private void ensureCursorVisible(Font textRenderer) {
 		state.ensureCursorVisible(textRenderer, Math.max(1, bounds.width() - (GraphTextInputRenderer.CONTENT_PADDING_X * 2)));
 	}
 
