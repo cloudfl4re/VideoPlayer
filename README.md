@@ -6,8 +6,12 @@
 
 <p align="center">
   <a href="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml"><img src="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml/badge.svg" alt="Build"></a>
-  <a href="https://www.minecraft.net/"><img src="https://img.shields.io/badge/Minecraft%201.21.11-Java%2021%2B-62B47A" alt="Minecraft 1.21.11 · Java 21+"></a>
-  <a href="https://www.minecraft.net/"><img src="https://img.shields.io/badge/Minecraft%2026.2-Java%2025%2B-62B47A" alt="Minecraft 26.2 · Java 25+"></a>
+<a href="https://www.minecraft.net/">
+  <img src="https://img.shields.io/badge/Minecraft-1.21.11%20%7C%2026.2-62B47A" alt="Minecraft 1.21.11 / 26.2">
+</a>
+<a href="https://adoptium.net/">
+  <img src="https://img.shields.io/badge/Java-21%20%7C%2025-ED8B00" alt="Java 21 / 25">
+</a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/squi2rel/VideoPlayer" alt="GPL-3.0 license"></a>
 </p>
 
@@ -24,10 +28,10 @@ VideoPlayer 是用于 Minecraft 1.21.11 以及 26.2 的 Fabric 视频播放模�
 
 ## 环境要求
 
-| 组件 | Minecraft 1.21.11 | Minecraft 26.2 |
-| --- | --- | --- |
-| 客户端 | Fabric Loader、Fabric API、Java 21+ | Fabric Loader、Fabric API、Java 25+ |
-| 服务端桥接 | Paper/Folia、Java 21+ | Paper/Folia、Java 25+ |
+| 组件 | 要求 |
+| --- | --- |
+| 客户端 | Minecraft 1.21.11/26.2、Fabric Loader、Fabric API、Java 21/25 |
+| 服务端桥接 | Paper/folia 1.21.11/26.2、Java 21/25 |
 
 运行库下载源覆盖 Windows、Linux、macOS 和 Android 的常见架构。MPV 与 VLC 的实际可用性取决于所选平台和本机运行库；可通过启动向导安装或改用已有运行库。
 
