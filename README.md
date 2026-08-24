@@ -11,24 +11,23 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/squi2rel/VideoPlayer" alt="GPL-3.0 license"></a>
 </p>
 
-VideoPlayer 是用于 Minecraft 1.21.11 的 Fabric 视频播放模组，配套提供 Paper/Folia 服务端桥接插件。客户端负责解码与渲染，服务端负责区域、屏幕、权限、持久化和玩家间同步；多人服务器中的观看者需要安装相同兼容版本的客户端模组。
+VideoPlayer 是用于 Minecraft 1.21.11 以及 26.2 的 Fabric 视频播放模组，配套提供 Paper/Folia 服务端桥接插件。客户端负责解码与渲染，服务端负责区域、屏幕、权限、持久化和玩家间同步；多人服务器中的观看者需要安装相同兼容版本的客户端模组。
 
 ## 特性
 
 - VLC 与 MPV 双播放后端，启动向导可检测、安装运行库并配置下载代理。
-- 支持直链和网络流，以及哔哩哔哩视频/直播、YouTube、网易云音乐和 MV、实体视角等来源。
-- 支持播放队列、IdlePlay、同步、跳过投票、弹幕、字幕、音频通道和播放诊断。
+- 支持直链和网络流，以及哔哩哔哩视频/直播、YouTube、网易云音乐和 MV等来源。
+- 支持播放队列、空闲时播放、客户端同步、跳过投票、弹幕、字幕、音频通道和。
 - 支持自由顶点屏幕、UV 裁切、缩放、360 球面和可选 Vivecraft VR 集成。
-- Paper/Folia 服务端桥接支持权限节点和 Residence 区域控制。
-- 曲面屏沿用既有 `FLAT` 曲面：以闭合的非共面顶点条带表达，兼容客户端可直接渲染和交互，无需新增数据包字段或 `CURVED` 枚举。
+- Paper/Folia 服务端桥接支持Luckperms权限节点和 Residence 区域控制。
+- 曲面屏沿用既有 `FLAT` 曲面：以闭合的非共面顶点条带表达，兼容客户端可直接渲染和交互。
 
 ## 环境要求
 
 | 组件 | 要求 |
 | --- | --- |
-| 客户端 | Minecraft 1.21.11、Fabric Loader、Fabric API、Java 21 |
-| 服务端桥接 | Paper 1.21.11 或兼容实现、Java 21 |
-| Folia/Luminol | 插件声明支持 Folia；目标 Luminol 1.21.11 仍应在实际服务器上验证 |
+| 客户端 | Minecraft 1.21.11/26.2、Fabric Loader、Fabric API、Java 21/25 |
+| 服务端桥接 | Paper/folia 1.21.11/26.2、Java 21/25 |
 
 运行库下载源覆盖 Windows、Linux、macOS 和 Android 的常见架构。MPV 与 VLC 的实际可用性取决于所选平台和本机运行库；可通过启动向导安装或改用已有运行库。
 
@@ -37,22 +36,21 @@ VideoPlayer 是用于 Minecraft 1.21.11 的 Fabric 视频播放模组，配套�
 1. 从 GitHub Release 或 [Actions 构建产物](https://github.com/squi2rel/VideoPlayer/actions) 获取对应 JAR。
 2. 将 Fabric 模组 JAR 放入每位观看者的 `mods` 目录，并安装匹配版本的 Fabric Loader 与 Fabric API。
 3. 多人服务器将 Paper 插件 JAR 放入 `plugins` 目录后重启服务器。该插件是客户端模组的服务端桥接，不能单独让原版客户端播放视频。
-4. 进入游戏后执行 `/videoplayer boot`，选择 VLC 或 MPV，并按向导完成运行库和 `yt-dlp` 配置。
+4. 进入游戏后执行 `/videoplayer boot`，选择 VLC 或 MPV，并按向导完成运行库，可选 `yt-dlp` 配置。
 5. 使用客户端的创建、管理界面或命令建立区域和屏幕，再将可播放 URL 加入屏幕队列。
 
 请只播放拥有授权或允许公开播放的内容，并遵守视频源及其所在地区的服务条款。
 
 ## 常用命令
 
-以下是客户端命令；`/vlc` 是 `/videoplayer` 的兼容别名。
+以下是客户端命令；`/vlc` 或 `/videoplayer` 
 
 | 命令 | 用途 |
 | --- | --- |
 | `/videoplayer help` | 查看客户端命令及子命令说明 |
-| `/videoplayer boot` | 打开播放后端、运行库和下载设置向导 |
+| `/videoplayer boot` | 打开设置向导 |
 | `/videoplayer backend <backend>` | 查看或切换新播放任务使用的后端；`backend` 为 `vlc` 或 `mpv` |
 | `/videoplayer play <url>` | 向当前选中的屏幕请求播放 |
-| `/videoplayer diagnostics` | 打开播放诊断 |
 | `/videoplayer biliAuth` | 打开或管理哔哩哔哩认证 |
 | `/videoplayer youtubeAuth` | 打开或管理 YouTube Cookie 认证 |
 
@@ -88,13 +86,16 @@ Paper 插件提供的管理命令如下：
 
 | 模块 | 产物路径 |
 | --- | --- |
-| Fabric 客户端模组 | `build/libs/VideoPlayer-*.jar` |
-| Paper/Folia 服务端插件 | `paper-plugin/build/libs/VideoPlayer-Paper-*.jar` |
+| 1.21.11Fabric 客户端模组 | `build/libs/VideoPlayer-Fabric-1.21.11.jar` |
+| 1.21.11Paper/Folia 服务端插件 | `paper-plugin/build/libs/VideoPlayer-Paper-1.21.11.jar` |
+| 26.2Fabric 客户端模组 | `build/libs/VideoPlayer-Fabric-26.2.jar` |
+| 26.2Paper/Folia 服务端插件 | `paper-plugin/build/libs/VideoPlayer-Paper-26.2.jar` |
 
-GitHub Actions 会在每次推送和 Pull Request 中使用 Java 21 执行构建，并上传这两个产物。
+GitHub Actions 会在每次推送后使用 Java 25 执行构建，并上传这四个产物。
 
 ## 开源协议与作者
 
 本项目以 [GPL-3.0](LICENSE) 发布。
 
-作者：squi2rel、cloudfl4re。
+作者：squi2rel
+协作者： cloudfl4re
