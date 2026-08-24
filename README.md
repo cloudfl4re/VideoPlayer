@@ -7,7 +7,9 @@
 <p align="center">
   <a href="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml"><img src="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml/badge.svg" alt="Build"></a>
   <a href="https://www.minecraft.net/"><img src="https://img.shields.io/badge/Minecraft-1.21.11-62B47A" alt="Minecraft 1.21.11"></a>
+  <a href="https://www.minecraft.net/"><img src="https://img.shields.io/badge/Minecraft-26.2-62B47A" alt="Minecraft 26.2"></a>
   <a href="https://adoptium.net/"><img src="https://img.shields.io/badge/Java-21-ED8B00" alt="Java 21"></a>
+  <a href="https://adoptium.net/"><img src="https://img.shields.io/badge/Java-25-ED8B00" alt="Java 25"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/squi2rel/VideoPlayer" alt="GPL-3.0 license"></a>
 </p>
 
