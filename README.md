@@ -23,7 +23,7 @@ VideoPlayer 是用于 Minecraft 1.21.11 以及 26.2 的 Fabric 视频播放模�
 - 支持直链和网络流，以及哔哩哔哩视频/直播、YouTube、网易云音乐和 MV等来源。
 - 支持播放队列、空闲时播放、客户端同步、跳过投票、弹幕、字幕、音频通道。
 - 支持自由顶点屏幕、UV 裁切、缩放、360 球面和可选 Vivecraft VR 集成。
-- Paper/Folia 服务端桥接支持Luckperms权限节点和 Residence 区域控制。
+- Paper/Folia 服务端桥接支持权限节点，可通过LuckPerms等权限插件管理和 Residence 区域控制。
 - 曲面屏沿用既有 `FLAT` 曲面：以闭合的非共面顶点条带表达，兼容客户端可直接渲染和交互。
 
 ## 环境要求
