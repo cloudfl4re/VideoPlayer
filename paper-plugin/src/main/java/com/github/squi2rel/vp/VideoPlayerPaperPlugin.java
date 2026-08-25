@@ -4,6 +4,7 @@ import com.github.squi2rel.vp.command.VlcCommand;
 import com.github.squi2rel.vp.command.VlcVersionCommand;
 import com.github.squi2rel.vp.network.ServerPacketHandler;
 import com.github.squi2rel.vp.provider.VideoProviders;
+import com.github.squi2rel.vp.provider.paper.PaperVideoProviders;
 import com.github.squi2rel.vp.permission.ResidencePermissionBridge;
 import com.github.squi2rel.vp.permission.VideoPermissions;
 import io.netty.buffer.ByteBuf;
@@ -61,6 +62,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
         PaperNativeConfig nativeConfig = PaperNativeConfig.load(this);
         nativeConfig.apply();
         VideoProviders.register();
+        PaperVideoProviders.initialize(nativeConfig.downloadProxy());
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
         getServer().getMessenger().registerOutgoingPluginChannel(this, CHANNEL);
         getServer().getPluginManager().registerEvents(this, this);
@@ -90,6 +92,7 @@ public final class VideoPlayerPaperPlugin extends JavaPlugin implements Listener
     @Override
     public void onDisable() {
         active = false;
+        PaperVideoProviders.shutdown();
         ClientVersionTracker.shutdown();
         ResidencePermissionBridge.shutdown();
         if (ytDlpTask != null) {

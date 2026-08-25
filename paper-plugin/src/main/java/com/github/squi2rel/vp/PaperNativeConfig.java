@@ -77,6 +77,10 @@ final class PaperNativeConfig {
                 backend, platform, System.getProperty("videoplayer.configDir", ""));
     }
 
+    String downloadProxy() {
+        return downloadProxy;
+    }
+
     void downloadYtDlpIfMissing(BooleanSupplier active) {
         if (!active.getAsBoolean()) return;
         YtDlpManager.Detection detection = YtDlpManager.detect(mpvYtdlPath, active);
