@@ -95,6 +95,21 @@ final class WorldSaveQueue {
         if (start) launch(snapshot.dimension(), slot);
     }
 
+    DrainResult drainInline(Snapshot snapshot) {
+        if (snapshot == null || snapshot.dimension() == null || snapshot.path() == null || snapshot.payload() == null) {
+            return new DrainResult(snapshot, new IllegalArgumentException("snapshot is incomplete"), false);
+        }
+        Slot slot;
+        synchronized (lock) {
+            failedDrains.remove(snapshot.dimension());
+            slot = slots.computeIfAbsent(snapshot.dimension(), ignored -> new Slot());
+            slot.pending = snapshot;
+            slot.running = true;
+        }
+        drain(snapshot.dimension(), slot);
+        return slot.completion.join();
+    }
+
     CompletableFuture<DrainResult> awaitIdle(String dimension) {
         synchronized (lock) {
             Slot slot = slots.get(dimension);
@@ -182,32 +197,34 @@ final class WorldSaveQueue {
     }
 
     private void drain(String dimension, Slot slot) {
-        while (true) {
-            Snapshot next;
-            synchronized (lock) {
-                if (slots.get(dimension) != slot) return;
-                next = slot.pending;
-                slot.pending = null;
-                if (next == null) {
-                    slot.running = false;
-                    slots.remove(dimension);
-                    DrainResult result = new DrainResult(slot.lastSnapshot, slot.lastFailure, false);
-                    if (slot.lastFailure == null) failedDrains.remove(dimension);
-                    else failedDrains.put(dimension, result);
-                    slot.completion.complete(result);
-                    lock.notifyAll();
-                    return;
-                }
-                slot.lastSnapshot = next;
-                slot.lastFailure = null;
-            }
-            try {
-                writer.write(next);
-            } catch (Throwable error) {
+        synchronized (slot.drainLock) {
+            while (true) {
+                Snapshot next;
                 synchronized (lock) {
-                    if (slots.get(dimension) == slot) slot.lastFailure = error;
+                    if (slots.get(dimension) != slot) return;
+                    next = slot.pending;
+                    slot.pending = null;
+                    if (next == null) {
+                        slot.running = false;
+                        slots.remove(dimension);
+                        DrainResult result = new DrainResult(slot.lastSnapshot, slot.lastFailure, false);
+                        if (slot.lastFailure == null) failedDrains.remove(dimension);
+                        else failedDrains.put(dimension, result);
+                        slot.completion.complete(result);
+                        lock.notifyAll();
+                        return;
+                    }
+                    slot.lastSnapshot = next;
+                    slot.lastFailure = null;
                 }
-                notifyFailure(next, error);
+                try {
+                    writer.write(next);
+                } catch (Throwable error) {
+                    synchronized (lock) {
+                        if (slots.get(dimension) == slot) slot.lastFailure = error;
+                    }
+                    notifyFailure(next, error);
+                }
             }
         }
     }
@@ -221,6 +238,7 @@ final class WorldSaveQueue {
     }
 
     private static final class Slot {
+        private final Object drainLock = new Object();
         private Snapshot pending;
         private Snapshot lastSnapshot;
         private Throwable lastFailure;

@@ -122,6 +122,8 @@ public final class DataHolder {
 
     public static void stop() {
         long deadline = System.nanoTime() + STOP_PERSISTENCE_TIMEOUT_MILLIS * 1_000_000L;
+        ArrayList<WorldSaveQueue.Snapshot> finalWorldSnapshots = new ArrayList<>();
+        HashSet<String> finalCaptureFailures = new HashSet<>();
         synchronized (LOCK) {
             running = false;
             for (FoliaScheduler.TaskHandle task : playerTasks.values()) {
@@ -131,13 +133,30 @@ public final class DataHolder {
             cancelReloadHandshakesLocked();
             cancelWorldSaveDebouncesLocked();
             cancelWorldSaveRetriesLocked();
+            worldLoadRequests.clear();
             for (String dim : new ArrayList<>(areas.keySet())) {
-                submitFinalWorldSaveLocked(dim);
+                try {
+                    WorldSaveQueue.Snapshot snapshot = captureWorldSaveLocked(dim, true, false);
+                    if (snapshot != null) finalWorldSnapshots.add(snapshot);
+                } catch (RuntimeException error) {
+                    finalCaptureFailures.add(dim);
+                    VideoPlayerMain.LOGGER.error("Failed to capture final VideoPlayer world save for {}", dim, error);
+                }
             }
         }
-        boolean worldsPersisted = worldSaveQueue.flush(remainingMillis(deadline));
+        boolean worldsPersisted = finalCaptureFailures.isEmpty();
+        for (WorldSaveQueue.Snapshot snapshot : finalWorldSnapshots) {
+            if (remainingMillis(deadline) == 0L) {
+                worldsPersisted = false;
+                break;
+            }
+            if (!worldSaveQueue.drainInline(snapshot).successful()) worldsPersisted = false;
+        }
+        boolean worldQueueDrained = worldSaveQueue.flush(remainingMillis(deadline));
+        worldsPersisted &= worldQueueDrained;
         boolean legacyPersisted = legacyConfigSaveQueue.flush(remainingMillis(deadline));
         HashSet<String> dirty = new HashSet<>(worldSaveQueue.failedDimensions());
+        dirty.addAll(finalCaptureFailures);
         synchronized (LOCK) {
             for (Map.Entry<String, WorldPersistenceState> entry : worldPersistence.entrySet()) {
                 if (entry.getValue().dirtySnapshot != null) dirty.add(entry.getKey());
@@ -146,7 +165,7 @@ public final class DataHolder {
         boolean legacyFailed = !legacyConfigSaveQueue.failedDimensions().isEmpty();
         if (!worldsPersisted || !legacyPersisted || !dirty.isEmpty() || legacyFailed) {
             VideoPlayerMain.LOGGER.warn(
-                    "VideoPlayer shutdown persistence incomplete; world queue drained: {}, legacy queue drained: {}, unsaved worlds: {}, legacy config failed: {}",
+                    "VideoPlayer shutdown persistence incomplete; worlds persisted: {}, legacy queue drained: {}, unsaved worlds: {}, legacy config failed: {}",
                     worldsPersisted, legacyPersisted, dirty, legacyFailed
             );
         }
@@ -254,6 +273,13 @@ public final class DataHolder {
     private static void scheduleWorldRead(VideoPlayerPaperPlugin owner, long epoch, long requestId,
                                           WorldDescriptor descriptor, WorldSaveQueue.DrainResult drain,
                                           Throwable barrierError) {
+        synchronized (LOCK) {
+            Long activeRequest = worldLoadRequests.get(descriptor.dimension());
+            if (!running || plugin != owner || lifecycleEpoch != epoch || !owner.isEnabled()
+                    || activeRequest == null || activeRequest != requestId) {
+                return;
+            }
+        }
         try {
             FoliaScheduler.runAsync(() -> {
                 WorldLoadResult result;
@@ -491,10 +517,15 @@ public final class DataHolder {
     }
 
     private static void submitWorldSaveLocked(String dim, boolean finalSave, boolean retryAttempt) {
-        if (invalidWorldConfigs.contains(dim)) return;
+        WorldSaveQueue.Snapshot snapshot = captureWorldSaveLocked(dim, finalSave, retryAttempt);
+        if (snapshot != null) worldSaveQueue.enqueue(snapshot);
+    }
+
+    private static WorldSaveQueue.Snapshot captureWorldSaveLocked(String dim, boolean finalSave, boolean retryAttempt) {
+        if (invalidWorldConfigs.contains(dim)) return null;
         Path path = worldFiles.get(dim);
         HashMap<String, VideoArea> map = areas.get(dim);
-        if (path == null || map == null) return;
+        if (path == null || map == null) return null;
         long saveGeneration = ++nextSaveGeneration;
         WorldConfigSnapshot captured = WorldConfigSnapshot.capture(config, map.values(), saveGeneration);
         WorldPersistenceState persistence = worldPersistence.computeIfAbsent(
@@ -513,7 +544,7 @@ public final class DataHolder {
                         () -> captured.serialize(gson)
                 );
         persistence.dirtySnapshot = snapshot;
-        worldSaveQueue.enqueue(snapshot);
+        return snapshot;
     }
 
     private static void cancelWorldSaveDebounceLocked(String dim) {
