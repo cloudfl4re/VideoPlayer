@@ -1,0 +1,184 @@
+plugins {
+	id 'net.fabricmc.fabric-loom'
+	id 'com.gradleup.shadow'
+	id 'maven-publish'
+}
+
+base { archivesName = rootProject.archives_base_name }
+
+repositories {
+	mavenCentral()
+	exclusiveContent {
+		forRepository {
+			maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' }
+		}
+		filter { includeGroup 'maven.modrinth' }
+	}
+}
+
+configurations { shadowBundle }
+
+loom {
+	splitEnvironmentSourceSets()
+	mods {
+		videoplayer {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+def compatibilityClientSourceDir = file("${buildDir}/generated/compatibility-client")
+def generateCompatibilityClientSources = tasks.register('generateCompatibilityClientSources') {
+	def sourceRoot = rootProject.file('clients/fabric/26.2/src/client/java')
+	inputs.dir(sourceRoot)
+	outputs.dir(compatibilityClientSourceDir)
+	doLast {
+		project.delete(compatibilityClientSourceDir)
+		fileTree(sourceRoot).matching { include '**/*.java'; exclude '**/GlDeviceAccessor.java' }.files.each { sourceFile ->
+			def relativePath = sourceRoot.toPath().relativize(sourceFile.toPath()).toString().replace('\\', '/')
+			def sourceText = sourceFile.getText('UTF-8')
+			sourceText = sourceText.replace('.gui.screen()', '.screen')
+			sourceText = sourceText.replace('.gui.setScreen(', '.setScreen(')
+			if (relativePath == 'com/github/squi2rel/vp/VideoPlayerClient.java') {
+				sourceText = sourceText.replace('import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents;', '')
+				sourceText = sourceText.replace('LevelExtractionEvents.END_EXTRACTION', 'LevelRenderEvents.END_EXTRACTION')
+			}
+			if (relativePath == 'com/github/squi2rel/vp/video/AbstractCameraPlayer.java') {
+				sourceText = sourceText.replace('import com.mojang.blaze3d.GpuFormat;', '')
+				sourceText = sourceText.replace(', GpuFormat.RGBA8_UNORM', '')
+			}
+			if (relativePath == 'com/github/squi2rel/vp/video/ExternalGlTexture.java') {
+				sourceText = sourceText.replaceAll('(?m)^import com\\.github\\.squi2rel\\.vp\\.mixin\\.client\\.(?:GlDeviceAccessor|GpuDeviceAccessor);\\s*', '')
+				sourceText = sourceText.replace('import com.mojang.blaze3d.GpuFormat;', 'import com.mojang.blaze3d.textures.TextureFormat;')
+				sourceText = sourceText.replace('GpuFormat.RGBA8_UNORM', 'TextureFormat.RGBA8')
+				sourceText = sourceText.replaceAll('(?s),\\s*\\(\\(GlDeviceAccessor\\).*?videoplayer\\$getFrameBufferCache\\(\\)', '')
+			}
+			def targetFile = new File(compatibilityClientSourceDir, relativePath)
+			targetFile.parentFile.mkdirs()
+			targetFile.setText(sourceText, 'UTF-8')
+		}
+	}
+}
+
+sourceSets {
+	main {
+		java.setSrcDirs([rootProject.file('clients/fabric/26.2/src/main/java')])
+		resources.setSrcDirs([rootProject.file('src/main/resources')])
+	}
+	client {
+		java.setSrcDirs([compatibilityClientSourceDir, file('src/client/java')])
+		resources.setSrcDirs([file('src/client/resources'), rootProject.file('src/client/resources')])
+	}
+	test {
+		java.setSrcDirs([rootProject.file('src/test/java')])
+		resources.setSrcDirs([rootProject.file('src/test/resources')])
+	}
+}
+
+def sharedMainSources = fileTree(rootProject.file('src/main/java')) {
+	exclude 'android/**'
+	exclude 'com/github/squi2rel/vp/VideoPlayerMain.java'
+	exclude 'com/github/squi2rel/vp/network/VideoPayload.java'
+	exclude 'com/github/squi2rel/vp/network/ClientMessageBridge.java'
+}
+
+def versionClientRoots = [file('src/client/java'), rootProject.file('clients/fabric/26.2/src/client/java')]
+def versionClientPaths = versionClientRoots.collectMany { sourceRoot ->
+	fileTree(sourceRoot).matching { include '**/*.java' }.files.collect { sourceFile ->
+		sourceRoot.toPath().relativize(sourceFile.toPath()).toString().replace('\\', '/')
+	}
+}.toSet()
+def sharedClientSources = fileTree(rootProject.file('src/client/java')) {
+	exclude versionClientPaths
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${rootProject.minecraft_26_1_2_version}"
+	implementation "net.fabricmc:fabric-loader:${rootProject.loader_26_1_2_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_26_1_2_version}"
+	implementation 'net.java.dev.jna:jna:5.17.0'
+	implementation 'org.brotli:dec:0.1.2'
+	include 'org.brotli:dec:0.1.2'
+	shadowBundle 'org.brotli:dec:0.1.2'
+	implementation 'com.google.zxing:core:3.5.3'
+	include 'com.google.zxing:core:3.5.3'
+	shadowBundle 'com.google.zxing:core:3.5.3'
+	implementation project(':mcng-core')
+	implementation project(':mcng-fabric-client-26.1.2')
+	compileOnly "maven.modrinth:modmenu:${rootProject.modmenu_26_1_2_version}"
+	compileOnly "maven.modrinth:vivecraft:${rootProject.vivecraft_26_1_2_version}"
+	shadowBundle project(':mcng-core')
+	shadowBundle(project(':mcng-fabric-client-26.1.2')) {
+		transitive = false
+	}
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test { useJUnitPlatform() }
+
+processResources {
+	doFirst {
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.zip'))
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.NOTICE.txt'))
+	}
+	inputs.properties([
+		version: project.version,
+		loader_min_version: rootProject.loader_26_1_2_version,
+		minecraft_dependency: '~26.1.2',
+		java_version: '25'
+	])
+	filesMatching('fabric.mod.json') { expand inputs.properties }
+}
+
+tasks.withType(JavaCompile).configureEach { options.release = 25 }
+
+tasks.withType(AbstractArchiveTask).configureEach {
+	archiveVersion = "${project.version}-26.1.2"
+}
+
+tasks.named('compileJava', JavaCompile) { source sharedMainSources }
+tasks.named('compileClientJava', JavaCompile) {
+	dependsOn generateCompatibilityClientSources
+	source sharedClientSources
+}
+tasks.matching { it.name == 'sourcesJar' }.configureEach {
+	dependsOn generateCompatibilityClientSources
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+java {
+	toolchain { languageVersion = JavaLanguageVersion.of(25) }
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	archiveClassifier = 'plain'
+	inputs.property 'archivesName', project.base.archivesName
+	from(rootProject.file('LICENSE')) { rename { "${it}_${inputs.properties.archivesName}" } }
+	from(rootProject.file('MCNG_LICENSE')) { rename { "${it}_${inputs.properties.archivesName}" } }
+}
+
+shadowJar {
+	archiveClassifier = ''
+	configurations = [project.configurations.shadowBundle]
+	from sourceSets.client.output
+	from(rootProject.file('LICENSE')) { rename { "${it}_${project.base.archivesName.get()}" } }
+	from(rootProject.file('MCNG_LICENSE')) { rename { "${it}_${project.base.archivesName.get()}" } }
+	relocate 'com.github.squi2rel.mcng', 'com.github.squi2rel.vp.shadow.mcng'
+}
+
+tasks.named('assemble') { dependsOn tasks.named('shadowJar') }
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			artifactId = rootProject.archives_base_name
+			from components.java
+		}
+	}
+}

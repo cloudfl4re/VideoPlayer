@@ -23,37 +23,101 @@ jobs:
         run: chmod +x ./gradlew
       - name: build
         run: ./gradlew build
+      - name: verify release archives
+        run: ./gradlew verifyRelease
+      - name: capture all release archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-release
+          path: build/release/*.jar
+          if-no-files-found: error
+      - name: capture Fabric 1.20.1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Fabric-1.20.1
+          path: clients/fabric/1.20.1/build/libs/VideoPlayer-*-1.20.1.jar
+          if-no-files-found: error
+      - name: capture Fabric 1.20.4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Fabric-1.20.4
+          path: clients/fabric/1.20.4/build/libs/VideoPlayer-*-1.20.4.jar
+          if-no-files-found: error
+      - name: capture Fabric 1.21.1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Fabric-1.21.1
+          path: clients/fabric/1.21.1/build/libs/VideoPlayer-*-1.21.1.jar
+          if-no-files-found: error
       - name: capture Fabric 1.21.11 artifact
         uses: actions/upload-artifact@v4
         with:
           name: VideoPlayer-Fabric-1.21.11
           path: |
-            fabric-1.21.11/build/libs/VideoPlayer-*.jar
-            !fabric-1.21.11/build/libs/*-sources.jar
-            !fabric-1.21.11/build/libs/*-dev-shadow.jar
+            clients/fabric/1.21.11/build/libs/VideoPlayer-*.jar
+            !clients/fabric/1.21.11/build/libs/*-sources.jar
+            !clients/fabric/1.21.11/build/libs/*-dev-shadow.jar
           if-no-files-found: error
       - name: capture Fabric 26.2 artifact
         uses: actions/upload-artifact@v4
         with:
           name: VideoPlayer-Fabric-26.2
           path: |
-            fabric-26.2/build/libs/VideoPlayer-*-26.2.jar
-            !fabric-26.2/build/libs/*-plain.jar
-            !fabric-26.2/build/libs/*-sources.jar
+            clients/fabric/26.2/build/libs/VideoPlayer-*-26.2.jar
+            !clients/fabric/26.2/build/libs/*-plain.jar
+            !clients/fabric/26.2/build/libs/*-sources.jar
           if-no-files-found: error
       - name: capture Paper 1.21.11 artifact
         uses: actions/upload-artifact@v4
         with:
           name: VideoPlayer-Paper-1.21.11
           path: |
-            paper-plugin/build/libs/VideoPlayer-Paper-*.jar
-            !paper-plugin/build/libs/*-plain.jar
+            servers/paper/1.21.11/build/libs/VideoPlayer-Paper-*.jar
+            !servers/paper/1.21.11/build/libs/*-plain.jar
+          if-no-files-found: error
+      - name: capture Paper 1.20.1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Paper-1.20.1
+          path: |
+            servers/paper/1.20.1/build/libs/VideoPlayer-Paper-*-1.20.1.jar
+            !servers/paper/1.20.1/build/libs/*-plain.jar
+          if-no-files-found: error
+      - name: capture Paper 1.20.4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Paper-1.20.4
+          path: |
+            servers/paper/1.20.4/build/libs/VideoPlayer-Paper-*-1.20.4.jar
+            !servers/paper/1.20.4/build/libs/*-plain.jar
+          if-no-files-found: error
+      - name: capture Paper 1.21.1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Paper-1.21.1
+          path: |
+            servers/paper/1.21.1/build/libs/VideoPlayer-Paper-*-1.21.1.jar
+            !servers/paper/1.21.1/build/libs/*-plain.jar
+          if-no-files-found: error
+      - name: capture Fabric 26.1.2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Fabric-26.1.2
+          path: clients/fabric/26.1.2/build/libs/VideoPlayer-*-26.1.2.jar
+          if-no-files-found: error
+      - name: capture Paper 26.1.2 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoPlayer-Paper-26.1.2
+          path: |
+            servers/paper/26.1.2/build/libs/VideoPlayer-Paper-*-26.1.2.jar
+            !servers/paper/26.1.2/build/libs/*-plain.jar
           if-no-files-found: error
       - name: capture Paper 26.2 artifact
         uses: actions/upload-artifact@v4
         with:
           name: VideoPlayer-Paper-26.2
           path: |
-            paper-plugin-26.2/build/libs/VideoPlayer-Paper-*-26.2.jar
-            !paper-plugin-26.2/build/libs/*-plain.jar
+            servers/paper/26.2/build/libs/VideoPlayer-Paper-*-26.2.jar
+            !servers/paper/26.2/build/libs/*-plain.jar
           if-no-files-found: error

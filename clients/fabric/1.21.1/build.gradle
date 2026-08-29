@@ -1,0 +1,354 @@
+plugins {
+	id 'fabric-loom'
+	id 'com.gradleup.shadow'
+	id 'maven-publish'
+}
+
+base { archivesName = rootProject.archives_base_name }
+
+repositories {
+	mavenCentral()
+	exclusiveContent {
+		forRepository {
+			maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' }
+		}
+		filter { includeGroup 'maven.modrinth' }
+	}
+}
+
+configurations { shadowBundle }
+
+def compatibilityMainSourceDir = file("${buildDir}/generated/compatibility-main")
+def generateCompatibilityMainSources = tasks.register('generateCompatibilityMainSources') {
+	def sourceRoot = rootProject.file('src/main/java')
+	inputs.dir(sourceRoot)
+	outputs.dir(compatibilityMainSourceDir)
+	doLast {
+		project.delete(compatibilityMainSourceDir)
+		fileTree(sourceRoot).matching { include '**/*.java'; exclude 'android/**' }.files.each { sourceFile ->
+			def relativePath = sourceRoot.toPath().relativize(sourceFile.toPath()).toString().replace('\\', '/')
+			def sourceText = sourceFile.getText('UTF-8')
+			sourceText = sourceText.replace('net.minecraft.resources.Identifier', 'net.minecraft.resources.ResourceLocation')
+			sourceText = sourceText.replace('Identifier.fromNamespaceAndPath', 'ResourceLocation.fromNamespaceAndPath')
+			sourceText = sourceText.replace('Identifier VIDEO_PAYLOAD_ID', 'ResourceLocation VIDEO_PAYLOAD_ID')
+			sourceText = sourceText.replace('.dimension().identifier()', '.dimension().location()')
+			sourceText = sourceText.replace('.getGameProfile().name()', '.getGameProfile().getName()')
+			sourceText = sourceText.replace('import net.minecraft.server.permissions.Permissions;', '')
+			sourceText = sourceText.replace('.createCommandSourceStack().permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)', '.createCommandSourceStack().hasPermission(2)')
+			sourceText = sourceText.replace('DataHolder.loadWorld(current, player.level())', 'DataHolder.loadWorld(current, player.serverLevel())')
+			sourceText = sourceText.replace('loadWorld(current, player.level())', 'loadWorld(current, player.serverLevel())')
+			sourceText = sourceText.replace('DataHolder.loadWorld(player.level().getServer(), player.level())', 'DataHolder.loadWorld(player.serverLevel().getServer(), player.serverLevel())')
+			def targetFile = new File(compatibilityMainSourceDir, relativePath)
+			targetFile.parentFile.mkdirs()
+			targetFile.setText(sourceText, 'UTF-8')
+		}
+	}
+}
+
+def versionClientSourceDir = file('src/client/java')
+def versionClientPaths = fileTree(versionClientSourceDir).matching { include '**/*.java' }.files.collect { sourceFile ->
+	versionClientSourceDir.toPath().relativize(sourceFile.toPath()).toString().replace('\\', '/')
+}.toSet()
+def compatibilityClientSourceDir = file("${buildDir}/generated/compatibility-client")
+def generateCompatibilityClientSources = tasks.register('generateCompatibilityClientSources') {
+	def sourceRoot = rootProject.file('src/client/java')
+	inputs.dir(sourceRoot)
+	inputs.dir(versionClientSourceDir)
+	outputs.dir(compatibilityClientSourceDir)
+	doLast {
+		project.delete(compatibilityClientSourceDir)
+		fileTree(sourceRoot).matching {
+			include '**/*.java'
+			exclude versionClientPaths
+			exclude '**/DrawContextAccessor.java'
+			exclude '**/GameRendererAccessor.java'
+			exclude '**/FramebufferBackedTexture.java'
+		}.files.each { sourceFile ->
+			def relativePath = sourceRoot.toPath().relativize(sourceFile.toPath()).toString().replace('\\', '/')
+			def sourceText = sourceFile.getText('UTF-8')
+			sourceText = sourceText.replace('\r\n', '\n')
+			sourceText = sourceText.replace('net.minecraft.resources.Identifier', 'net.minecraft.resources.ResourceLocation')
+			sourceText = sourceText.replace('Identifier.fromNamespaceAndPath', 'ResourceLocation.fromNamespaceAndPath')
+			sourceText = sourceText.replaceAll('\\bIdentifier\\b', 'ResourceLocation')
+			sourceText = sourceText.replace('net.fabricmc.fabric.api.client.rendering.v1.world.', 'net.fabricmc.fabric.api.client.rendering.v1.')
+			sourceText = sourceText.replace('net.minecraft.client.renderer.rendertype.RenderType', 'net.minecraft.client.renderer.RenderType')
+			sourceText = sourceText.replace('.gui.screen()', '.screen')
+			sourceText = sourceText.replace('.gui.setScreen(', '.setScreen(')
+			sourceText = sourceText.replace('import net.minecraft.client.input.CharacterEvent;', '')
+			sourceText = sourceText.replace('import net.minecraft.client.input.KeyEvent;', '')
+			sourceText = sourceText.replace('import net.minecraft.client.input.MouseButtonEvent;', '')
+			sourceText = sourceText.replace('MouseButtonEvent click, boolean doubleClick', 'double mouseX, double mouseY, int button')
+			sourceText = sourceText.replace('MouseButtonEvent click, double deltaX, double deltaY', 'double mouseX, double mouseY, int button, double deltaX, double deltaY')
+			sourceText = sourceText.replace('MouseButtonEvent click', 'double mouseX, double mouseY, int button')
+			sourceText = sourceText.replace('KeyEvent input', 'int keyCode, int scanCode, int modifiers')
+			sourceText = sourceText.replace('CharacterEvent input', 'char character, int modifiers')
+			sourceText = sourceText.replace('click.x()', 'mouseX')
+			sourceText = sourceText.replace('click.y()', 'mouseY')
+			sourceText = sourceText.replace('click.button()', 'button')
+			sourceText = sourceText.replace('input.key()', 'keyCode')
+			sourceText = sourceText.replace('input.scancode()', 'scanCode')
+			sourceText = sourceText.replace('input.modifiers()', 'modifiers')
+			sourceText = sourceText.replace('super.mouseClicked(click, doubleClick)', 'super.mouseClicked(mouseX, mouseY, button)')
+			sourceText = sourceText.replace('super.mouseDragged(click, deltaX, deltaY)', 'super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY)')
+			sourceText = sourceText.replace('super.mouseReleased(click)', 'super.mouseReleased(mouseX, mouseY, button)')
+			sourceText = sourceText.replace('super.onClick(click, doubleClick)', 'super.onClick(mouseX, mouseY)')
+			sourceText = sourceText.replace('super.onRelease(click)', 'super.onRelease(mouseX, mouseY)')
+			sourceText = sourceText.replace('super.keyPressed(input)', 'super.keyPressed(keyCode, scanCode, modifiers)')
+			sourceText = sourceText.replace('super.charTyped(input)', 'super.charTyped(character, modifiers)')
+			sourceText = sourceText.replace('.mouseClicked(click, doubleClick)', '.mouseClicked(mouseX, mouseY, button)')
+			sourceText = sourceText.replace('.mouseDragged(click, deltaX, deltaY)', '.mouseDragged(mouseX, mouseY, button, deltaX, deltaY)')
+			sourceText = sourceText.replace('.mouseReleased(click)', '.mouseReleased(mouseX, mouseY, button)')
+			sourceText = sourceText.replace('double mouseX = mouseX;', '')
+			sourceText = sourceText.replace('double mouseY = mouseY;', '')
+			sourceText = sourceText.replace('int button = button;', '')
+			sourceText = sourceText.replaceAll('(?s)\\s*@Override\\s+public VertexConsumer setLineWidth\\(float width\\) \\{\\s*return this;\\s*\\}', '')
+			sourceText = sourceText.replace('void onClick(double mouseX, double mouseY, int button)', 'void onClick(double mouseX, double mouseY)')
+			sourceText = sourceText.replace('void onRelease(double mouseX, double mouseY, int button)', 'void onRelease(double mouseX, double mouseY)')
+			sourceText = sourceText.replace('import net.minecraft.util.profiling.Profiler;', '')
+			sourceText = sourceText.replace('Profiler.get()', 'Minecraft.getInstance().getProfiler()')
+			sourceText = sourceText.replace('.getDeltaTracker()', '.getTimer()')
+			sourceText = sourceText.replace('.getWindow().handle()', '.getWindow().getWindow()')
+			sourceText = sourceText.replace('WorldRenderEvents.START_MAIN', 'WorldRenderEvents.AFTER_SETUP')
+			if (relativePath.endsWith('/VpButtonWidget.java')) {
+				sourceText = sourceText.replace('!input.isSelection()', 'keyCode != org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER && keyCode != org.lwjgl.glfw.GLFW.GLFW_KEY_SPACE')
+			}
+			if (relativePath.endsWith('/MpvFilterGraphScreen.java')) {
+				def charTypedMethod = '''public boolean charTyped(char character, int modifiers) {
+			        if (editor.charTyped(character, modifiers)) return true;
+			        return super.charTyped(character, modifiers);
+			    }'''
+				sourceText = sourceText.replaceAll('(?s)public boolean charTyped\\(char character, int modifiers\\) \\{.*?\\n    \\}', java.util.regex.Matcher.quoteReplacement(charTypedMethod))
+			}
+			if (relativePath.endsWith('/VideoCreationEditor.java')) {
+				sourceText = sourceText.replace('import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;', 'import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;')
+				sourceText = sourceText.replace('import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;', '')
+				sourceText = sourceText.replaceAll('(?s)HudElementRegistry\\.attachElementAfter\\(\\s*VanillaHudElements\\.CROSSHAIR,\\s*HUD_LAYER,\\s*SelectionPreviewRenderer::renderHud\\s*\\);', 'HudRenderCallback.EVENT.register(SelectionPreviewRenderer::renderHud);')
+				sourceText = sourceText.replace('KeyMapping.Category.register(ResourceLocation.fromNamespaceAndPath("videoplayer", "videoplayer"))', '"key.categories.videoplayer"')
+			}
+			if (relativePath.endsWith('/VideoPlayerClient.java')) {
+				sourceText = sourceText.replace('List<Float> id = data.floats();\n            if (id.isEmpty() || !id.contains(remoteControlId)) continue;', 'if (data.value() != Math.round(remoteControlId)) continue;')
+			}
+			if (relativePath.endsWith('/BiliLoginScreen.java')) {
+				sourceText = sourceText.replace('new DynamicTexture(() -> "VideoPlayer Bilibili QR", image)', 'new DynamicTexture(image)')
+				sourceText = sourceText.replace('.setPixel(', '.setPixelRGBA(')
+			}
+			if (relativePath.endsWith('/SelectionPreviewRenderer.java')) {
+				sourceText = sourceText.replace('import net.minecraft.client.renderer.RenderTypes;', '')
+				sourceText = sourceText.replace('RenderTypes.lines()', 'RenderType.lines()')
+				sourceText = sourceText.replace('ctx.matrices()', 'ctx.matrixStack()')
+				sourceText = sourceText.replace('.getMainCamera().position()', '.getMainCamera().getPosition()')
+				sourceText = sourceText.replace('.setLineWidth(1.0f)', '')
+			}
+			if (relativePath.endsWith('/VideoManagementScreen.java')) {
+				sourceText = sourceText.replaceAll('(?s)float u2 = screen != null && screen\\.stereo3d \\? 0\\.5f : 1f;\\s*context\\.blit\\(\\s*ScreenRenderer\\.textureIdentifier\\(textureId\\),\\s*x,\\s*y,\\s*x \\+ width,\\s*y \\+ height,\\s*0,\\s*u2,\\s*0,\\s*1\\s*\\);', 'context.blit(ScreenRenderer.textureIdentifier(textureId), x, y, 0.0f, 0.0f, width, height, screen != null && screen.stereo3d ? width * 2 : width, height);')
+			}
+			if (relativePath.endsWith('/VideoMappingScreen.java')) {
+				sourceText = sourceText.replace('click.buttonInfo().hasControlDownWithQuirk()', 'Screen.hasControlDown()')
+				sourceText = sourceText.replace('click.buttonInfo().hasShiftDown()', 'Screen.hasShiftDown()')
+				sourceText = sourceText.replace('.pushMatrix()', '.pushPose()')
+				sourceText = sourceText.replace('.popMatrix()', '.popPose()')
+				sourceText = sourceText.replace('context.pose().translate(x1, y1)', 'context.pose().translate(x1, y1, 0.0f)')
+				sourceText = sourceText.replace('context.pose().rotate((float) Math.atan2(dy, dx))', 'context.pose().mulPose(com.mojang.math.Axis.ZP.rotation((float) Math.atan2(dy, dx)))')
+			}
+			if (relativePath.endsWith('/ClientDanmakuRenderer.java')) {
+				def replaceSection = { String value, String start, String end, String replacement ->
+					int from = value.indexOf(start)
+					int to = value.indexOf(end, from)
+					if (from < 0 || to < 0) throw new GradleException("Unable to adapt ${relativePath}: ${start}")
+					value.substring(0, from) + replacement + value.substring(to)
+				}
+				sourceText = sourceText.replace('import com.github.squi2rel.vp.mixin.client.DrawContextAccessor;', '')
+				sourceText = sourceText.replace('import com.mojang.blaze3d.pipeline.RenderPipeline;', '')
+				sourceText = sourceText.replace('import com.mojang.blaze3d.systems.RenderSystem;', '')
+				sourceText = sourceText.replace('import com.mojang.blaze3d.textures.FilterMode;', '')
+				sourceText = sourceText.replace('import com.mojang.blaze3d.textures.GpuTextureView;', '')
+				sourceText = sourceText.replace('import net.minecraft.client.gui.font.TextRenderable;', '')
+				sourceText = sourceText.replace('import net.minecraft.client.gui.navigation.ScreenRectangle;', '')
+				sourceText = sourceText.replace('import net.minecraft.client.gui.render.TextureSetup;', '')
+				sourceText = sourceText.replace('import net.minecraft.client.gui.render.state.GuiElementRenderState;', '')
+				sourceText = sourceText.replace('import org.joml.Matrix3x2f;', '')
+				sourceText = sourceText.replace('import net.minecraft.client.Minecraft;', 'import net.minecraft.client.Minecraft;')
+				def previewMethod = '''public static void drawPreview(GuiGraphics context, ClientVideoScreen target, int x, int y, int width, int height) {
+        if (target == null || width <= 0 || height <= 0 || !ClientDanmakuController.isEnabledOn(target) || target.surface == ScreenSurface.SPHERE_360) return;
+        ClientVideoScreen playback = target.getScreen();
+        if (playback == null) return;
+        float canvasWidth = previewCanvasWidth(width, height);
+        float canvasHeight = ClientDanmakuController.VIRTUAL_HEIGHT;
+        List<ClientDanmakuController.RenderableDanmaku> items = playback.danmaku().renderables(canvasWidth, canvasHeight);
+        if (items.isEmpty()) return;
+        float scaleX = width / canvasWidth;
+        float scaleY = height / canvasHeight;
+        int color = colorWithAlpha(0xFFFFFFFF, alpha(opacityVertexColor()));
+        context.enableScissor(x, y, x + width, y + height);
+        try {
+            for (ClientDanmakuController.RenderableDanmaku item : items) {
+                PoseStack pose = context.pose();
+                pose.pushPose();
+                pose.translate(x + item.x() * scaleX, y + item.y() * scaleY, 0.0f);
+                pose.scale(item.scale() * scaleX, item.scale() * scaleY, 1.0f);
+                context.drawString(net.minecraft.client.Minecraft.getInstance().font, item.text(), 0, 0,
+                        colorWithAlpha(item.color(), alpha(color)), false);
+                pose.popPose();
+            }
+        } finally {
+            context.disableScissor();
+        }
+    }
+
+    '''
+				sourceText = replaceSection(sourceText, 'public static void drawPreview(', 'public static void drawSubtitlePreview(', previewMethod)
+				def subtitlePreviewMethod = '''public static void drawSubtitlePreview(GuiGraphics context, ClientVideoScreen target, int x, int y, int width, int height) {
+        if (target == null || width <= 0 || height <= 0 || target.surface == ScreenSurface.SPHERE_360) return;
+        ClientVideoScreen playback = target.getScreen();
+        if (playback == null) return;
+        float canvasWidth = previewCanvasWidth(width, height);
+        float canvasHeight = ClientDanmakuController.VIRTUAL_HEIGHT;
+        List<ClientDanmakuController.RenderableDanmaku> items = playback.subtitles().renderables(canvasWidth, canvasHeight);
+        if (items.isEmpty()) return;
+        float scaleX = width / canvasWidth;
+        float scaleY = height / canvasHeight;
+        context.enableScissor(x, y, x + width, y + height);
+        try {
+            for (ClientDanmakuController.RenderableDanmaku item : items) {
+                drawPreviewSubtitleBackground(context, item, x, y, width, height, scaleX, scaleY);
+                PoseStack pose = context.pose();
+                pose.pushPose();
+                pose.translate(x + item.x() * scaleX, y + item.y() * scaleY, 0.0f);
+                pose.scale(item.scale() * scaleX, item.scale() * scaleY, 1.0f);
+                context.drawString(net.minecraft.client.Minecraft.getInstance().font, item.text(), 0, 0, SUBTITLE_VERTEX_COLOR, false);
+                pose.popPose();
+            }
+        } finally {
+            context.disableScissor();
+        }
+    }
+
+    '''
+				sourceText = replaceSection(sourceText, 'public static void drawSubtitlePreview(', 'private static float previewCanvasWidth(', subtitlePreviewMethod)
+				sourceText = replaceSection(sourceText, 'private static void collectPreviewItem(', 'private static void drawPreviewSubtitleBackground(', '')
+				sourceText = replaceSection(sourceText, 'private static final class GuiTextBatch {', 'private static final class WorldTextBatch {', '')
+				sourceText = replaceSection(sourceText, 'private static final class MappedGlyphDrawer', 'private static final class MappingVertexConsumer', '')
+				sourceText = sourceText.replace('DanmakuTextLayoutCache.CachedLayout layout = DanmakuTextLayoutCache.get(item.text());', 'net.minecraft.client.gui.Font font = net.minecraft.client.Minecraft.getInstance().font;')
+				sourceText = sourceText.replace('layout.body().visit(new MappedGlyphDrawer(batch, context, target, normalOffset, matrix,\n                Font.DisplayMode.POLYGON_OFFSET, bodyColor));', 'MultiBufferSource mappedOutput = layer -> new MappingVertexConsumer(batch.consumer(layer), context, target, normalOffset, bodyColor);\n        font.drawInBatch(DanmakuTextLayoutCache.orderedText(item.text()), 0.0f, 0.0f, bodyColor, false, matrix, mappedOutput, Font.DisplayMode.POLYGON_OFFSET, 0, LIGHT);')
+			}
+			def targetFile = new File(compatibilityClientSourceDir, relativePath)
+			targetFile.parentFile.mkdirs()
+			targetFile.setText(sourceText, 'UTF-8')
+		}
+	}
+}
+
+loom {
+	splitEnvironmentSourceSets()
+	mods {
+		videoplayer {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+}
+
+sourceSets {
+	main {
+		java.setSrcDirs([compatibilityMainSourceDir])
+		resources.setSrcDirs([rootProject.file('src/main/resources')])
+	}
+	client {
+		java.setSrcDirs([compatibilityClientSourceDir, versionClientSourceDir])
+		resources.setSrcDirs([file('src/client/resources'), rootProject.file('src/client/resources')])
+	}
+	test {
+		java.setSrcDirs([rootProject.file('src/test/java')])
+		resources.setSrcDirs([rootProject.file('src/test/resources')])
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${rootProject.minecraft_1_21_1_version}"
+	mappings loom.officialMojangMappings()
+	modImplementation "net.fabricmc:fabric-loader:${rootProject.loader_1_21_1_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_1_21_1_version}"
+	implementation 'net.java.dev.jna:jna:5.17.0'
+	implementation 'org.brotli:dec:0.1.2'
+	include 'org.brotli:dec:0.1.2'
+	implementation 'com.google.zxing:core:3.5.3'
+	include 'com.google.zxing:core:3.5.3'
+	implementation project(':mcng-core')
+	implementation project(path: ':mcng-fabric-client-1.21.1', configuration: 'namedElements')
+	shadowBundle project(':mcng-core')
+	shadowBundle project(path: ':mcng-fabric-client-1.21.1', configuration: 'namedElements')
+	modCompileOnly "maven.modrinth:modmenu:${rootProject.modmenu_1_21_1_version}"
+	modCompileOnly "maven.modrinth:vivecraft:${rootProject.vivecraft_1_21_1_version}"
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test { useJUnitPlatform() }
+
+tasks.named('compileJava') { dependsOn generateCompatibilityMainSources }
+tasks.named('compileClientJava') { dependsOn generateCompatibilityClientSources }
+tasks.matching { it.name == 'sourcesJar' }.configureEach {
+	dependsOn generateCompatibilityMainSources, generateCompatibilityClientSources
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+processResources {
+	doFirst {
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.zip'))
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/vlc/android_arm64-v8a.NOTICE.txt'))
+	}
+	inputs.properties([
+		version: project.version,
+		loader_min_version: rootProject.loader_1_21_1_version,
+		minecraft_dependency: '~1.21.1',
+		java_version: '21'
+	])
+	filesMatching('fabric.mod.json') { expand inputs.properties }
+}
+
+processClientResources {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+tasks.withType(JavaCompile).configureEach { options.release = 21 }
+
+tasks.withType(AbstractArchiveTask).configureEach {
+	archiveVersion = "${project.version}-1.21.1"
+}
+
+java {
+	toolchain { languageVersion = JavaLanguageVersion.of(21) }
+	withSourcesJar()
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}
+
+jar {
+	inputs.property 'archivesName', project.base.archivesName
+	from(rootProject.file('LICENSE')) { rename { "${it}_${inputs.properties.archivesName}" } }
+	from(rootProject.file('MCNG_LICENSE')) { rename { "${it}_${inputs.properties.archivesName}" } }
+}
+
+shadowJar {
+	archiveClassifier = 'dev-shadow'
+	configurations = [project.configurations.shadowBundle]
+	from sourceSets.client.output
+	from(rootProject.file('LICENSE')) { rename { "${it}_${project.base.archivesName.get()}" } }
+	from(rootProject.file('MCNG_LICENSE')) { rename { "${it}_${project.base.archivesName.get()}" } }
+	relocate 'com.github.squi2rel.mcng', 'com.github.squi2rel.vp.shadow.mcng'
+}
+
+remapJar {
+	dependsOn shadowJar
+	inputFile.set(shadowJar.archiveFile)
+}
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			artifactId = rootProject.archives_base_name
+			from components.java
+		}
+	}
+}

@@ -14,10 +14,44 @@ plugins {
 }
 
 rootProject.name = "VideoPlayer"
+
 include "paper-plugin"
+project(':paper-plugin').projectDir = file('servers/paper/1.21.11')
 include "paper-plugin-26.2"
+project(':paper-plugin-26.2').projectDir = file('servers/paper/26.2')
+include "paper-plugin-1.20.1"
+project(':paper-plugin-1.20.1').projectDir = file('servers/paper/1.20.1')
+include "paper-plugin-1.20.4"
+project(':paper-plugin-1.20.4').projectDir = file('servers/paper/1.20.4')
+include "paper-plugin-1.21.1"
+project(':paper-plugin-1.21.1').projectDir = file('servers/paper/1.21.1')
+include "paper-plugin-26.1.2"
+project(':paper-plugin-26.1.2').projectDir = file('servers/paper/26.1.2')
+
+include "fabric-1.20.1"
+project(':fabric-1.20.1').projectDir = file('clients/fabric/1.20.1')
+include "fabric-1.20.4"
+project(':fabric-1.20.4').projectDir = file('clients/fabric/1.20.4')
+include "fabric-1.21.1"
+project(':fabric-1.21.1').projectDir = file('clients/fabric/1.21.1')
 include "fabric-1.21.11"
+project(':fabric-1.21.11').projectDir = file('clients/fabric/1.21.11')
+include "fabric-26.1.2"
+project(':fabric-26.1.2').projectDir = file('clients/fabric/26.1.2')
 include "fabric-26.2"
+project(':fabric-26.2').projectDir = file('clients/fabric/26.2')
+
 include "mcng-core"
+project(':mcng-core').projectDir = file('common/mcng-core')
 include "mcng-fabric-client"
+project(':mcng-fabric-client').projectDir = file('clients/mcng/fabric/1.21.11')
 include "mcng-fabric-client-26.2"
+project(':mcng-fabric-client-26.2').projectDir = file('clients/mcng/fabric/26.2')
+include "mcng-fabric-client-1.20.1"
+project(':mcng-fabric-client-1.20.1').projectDir = file('clients/mcng/fabric/1.20.1')
+include "mcng-fabric-client-1.20.4"
+project(':mcng-fabric-client-1.20.4').projectDir = file('clients/mcng/fabric/1.20.4')
+include "mcng-fabric-client-1.21.1"
+project(':mcng-fabric-client-1.21.1').projectDir = file('clients/mcng/fabric/1.21.1')
+include "mcng-fabric-client-26.1.2"
+project(':mcng-fabric-client-26.1.2').projectDir = file('clients/mcng/fabric/26.1.2')

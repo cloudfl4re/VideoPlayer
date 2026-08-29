@@ -29,12 +29,24 @@ subprojects {
 }
 
 tasks.named('build') {
+	dependsOn ':fabric-1.20.1:build'
+	dependsOn ':fabric-1.20.4:build'
+	dependsOn ':fabric-1.21.1:build'
 	dependsOn ':fabric-1.21.11:build'
+	dependsOn ':fabric-26.1.2:build'
 	dependsOn ':fabric-26.2:build'
+	dependsOn ':paper-plugin-1.20.1:build'
+	dependsOn ':paper-plugin-1.20.4:build'
+	dependsOn ':paper-plugin-1.21.1:build'
 	dependsOn ':paper-plugin:build'
+	dependsOn ':paper-plugin-26.1.2:build'
 	dependsOn ':paper-plugin-26.2:build'
 	dependsOn ':mcng-core:build'
+	dependsOn ':mcng-fabric-client-1.20.1:build'
+	dependsOn ':mcng-fabric-client-1.20.4:build'
+	dependsOn ':mcng-fabric-client-1.21.1:build'
 	dependsOn ':mcng-fabric-client:build'
+	dependsOn ':mcng-fabric-client-26.1.2:build'
 	dependsOn ':mcng-fabric-client-26.2:build'
 }
 
@@ -42,8 +54,59 @@ def releaseVersion = project.version.toString()
 def releaseDirectory = layout.buildDirectory.dir('release')
 def releaseArtifacts = [
 	[
+		fileName: "VideoPlayer-${releaseVersion}-1.20.1.jar",
+		source: file("clients/fabric/1.20.1/build/libs/VideoPlayer-${releaseVersion}-1.20.1.jar"),
+		type: 'fabric',
+		minecraft: '~1.20.1',
+		javaDependency: '>=21',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerMain.class',
+		classMajor: 65,
+		requiredEntries: [
+			'fabric.mod.json',
+			'videoplayer.client.mixins.json',
+			'com/github/squi2rel/vp/network/VideoProtocol.class',
+			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
+			'META-INF/jars/core-3.5.3.jar',
+			'META-INF/jars/dec-0.1.2.jar'
+		]
+	],
+	[
+		fileName: "VideoPlayer-${releaseVersion}-1.20.4.jar",
+		source: file("clients/fabric/1.20.4/build/libs/VideoPlayer-${releaseVersion}-1.20.4.jar"),
+		type: 'fabric',
+		minecraft: '~1.20.4',
+		javaDependency: '>=21',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerMain.class',
+		classMajor: 65,
+		requiredEntries: [
+			'fabric.mod.json',
+			'videoplayer.client.mixins.json',
+			'com/github/squi2rel/vp/network/VideoProtocol.class',
+			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
+			'META-INF/jars/core-3.5.3.jar',
+			'META-INF/jars/dec-0.1.2.jar'
+		]
+	],
+	[
+		fileName: "VideoPlayer-${releaseVersion}-1.21.1.jar",
+		source: file("clients/fabric/1.21.1/build/libs/VideoPlayer-${releaseVersion}-1.21.1.jar"),
+		type: 'fabric',
+		minecraft: '~1.21.1',
+		javaDependency: '>=21',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerMain.class',
+		classMajor: 65,
+		requiredEntries: [
+			'fabric.mod.json',
+			'videoplayer.client.mixins.json',
+			'com/github/squi2rel/vp/network/VideoProtocol.class',
+			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
+			'META-INF/jars/core-3.5.3.jar',
+			'META-INF/jars/dec-0.1.2.jar'
+		]
+	],
+	[
 		fileName: "VideoPlayer-${releaseVersion}.jar",
-		source: file("fabric-1.21.11/build/libs/VideoPlayer-${releaseVersion}.jar"),
+		source: file("clients/fabric/1.21.11/build/libs/VideoPlayer-${releaseVersion}.jar"),
 		type: 'fabric',
 		minecraft: '~1.21.11',
 		javaDependency: '>=21',
@@ -59,8 +122,36 @@ def releaseArtifacts = [
 		]
 	],
 	[
-		fileName: "VideoPlayer-Paper-${releaseVersion}.jar",
-		source: file("paper-plugin/build/libs/VideoPlayer-Paper-${releaseVersion}.jar"),
+		fileName: "VideoPlayer-Paper-${releaseVersion}-1.20.1.jar",
+		source: file("servers/paper/1.20.1/build/libs/VideoPlayer-Paper-${releaseVersion}-1.20.1.jar"),
+		type: 'paper',
+		apiVersion: '1.20',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+		classMajor: 61,
+		requiredEntries: [
+			'plugin.yml',
+			'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+			'com/github/squi2rel/vp/FoliaScheduler.class',
+			'com/github/squi2rel/vp/network/VideoProtocol.class'
+		]
+	],
+	[
+		fileName: "VideoPlayer-Paper-${releaseVersion}-1.20.4.jar",
+		source: file("servers/paper/1.20.4/build/libs/VideoPlayer-Paper-${releaseVersion}-1.20.4.jar"),
+		type: 'paper',
+		apiVersion: '1.20',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+		classMajor: 65,
+		requiredEntries: [
+			'plugin.yml',
+			'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+			'com/github/squi2rel/vp/FoliaScheduler.class',
+			'com/github/squi2rel/vp/network/VideoProtocol.class'
+		]
+	],
+	[
+		fileName: "VideoPlayer-Paper-${releaseVersion}-1.21.1.jar",
+		source: file("servers/paper/1.21.1/build/libs/VideoPlayer-Paper-${releaseVersion}-1.21.1.jar"),
 		type: 'paper',
 		apiVersion: '1.21',
 		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
@@ -73,8 +164,42 @@ def releaseArtifacts = [
 		]
 	],
 	[
+		fileName: "VideoPlayer-Paper-${releaseVersion}.jar",
+		source: file("servers/paper/1.21.11/build/libs/VideoPlayer-Paper-${releaseVersion}.jar"),
+		type: 'paper',
+		apiVersion: '1.21',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+		classMajor: 65,
+		requiredEntries: [
+			'plugin.yml',
+			'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+			'com/github/squi2rel/vp/FoliaScheduler.class',
+			'com/github/squi2rel/vp/network/VideoProtocol.class'
+		]
+	],
+	[
+		fileName: "VideoPlayer-${releaseVersion}-26.1.2.jar",
+		source: file("clients/fabric/26.1.2/build/libs/VideoPlayer-${releaseVersion}-26.1.2.jar"),
+		type: 'fabric',
+		minecraft: '~26.1.2',
+		javaDependency: '>=25',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerMain.class',
+		classMajor: 69,
+		requiredEntries: [
+			'fabric.mod.json',
+			'videoplayer.client.mixins.json',
+			'com/github/squi2rel/vp/network/VideoProtocol.class',
+			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
+			'com/github/squi2rel/vp/render/FrameRenderSnapshot.class',
+			'com/github/squi2rel/vp/render/WorldRenderBatch.class',
+			'com/github/squi2rel/vp/mixin/client/GameRendererTargetAccessor.class',
+			'org/brotli/dec/BrotliInputStream.class',
+			'com/google/zxing/qrcode/QRCodeWriter.class'
+		]
+	],
+	[
 		fileName: "VideoPlayer-${releaseVersion}-26.2.jar",
-		source: file("fabric-26.2/build/libs/VideoPlayer-${releaseVersion}-26.2.jar"),
+		source: file("clients/fabric/26.2/build/libs/VideoPlayer-${releaseVersion}-26.2.jar"),
 		type: 'fabric',
 		minecraft: '~26.2',
 		javaDependency: '>=25',
@@ -94,8 +219,22 @@ def releaseArtifacts = [
 		]
 	],
 	[
+		fileName: "VideoPlayer-Paper-${releaseVersion}-26.1.2.jar",
+		source: file("servers/paper/26.1.2/build/libs/VideoPlayer-Paper-${releaseVersion}-26.1.2.jar"),
+		type: 'paper',
+		apiVersion: '26.1.2',
+		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+		classMajor: 69,
+		requiredEntries: [
+			'plugin.yml',
+			'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
+			'com/github/squi2rel/vp/FoliaScheduler.class',
+			'com/github/squi2rel/vp/network/VideoProtocol.class'
+		]
+	],
+	[
 		fileName: "VideoPlayer-Paper-${releaseVersion}-26.2.jar",
-		source: file("paper-plugin-26.2/build/libs/VideoPlayer-Paper-${releaseVersion}-26.2.jar"),
+		source: file("servers/paper/26.2/build/libs/VideoPlayer-Paper-${releaseVersion}-26.2.jar"),
 		type: 'paper',
 		apiVersion: '26.2',
 		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',
@@ -111,10 +250,18 @@ def releaseArtifacts = [
 
 tasks.register('assembleRelease') {
 	group = 'build'
-	description = 'Builds and copies the four supported release archives.'
+	description = 'Builds and copies all supported release archives.'
+	dependsOn ':fabric-1.20.1:build'
+	dependsOn ':fabric-1.20.4:build'
+	dependsOn ':fabric-1.21.1:build'
 	dependsOn ':fabric-1.21.11:build'
+	dependsOn ':fabric-26.1.2:build'
 	dependsOn ':fabric-26.2:build'
+	dependsOn ':paper-plugin-1.20.1:build'
+	dependsOn ':paper-plugin-1.20.4:build'
+	dependsOn ':paper-plugin-1.21.1:build'
 	dependsOn ':paper-plugin:build'
+	dependsOn ':paper-plugin-26.1.2:build'
 	dependsOn ':paper-plugin-26.2:build'
 	inputs.files(releaseArtifacts.collect { it.source })
 	outputs.dir(releaseDirectory)

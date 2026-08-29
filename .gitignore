@@ -45,3 +45,16 @@ replay_*.log
 
 # local toolchain
 .tmp-jdk21/
+
+# temporary analysis artifacts
+.tmp*
+
+# local AI assistant tooling (superpowers-zh skill framework, per-tool copies)
+.agents/
+.claude/
+.codex/
+CLAUDE.md
+
+# internal review working documents
+CODE_REVIEW_FINDINGS*.md
+BUG_LIST_*.md

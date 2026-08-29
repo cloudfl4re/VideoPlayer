@@ -1,0 +1,89 @@
+plugins {
+	id 'fabric-loom'
+	id 'maven-publish'
+}
+
+base {
+	archivesName = "${rootProject.archives_base_name}-fabric-client-1.21.1"
+}
+
+def compatibilitySourceDir = file("${buildDir}/generated/compatibility-source")
+def generateCompatibilitySources = tasks.register('generateCompatibilitySources') {
+	def sourceRoot = rootProject.file('clients/mcng/fabric/1.21.11/src/main/java')
+	inputs.dir(sourceRoot)
+	outputs.dir(compatibilitySourceDir)
+	doLast {
+		project.delete(compatibilitySourceDir)
+		fileTree(sourceRoot).matching { include '**/*.java' }.files.each { sourceFile ->
+			def relativePath = sourceRoot.toPath().relativize(sourceFile.toPath()).toString().replace('\\', '/')
+			def sourceText = sourceFile.getText('UTF-8')
+			sourceText = sourceText.replace('net.minecraft.resources.Identifier', 'net.minecraft.resources.ResourceLocation')
+			sourceText = sourceText.replace('Identifier.fromNamespaceAndPath', 'ResourceLocation.fromNamespaceAndPath')
+			sourceText = sourceText.replace('.pushMatrix()', '.pushPose()')
+			sourceText = sourceText.replace('.popMatrix()', '.popPose()')
+			sourceText = sourceText.replace('context.pose().translate(bounds.x(), bounds.y())', 'context.pose().translate(bounds.x(), bounds.y(), 0.0F)')
+			sourceText = sourceText.replace('context.pose().translate((float) viewport.offsetX(), (float) viewport.offsetY())', 'context.pose().translate((float) viewport.offsetX(), (float) viewport.offsetY(), 0.0F)')
+			sourceText = sourceText.replace('context.pose().scale((float) viewport.zoom(), (float) viewport.zoom())', 'context.pose().scale((float) viewport.zoom(), (float) viewport.zoom(), 1.0F)')
+			sourceText = sourceText.replace('.getWindow().handle()', '.getWindow().getWindow()')
+			sourceText = sourceText.replace('InputConstants.isKeyDown(window,', 'InputConstants.isKeyDown(window.getWindow(),')
+			if (relativePath == 'com/github/squi2rel/mcng/fabric/client/ImagePreviewNodeBodyComponent.java') {
+				sourceText = sourceText.replace('import net.minecraft.client.renderer.RenderPipelines;', '')
+				sourceText = sourceText.replace('RenderPipelines.GUI_TEXTURED, ', '')
+				sourceText = sourceText.replace('Identifier', 'ResourceLocation')
+				sourceText = sourceText.replace('new DynamicTexture(id::toString, image)', 'new DynamicTexture(image)')
+				sourceText = sourceText.replace('context.blit(textureId, drawX, drawY, 0.0f, 0.0f, drawWidth, drawHeight, imageWidth, imageHeight, imageWidth, imageHeight);', 'context.blit(textureId, drawX, drawY, drawWidth, drawHeight, 0.0f, 0.0f, imageWidth, imageHeight, imageWidth, imageHeight);')
+			}
+			if (relativePath == 'com/github/squi2rel/mcng/fabric/client/MCNGDebugScreen.java') {
+				sourceText = sourceText.replace('import net.minecraft.client.input.CharacterEvent;', '')
+				sourceText = sourceText.replace('import net.minecraft.client.input.KeyEvent;', '')
+				sourceText = sourceText.replace('import net.minecraft.client.input.MouseButtonEvent;', '')
+				sourceText = sourceText.replace('super(minecraftClient(), minecraftTextRenderer(), Component.translatable("mcng.ui.debug.screen_title"));', 'super(Component.translatable("mcng.ui.debug.screen_title"));')
+				sourceText = sourceText.replaceAll('(?s)(\\r?\\n\\t@Override\\r?\\n\\tpublic boolean mouseClicked\\(MouseButtonEvent click, boolean doubleClick\\) \\{.*?\\r?\\n\\t\\}\\r?\\n)(\\r?\\n\\tpublic boolean mouseClicked)', '$2')
+				sourceText = sourceText.replaceAll('(?s)(\\r?\\n\\t@Override\\r?\\n\\tpublic boolean mouseDragged\\(MouseButtonEvent click, double deltaX, double deltaY\\) \\{.*?\\r?\\n\\t\\}\\r?\\n)(\\r?\\n\\tpublic boolean mouseDragged)', '$2')
+				sourceText = sourceText.replaceAll('(?s)(\\r?\\n\\t@Override\\r?\\n\\tpublic boolean mouseReleased\\(MouseButtonEvent click\\) \\{.*?\\r?\\n\\t\\}\\r?\\n)(\\r?\\n\\tpublic boolean mouseReleased)', '$2')
+				sourceText = sourceText.replaceAll('(?s)(\\r?\\n\\t@Override\\r?\\n\\tpublic boolean keyPressed\\(KeyEvent input\\) \\{.*?\\r?\\n\\t\\}\\r?\\n)(\\r?\\n\\tpublic boolean keyPressed)', '$2')
+				sourceText = sourceText.replaceAll('(?s)(\\r?\\n\\t@Override\\r?\\n\\tpublic boolean charTyped\\(CharacterEvent input\\) \\{.*?\\r?\\n\\t\\}\\r?\\n)(\\r?\\n\\tpublic boolean charTyped)', '$2')
+			}
+			def targetFile = new File(compatibilitySourceDir, relativePath)
+			targetFile.parentFile.mkdirs()
+			targetFile.setText(sourceText, 'UTF-8')
+		}
+	}
+}
+
+sourceSets {
+	main {
+		java.setSrcDirs([compatibilitySourceDir])
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${rootProject.minecraft_1_21_1_version}"
+	mappings loom.officialMojangMappings()
+	modImplementation "net.fabricmc:fabric-loader:${rootProject.loader_1_21_1_version}"
+	implementation project(':mcng-core')
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test { useJUnitPlatform() }
+
+tasks.named('compileJava') { dependsOn generateCompatibilitySources }
+
+tasks.withType(JavaCompile).configureEach { options.release = 21 }
+
+java {
+	toolchain { languageVersion = JavaLanguageVersion.of(21) }
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
+}
+
+publishing {
+	publications {
+		create('mavenJava', MavenPublication) {
+			from components.java
+			artifactId = "${rootProject.archives_base_name}-fabric-client-1.21.1"
+		}
+	}
+}

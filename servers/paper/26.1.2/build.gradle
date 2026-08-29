@@ -1,0 +1,126 @@
+plugins {
+	id 'java'
+	id 'com.gradleup.shadow'
+}
+
+base {
+	archivesName = "${rootProject.archives_base_name}-Paper"
+}
+
+repositories {
+	mavenCentral()
+	maven {
+		name = 'Paper'
+		url = 'https://repo.papermc.io/repository/maven-public/'
+	}
+}
+
+sourceSets {
+	main {
+		java.setSrcDirs([rootProject.file('servers/paper/1.21.11/src/main/java')])
+		resources.setSrcDirs([rootProject.file('servers/paper/1.21.11/src/main/resources')])
+	}
+	test {
+		java.setSrcDirs([rootProject.file('servers/paper/1.21.11/src/test/java')])
+		resources.setSrcDirs([rootProject.file('servers/paper/1.21.11/src/test/resources')])
+	}
+}
+
+def sharedMainSources = fileTree("${rootProject.projectDir}/src/main/java") {
+	exclude 'android/**'
+	exclude 'com/github/squi2rel/vp/VideoPlayerMain.java'
+	exclude 'com/github/squi2rel/vp/DataHolder.java'
+	exclude 'com/github/squi2rel/vp/network/ServerPacketHandler.java'
+	exclude 'com/github/squi2rel/vp/network/VideoPayload.java'
+	exclude 'com/github/squi2rel/vp/network/ClientMessageBridge.java'
+	exclude 'com/github/squi2rel/vp/provider/PlayerProviderSource.java'
+	exclude 'com/github/squi2rel/vp/permission/VideoPermissions.java'
+	exclude 'com/github/squi2rel/vp/video/ScreenBroadcaster.java'
+	exclude 'com/github/squi2rel/vp/video/VideoArea.java'
+	exclude 'com/github/squi2rel/vp/i18n/MinecraftTexts.java'
+}
+
+dependencies {
+	compileOnly "io.papermc.paper:paper-api:${rootProject.paper_api_26_1_2_version}"
+	compileOnly 'org.jetbrains:annotations:26.0.2'
+	compileOnly 'org.slf4j:slf4j-api:2.0.16'
+	implementation 'io.netty:netty-buffer:4.1.118.Final'
+	implementation 'org.joml:joml:1.10.8'
+	implementation 'com.google.code.gson:gson:2.11.0'
+	implementation 'net.java.dev.jna:jna:5.17.0'
+	implementation 'org.brotli:dec:0.1.2'
+	testImplementation platform('org.junit:junit-bom:5.11.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testImplementation "org.mockito:mockito-core:${rootProject.mockito_version}"
+	testImplementation "io.papermc.paper:paper-api:${rootProject.paper_api_26_1_2_version}"
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.test {
+	useJUnitPlatform()
+	workingDir rootProject.file('servers/paper/1.21.11')
+}
+
+tasks.processResources {
+	doFirst {
+		java.nio.file.Files.deleteIfExists(destinationDir.toPath().resolve('assets/videoplayer/native/libmpv-windows-x64.zip'))
+	}
+	inputs.property 'version', project.version
+	inputs.property 'apiVersion', '26.1.2'
+	from("${rootProject.projectDir}/src/main/resources/assets/videoplayer/native-downloads.json") {
+		into 'assets/videoplayer'
+	}
+	filesMatching('plugin.yml') {
+		expand 'version': project.version, 'apiVersion': '26.1.2'
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 25
+	options.encoding = 'UTF-8'
+}
+
+tasks.named('compileJava', JavaCompile) {
+	source sharedMainSources
+}
+
+java {
+	toolchain { languageVersion = JavaLanguageVersion.of(25) }
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+tasks.jar {
+	archiveClassifier = 'plain'
+	archiveVersion = "${project.version}-26.1.2"
+}
+
+tasks.shadowJar {
+	archiveClassifier = ''
+	archiveVersion = "${project.version}-26.1.2"
+	mergeServiceFiles()
+	relocate 'com.google.gson', 'com.github.squi2rel.vp.paper.shadow.gson'
+	relocate 'io.netty', 'com.github.squi2rel.vp.paper.shadow.netty'
+	relocate 'org.brotli', 'com.github.squi2rel.vp.paper.shadow.brotli'
+	relocate 'org.joml', 'com.github.squi2rel.vp.paper.shadow.joml'
+}
+
+def shadowJarTask = tasks.named('shadowJar')
+
+tasks.register('verifyPaperPluginDescriptor') {
+	dependsOn shadowJarTask
+	inputs.file(shadowJarTask.flatMap { it.archiveFile })
+	doLast {
+		def archive = shadowJarTask.get().archiveFile.get().asFile
+		java.util.jar.JarFile jar = new java.util.jar.JarFile(archive)
+		try {
+			if (jar.getJarEntry('plugin.yml') == null) {
+				throw new GradleException("Paper plugin archive does not contain plugin.yml: ${archive}")
+			}
+		} finally {
+			jar.close()
+		}
+	}
+}
+
+tasks.build { dependsOn tasks.verifyPaperPluginDescriptor }
