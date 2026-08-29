@@ -5,14 +5,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/mcxyd/VideoPlayer/actions/workflows/build.yml"><img src="https://github.com/mcxyd/VideoPlayer/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml"><img src="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml/badge.svg" alt="Build"></a>
 <a href="https://www.minecraft.net/">
   <img src="https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.20.4%20%7C%201.21.1%20%7C%201.21.11%20%7C%2026.1.2%20%7C%2026.2-62B47A" alt="Supported Minecraft versions">
 </a>
 <a href="https://adoptium.net/">
   <img src="https://img.shields.io/badge/Java-21%20%7C%2025-ED8B00" alt="Java 21 / 25">
 </a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/mcxyd/VideoPlayer" alt="GPL-3.0 license"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/squi2rel/VideoPlayer" alt="GPL-3.0 license"></a>
 </p>
 
 VideoPlayer 是用于 Minecraft 1.20.1、1.20.4、1.21.1、1.21.11、26.1.2 以及 26.2 的 Fabric 视频播放模组，配套提供 Paper/Folia 服务端桥接插件。客户端负责解码与渲染，服务端负责区域、屏幕、权限、持久化和玩家间同步；多人服务器中的观看者需要安装相同兼容版本的客户端模组。
@@ -39,7 +39,7 @@ Paper 服务端插件的调度、玩家状态、区域状态和清理路径按 F
 
 ## 安装
 
-1. 从 GitHub Release 或 [Actions 构建产物](https://github.com/mcxyd/VideoPlayer/actions) 获取对应 JAR。
+1. 从 GitHub Release 或 [Actions 构建产物](https://github.com/squi2rel/VideoPlayer/actions) 获取对应 JAR。
 2. 将 Fabric 模组 JAR 放入每位观看者的 `mods` 目录，并安装匹配版本的 Fabric Loader 与 Fabric API。
 3. 多人服务器将 Paper 插件 JAR 放入 `plugins` 目录后重启服务器。该插件是客户端模组的服务端桥接，不能单独让原版客户端播放视频。
 4. 进入游戏后执行 `/videoplayer boot`，选择 VLC 或 MPV，并按向导完成运行库，可选 `yt-dlp` 配置。
