@@ -6,9 +6,6 @@
 
 <p align="center">
   <a href="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml"><img src="https://github.com/squi2rel/VideoPlayer/actions/workflows/build.yml/badge.svg" alt="Build"></a>
-<a href="https://www.minecraft.net/">
-  <img src="https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.20.4%20%7C%201.21.1%20%7C%201.21.11%20%7C%2026.1.2%20%7C%2026.2-62B47A" alt="Supported Minecraft versions">
-</a>
 <a href="https://adoptium.net/">
   <img src="https://img.shields.io/badge/Java-21%20%7C%2025-ED8B00" alt="Java 21 / 25">
 </a>
