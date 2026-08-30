@@ -25,7 +25,7 @@ def generateCompatibilityMainSources = tasks.register('generateCompatibilityMain
 	outputs.dir(compatibilityMainSourceDir)
 	doLast {
 		project.delete(compatibilityMainSourceDir)
-		fileTree(sourceRoot).matching { include '**/*.java'; exclude 'android/**' }.files.each { sourceFile ->
+		fileTree(sourceRoot).matching { include '**/*.java' }.files.each { sourceFile ->
 			def relativePath = sourceRoot.toPath().relativize(sourceFile.toPath()).toString().replace('\\', '/')
 			def sourceText = sourceFile.getText('UTF-8')
 			sourceText = sourceText.replace('net.minecraft.resources.Identifier', 'net.minecraft.resources.ResourceLocation')

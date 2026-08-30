@@ -77,7 +77,6 @@ sourceSets {
 }
 
 def sharedMainSources = fileTree(rootProject.file('src/main/java')) {
-	exclude 'android/**'
 	exclude 'com/github/squi2rel/vp/VideoPlayerMain.java'
 	exclude 'com/github/squi2rel/vp/network/VideoPayload.java'
 	exclude 'com/github/squi2rel/vp/network/ClientMessageBridge.java'

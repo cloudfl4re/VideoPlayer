@@ -64,6 +64,7 @@ def releaseArtifacts = [
 		requiredEntries: [
 			'fabric.mod.json',
 			'videoplayer.client.mixins.json',
+			'android/os/Environment.class',
 			'com/github/squi2rel/vp/network/VideoProtocol.class',
 			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
 			'META-INF/jars/core-3.5.3.jar',
@@ -81,6 +82,7 @@ def releaseArtifacts = [
 		requiredEntries: [
 			'fabric.mod.json',
 			'videoplayer.client.mixins.json',
+			'android/os/Environment.class',
 			'com/github/squi2rel/vp/network/VideoProtocol.class',
 			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
 			'META-INF/jars/core-3.5.3.jar',
@@ -98,6 +100,7 @@ def releaseArtifacts = [
 		requiredEntries: [
 			'fabric.mod.json',
 			'videoplayer.client.mixins.json',
+			'android/os/Environment.class',
 			'com/github/squi2rel/vp/network/VideoProtocol.class',
 			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
 			'META-INF/jars/core-3.5.3.jar',
@@ -115,6 +118,7 @@ def releaseArtifacts = [
 		requiredEntries: [
 			'fabric.mod.json',
 			'videoplayer.client.mixins.json',
+			'android/os/Environment.class',
 			'com/github/squi2rel/vp/network/VideoProtocol.class',
 			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
 			'META-INF/jars/core-3.5.3.jar',
@@ -188,6 +192,7 @@ def releaseArtifacts = [
 		requiredEntries: [
 			'fabric.mod.json',
 			'videoplayer.client.mixins.json',
+			'android/os/Environment.class',
 			'com/github/squi2rel/vp/network/VideoProtocol.class',
 			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
 			'com/github/squi2rel/vp/render/FrameRenderSnapshot.class',
@@ -208,6 +213,7 @@ def releaseArtifacts = [
 		requiredEntries: [
 			'fabric.mod.json',
 			'videoplayer.client.mixins.json',
+			'android/os/Environment.class',
 			'com/github/squi2rel/vp/network/VideoProtocol.class',
 			'com/github/squi2rel/vp/render/ExternalTextureRegistry.class',
 			'com/github/squi2rel/vp/render/FrameRenderSnapshot.class',
