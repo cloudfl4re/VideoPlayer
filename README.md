@@ -106,8 +106,8 @@ Paper 插件提供的管理命令如下：
 | 1.20.4 Paper/Folia 服务端插件 | `servers/paper/1.20.4/build/libs/VideoPlayer-Paper-2.0.3-1.20.4.jar` |
 | 1.21.1 Fabric 客户端模组 | `clients/fabric/1.21.1/build/libs/VideoPlayer-2.0.3-1.21.1.jar` |
 | 1.21.1 Paper/Folia 服务端插件 | `servers/paper/1.21.1/build/libs/VideoPlayer-Paper-2.0.3-1.21.1.jar` |
-| 1.21.11 Fabric 客户端模组 | `clients/fabric/1.21.11/build/libs/VideoPlayer-2.0.3.jar` |
-| 1.21.11 Paper/Folia 服务端插件 | `servers/paper/1.21.11/build/libs/VideoPlayer-Paper-2.0.3.jar` |
+| 1.21.11 Fabric 客户端模组 | `clients/fabric/1.21.11/build/libs/VideoPlayer-2.0.3-1.21.11.jar` |
+| 1.21.11 Paper/Folia 服务端插件 | `servers/paper/1.21.11/build/libs/VideoPlayer-Paper-2.0.3-1.21.11.jar` |
 | 26.1.2 Fabric 客户端模组 | `clients/fabric/26.1.2/build/libs/VideoPlayer-2.0.3-26.1.2.jar` |
 | 26.1.2 Paper/Folia 服务端插件 | `servers/paper/26.1.2/build/libs/VideoPlayer-Paper-2.0.3-26.1.2.jar` |
 | 26.2 Fabric 客户端模组 | `clients/fabric/26.2/build/libs/VideoPlayer-2.0.3-26.2.jar` |

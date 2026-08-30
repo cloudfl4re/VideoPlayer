@@ -108,8 +108,8 @@ def releaseArtifacts = [
 		]
 	],
 	[
-		fileName: "VideoPlayer-${releaseVersion}.jar",
-		source: file("clients/fabric/1.21.11/build/libs/VideoPlayer-${releaseVersion}.jar"),
+		fileName: "VideoPlayer-${releaseVersion}-1.21.11.jar",
+		source: file("clients/fabric/1.21.11/build/libs/VideoPlayer-${releaseVersion}-1.21.11.jar"),
 		type: 'fabric',
 		minecraft: '~1.21.11',
 		javaDependency: '>=21',
@@ -168,8 +168,8 @@ def releaseArtifacts = [
 		]
 	],
 	[
-		fileName: "VideoPlayer-Paper-${releaseVersion}.jar",
-		source: file("servers/paper/1.21.11/build/libs/VideoPlayer-Paper-${releaseVersion}.jar"),
+		fileName: "VideoPlayer-Paper-${releaseVersion}-1.21.11.jar",
+		source: file("servers/paper/1.21.11/build/libs/VideoPlayer-Paper-${releaseVersion}-1.21.11.jar"),
 		type: 'paper',
 		apiVersion: '1.21',
 		classEntry: 'com/github/squi2rel/vp/VideoPlayerPaperPlugin.class',

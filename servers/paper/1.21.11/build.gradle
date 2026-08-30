@@ -100,10 +100,12 @@ java {
 
 tasks.jar {
     archiveClassifier = 'plain'
+    archiveVersion = "${project.version}-1.21.11"
 }
 
 tasks.shadowJar {
     archiveClassifier = ''
+    archiveVersion = "${project.version}-1.21.11"
     mergeServiceFiles()
     relocate 'com.google.gson', 'com.github.squi2rel.vp.paper.shadow.gson'
     relocate 'io.netty', 'com.github.squi2rel.vp.paper.shadow.netty'

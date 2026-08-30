@@ -68,11 +68,99 @@ jobs:
       - name: Build and verify release archives
         run: ./gradlew build verifyRelease --no-daemon -Pmod_version="${{ steps.version.outputs.value }}"
 
-      - name: Upload verified release bundle
+      - name: Upload Fabric 1.20.1 JAR
         uses: actions/upload-artifact@v7
         with:
-          name: VideoPlayer-release
-          path: build/release/*.jar
+          path: build/release/VideoPlayer-${{ steps.version.outputs.value }}-1.20.1.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Paper 1.20.1 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-Paper-${{ steps.version.outputs.value }}-1.20.1.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Fabric 1.20.4 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-${{ steps.version.outputs.value }}-1.20.4.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Paper 1.20.4 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-Paper-${{ steps.version.outputs.value }}-1.20.4.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Fabric 1.21.1 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-${{ steps.version.outputs.value }}-1.21.1.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Paper 1.21.1 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-Paper-${{ steps.version.outputs.value }}-1.21.1.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Fabric 1.21.11 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-${{ steps.version.outputs.value }}-1.21.11.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Paper 1.21.11 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-Paper-${{ steps.version.outputs.value }}-1.21.11.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Fabric 26.1.2 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-${{ steps.version.outputs.value }}-26.1.2.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Paper 26.1.2 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-Paper-${{ steps.version.outputs.value }}-26.1.2.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Fabric 26.2 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-${{ steps.version.outputs.value }}-26.2.jar
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Paper 26.2 JAR
+        uses: actions/upload-artifact@v7
+        with:
+          path: build/release/VideoPlayer-Paper-${{ steps.version.outputs.value }}-26.2.jar
+          archive: false
           if-no-files-found: error
           retention-days: 30
 
@@ -96,11 +184,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download verified release bundle
+      - name: Download verified release JARs
         uses: actions/download-artifact@v8
         with:
-          name: VideoPlayer-release
+          pattern: "VideoPlayer-*.jar"
           path: release
+          merge-multiple: true
 
       - name: Create GitHub release
         env:
