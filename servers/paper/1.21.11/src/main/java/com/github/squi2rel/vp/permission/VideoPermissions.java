@@ -44,10 +44,13 @@ public final class VideoPermissions {
         VideoPermissionContext safeContext = context == null ? VideoPermissionContext.global(null) : context;
         if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.online()) return false;
         if (player.opOrGameMaster()) return true;
-        if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.hasAction(action)) return false;
+        if (action == VideoPermissionAction.SEEK
+                && player instanceof BukkitPermissionPlayer bukkit
+                && !bukkit.hasAction(action)) return false;
         AreaPermissionDecision areaDecision = areaResolver.resolve(player, action, safeContext);
         if (areaDecision == AreaPermissionDecision.ALLOW) return true;
         if (areaDecision == null || areaDecision == AreaPermissionDecision.DENY) return false;
+        if (player instanceof BukkitPermissionPlayer bukkit && !bukkit.hasAction(action)) return false;
         return globalChecker.allowed(player, action, safeContext);
     }
 
