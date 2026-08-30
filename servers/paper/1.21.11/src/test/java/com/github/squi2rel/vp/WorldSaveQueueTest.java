@@ -29,7 +29,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     writes.add(snapshot.dimension() + ":" + snapshot.serialized());
                     return true;
                 },
@@ -60,7 +60,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     writes.add(snapshot.serialized());
                     if (snapshot.version() == 1L) {
                         queueRef.get().enqueue(snapshot("overworld", 2, "second"));
@@ -90,7 +90,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     if (snapshot.version() == 1L) throw new IllegalStateException("disk unavailable");
                     writes.add(snapshot.serialized());
                     return true;
@@ -117,7 +117,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     writes.add(snapshot.serialized());
                     return true;
                 },
@@ -143,7 +143,7 @@ class WorldSaveQueueTest {
                     launches.incrementAndGet();
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     writes.add(snapshot.serialized());
                     return true;
                 },
@@ -174,7 +174,7 @@ class WorldSaveQueueTest {
                         var future = executor.submit(task);
                         return () -> future.cancel(true);
                     },
-                    snapshot -> {
+                    (WorldSaveQueue.BooleanWriter) snapshot -> {
                         if (snapshot.version() == 1L) {
                             firstWriteStarted.countDown();
                             if (!releaseFirstWrite.await(2L, TimeUnit.SECONDS)) {
@@ -216,7 +216,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> true,
+                (WorldSaveQueue.BooleanWriter) snapshot -> true,
                 (snapshot, error) -> {
                     throw new AssertionError(error);
                 }
@@ -242,7 +242,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     if (snapshot.version() == 1L) throw new IllegalStateException("disk unavailable");
                     return true;
                 },
@@ -275,7 +275,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> "payload".equals(snapshot.serialized()),
+                (WorldSaveQueue.BooleanWriter) snapshot -> "payload".equals(snapshot.serialized()),
                 (snapshot, error) -> {
                     throw new AssertionError(error);
                 }
@@ -311,7 +311,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     throw new IllegalStateException("disk unavailable");
                 },
                 (snapshot, error) -> {
