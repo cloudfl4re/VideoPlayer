@@ -9,23 +9,31 @@ import com.github.squi2rel.vp.render.WorldRenderBatch;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.ExternalGlTexture;
 import com.github.squi2rel.vp.vivecraft.Vivecraft;
+import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.pipeline.BlendFunction;
+import com.mojang.blaze3d.pipeline.ColorTargetState;
+import com.mojang.blaze3d.pipeline.DepthStencilState;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.render.TextureSetup;
 import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.rendertype.RenderSetup;
 import net.minecraft.client.renderer.rendertype.RenderType;
-import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.gui.GuiElementRenderState;
 import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix3x2f;
@@ -38,10 +46,24 @@ import static com.github.squi2rel.vp.VideoPlayerClient.screens;
 
 @SuppressWarnings({"resource", "DataFlowIssue"})
 public final class ScreenRenderer {
+    private static final String SAMPLER = "Sampler0";
     private static final Identifier PLACEHOLDER_TEXTURE = Identifier.fromNamespaceAndPath("videoplayer", "placeholder.png");
     private static final ExternalTextureRegistry EXTERNAL_TEXTURES = new ExternalTextureRegistry();
+    private static final RenderPipeline VIDEO_WORLD_PIPELINE = createVideoPipeline("video_world");
+    private static final RenderPipeline VIDEO_TRANSLUCENT_PIPELINE = createVideoPipeline("video_translucent");
+    private static final Map<LayerKey, RenderType> VIDEO_LAYERS = new ConcurrentHashMap<>();
     private static final Quaternionf rotation = new Quaternionf();
     private static volatile FrameRenderSnapshot frameSnapshot = FrameRenderSnapshot.EMPTY;
+
+    static {
+        if (FabricLoader.getInstance().isModLoaded("iris")) {
+            try {
+                IrisCompat.registerTexturedPipelines(VIDEO_WORLD_PIPELINE, VIDEO_TRANSLUCENT_PIPELINE);
+            } catch (LinkageError | RuntimeException error) {
+                VideoPlayerMain.LOGGER.warn("Failed to register Iris video pipelines", error);
+            }
+        }
+    }
 
     public static float cameraX;
     public static float cameraY;
@@ -99,23 +121,23 @@ public final class ScreenRenderer {
     }
 
     public static RenderType getLayer(Identifier texture) {
-        return RenderTypes.eyes(texture);
+        return getVideoLayer(texture, LayerKind.WORLD);
     }
 
     public static RenderType getTranslucentLayer(int textureId) {
-        return getLayer(textureId);
+        return getVideoLayer(textureIdentifier(textureId), LayerKind.TRANSLUCENT);
     }
 
     public static RenderType getTranslucentLayer(Identifier texture) {
-        return getLayer(texture);
+        return getVideoLayer(texture, LayerKind.TRANSLUCENT);
     }
 
     public static RenderType getPremultipliedTranslucentLayer(Identifier texture) {
-        return getLayer(texture);
+        return getVideoLayer(texture, LayerKind.TRANSLUCENT);
     }
 
     public static RenderType getBackingLayer(int textureId) {
-        return RenderTypes.entityTranslucent(textureIdentifier(textureId), false);
+        return getVideoLayer(textureIdentifier(textureId), LayerKind.BACKING);
     }
 
     public static Identifier textureIdentifier(int textureId) {
@@ -138,6 +160,7 @@ public final class ScreenRenderer {
         frameSnapshot = FrameRenderSnapshot.EMPTY;
         List<ExternalTextureRegistry.Registration> registrations = EXTERNAL_TEXTURES.clear();
         runOnClientThread(() -> {
+            VIDEO_LAYERS.clear();
             for (ExternalTextureRegistry.Registration registration : registrations) {
                 Minecraft.getInstance().getTextureManager().release(textureIdentifier(registration));
             }
@@ -146,7 +169,10 @@ public final class ScreenRenderer {
 
     private static void releaseTexture(ExternalTextureRegistry.Registration registration) {
         Identifier identifier = textureIdentifier(registration);
-        runOnClientThread(() -> Minecraft.getInstance().getTextureManager().release(identifier));
+        runOnClientThread(() -> {
+            VIDEO_LAYERS.keySet().removeIf(key -> key.texture.equals(identifier));
+            Minecraft.getInstance().getTextureManager().release(identifier);
+        });
     }
 
     private static Identifier textureIdentifier(ExternalTextureRegistry.Registration registration) {
@@ -176,13 +202,9 @@ public final class ScreenRenderer {
 
     public static void drawWorldTexturedVertex(Matrix4f matrix, VertexConsumer consumer, Vector3f vertex,
                                                float u, float v, int color, Vector3f normal) {
-        Vector3f safeNormal = normal == null ? new Vector3f(0.0f, 1.0f, 0.0f) : normal;
         consumer.addVertex(matrix, vertex.x, vertex.y, vertex.z)
                 .setColor(color)
-                .setUv(u, v)
-                .setOverlay(OverlayTexture.NO_OVERLAY)
-                .setLight(0x00F000F0)
-                .setNormal(safeNormal.x, safeNormal.y, safeNormal.z);
+                .setUv(u, v);
     }
 
     public static void drawWorldTexturedVertex(Matrix4f matrix, VertexConsumer consumer,
@@ -255,5 +277,45 @@ public final class ScreenRenderer {
 
     private static void setupVertex(VertexConsumer consumer, Matrix3x2f pose, GuiVertex vertex) {
         consumer.addVertexWith2DPose(pose, vertex.x, vertex.y).setUv(vertex.u, vertex.v).setColor(vertex.color);
+    }
+
+    private static RenderType getVideoLayer(Identifier texture, LayerKind kind) {
+        return VIDEO_LAYERS.computeIfAbsent(new LayerKey(texture, kind), ScreenRenderer::createVideoLayer);
+    }
+
+    private static RenderType createVideoLayer(LayerKey key) {
+        String name = "videoplayer_video_" + key.kind.name().toLowerCase() + "_"
+                + key.texture.toString().replace(':', '_').replace('/', '_');
+        RenderPipeline pipeline = key.kind == LayerKind.TRANSLUCENT ? VIDEO_TRANSLUCENT_PIPELINE : VIDEO_WORLD_PIPELINE;
+        RenderSetup.RenderSetupBuilder builder = RenderSetup.builder(pipeline)
+                .withTexture(SAMPLER, key.texture);
+        if (key.kind.sortOnUpload) builder.sortOnUpload();
+        return RenderType.create(name, builder.createRenderSetup());
+    }
+
+    private static RenderPipeline createVideoPipeline(String name) {
+        RenderPipeline.Builder builder = RenderPipeline.builder(RenderPipelines.GUI_TEXTURED_SNIPPET)
+                .withLocation(Identifier.fromNamespaceAndPath("videoplayer", name))
+                .withVertexBinding(0, DefaultVertexFormat.POSITION_TEX_COLOR)
+                .withPrimitiveTopology(PrimitiveTopology.QUADS)
+                .withDepthStencilState(DepthStencilState.DEFAULT)
+                .withCull(false);
+        builder.withColorTargetState(new ColorTargetState(BlendFunction.TRANSLUCENT));
+        return RenderPipelines.register(builder.build());
+    }
+
+    private record LayerKey(Identifier texture, LayerKind kind) {
+    }
+
+    private enum LayerKind {
+        WORLD(false),
+        TRANSLUCENT(true),
+        BACKING(false);
+
+        private final boolean sortOnUpload;
+
+        LayerKind(boolean sortOnUpload) {
+            this.sortOnUpload = sortOnUpload;
+        }
     }
 }

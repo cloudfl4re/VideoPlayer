@@ -12,6 +12,7 @@ import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
 import com.github.squi2rel.vp.provider.VideoUrlNormalizer;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
+import com.github.squi2rel.vp.provider.paper.HttpFlvPlaybackPolicy;
 import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.permission.VideoPermissionAction;
 import com.github.squi2rel.vp.permission.VideoPermissionContext;
@@ -810,10 +811,11 @@ public class ServerPacketHandler {
                 return;
             }
             try {
-                if (info != null && VideoListeners.requiresNativeStreamListener(info) && !PaperNativeRuntime.isReady()) {
+                VideoInfo normalized = HttpFlvPlaybackPolicy.normalize(info);
+                if (normalized != null && VideoListeners.requiresNativeStreamListener(normalized) && !PaperNativeRuntime.isReady()) {
                     throw new NativeRuntimeNotReady(PaperNativeRuntime.currentState());
                 }
-                guarded.complete(info);
+                guarded.complete(normalized);
             } catch (Throwable failure) {
                 guarded.completeExceptionally(failure);
             }
