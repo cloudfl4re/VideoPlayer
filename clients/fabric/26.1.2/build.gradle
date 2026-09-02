@@ -40,6 +40,10 @@ def generateCompatibilityClientSources = tasks.register('generateCompatibilityCl
 			def sourceText = sourceFile.getText('UTF-8')
 			sourceText = sourceText.replace('.gui.screen()', '.screen')
 			sourceText = sourceText.replace('.gui.setScreen(', '.setScreen(')
+			if (relativePath == 'com/github/squi2rel/vp/ScreenRenderer.java') {
+				sourceText = sourceText.replace('import com.mojang.blaze3d.PrimitiveTopology;', 'import com.mojang.blaze3d.vertex.VertexFormat;')
+				sourceText = sourceText.replace('.withVertexBinding(0, DefaultVertexFormat.POSITION_TEX_COLOR)\n                .withPrimitiveTopology(PrimitiveTopology.QUADS)', '.withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)')
+			}
 			if (relativePath == 'com/github/squi2rel/vp/VideoPlayerClient.java') {
 				sourceText = sourceText.replace('import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents;', '')
 				sourceText = sourceText.replace('LevelExtractionEvents.END_EXTRACTION', 'LevelRenderEvents.END_EXTRACTION')
@@ -107,6 +111,7 @@ dependencies {
 	implementation project(':mcng-fabric-client-26.1.2')
 	compileOnly "maven.modrinth:modmenu:${rootProject.modmenu_26_1_2_version}"
 	compileOnly "maven.modrinth:vivecraft:${rootProject.vivecraft_26_1_2_version}"
+	compileOnly "maven.modrinth:iris:${rootProject.iris_26_1_2_version}"
 	shadowBundle project(':mcng-core')
 	shadowBundle(project(':mcng-fabric-client-26.1.2')) {
 		transitive = false
