@@ -76,7 +76,11 @@ class VpSliderWidget extends AbstractSliderButton {
 
         Font textRenderer = Minecraft.getInstance().font;
         String text = getMessage().getString();
-        String visibleText = textRenderer.width(text) > getWidth() - 8 ? textRenderer.plainSubstrByWidth(text, getWidth() - 8) : text;
+        int textWidth = Math.max(1, getWidth() - 8);
+        String ellipsis = "...";
+        String visibleText = textRenderer.width(text) > textWidth
+                ? textRenderer.plainSubstrByWidth(text, Math.max(0, textWidth - textRenderer.width(ellipsis))) + ellipsis
+                : text;
         int textX = getX() + 4;
         int textY = getY() + 2;
         int textColor = active ? theme.secondaryTextColor() : VpUiRenderer.blend(theme.secondaryTextColor(), theme.canvasBackgroundColor(), 0.45f);

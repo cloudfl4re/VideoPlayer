@@ -86,9 +86,12 @@ dependencies {
 	implementation project(':mcng-core')
 	implementation project(':mcng-fabric-client-26.2')
 	shadowBundle project(':mcng-core')
-	shadowBundle project(':mcng-fabric-client-26.2')
+	shadowBundle(project(':mcng-fabric-client-26.2')) {
+		transitive = false
+	}
 	compileOnly "maven.modrinth:modmenu:${rootProject.modmenu_26_2_version}"
 	compileOnly "maven.modrinth:vivecraft:${rootProject.vivecraft_26_2_version}"
+	compileOnly "maven.modrinth:iris:${rootProject.iris_26_2_version}"
 	runtimeOnly 'com.electronwill.night-config:core:3.6.6'
 	runtimeOnly 'com.electronwill.night-config:toml:3.6.6'
 	testImplementation platform('org.junit:junit-bom:5.11.4')

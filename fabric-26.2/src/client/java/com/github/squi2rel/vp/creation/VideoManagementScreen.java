@@ -18,12 +18,9 @@ import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
 import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.video.ClientVideoArea;
 import com.github.squi2rel.vp.video.ClientVideoScreen;
-import com.github.squi2rel.vp.video.AudioLevelSnapshot;
 import com.github.squi2rel.vp.video.MetaType;
 import com.github.squi2rel.vp.video.MetaValue;
 import com.github.squi2rel.vp.video.MpvVideoBackend;
-import com.github.squi2rel.vp.video.PlaybackDiagnostics;
-import com.github.squi2rel.vp.video.PlaybackFailureReason;
 import com.github.squi2rel.vp.video.ScreenMetadata;
 import com.github.squi2rel.vp.video.ScreenSurface;
 import com.github.squi2rel.vp.video.ScreenVolumeCache;
@@ -53,7 +50,16 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 public class VideoManagementScreen extends Screen implements ServerStateScreen {
-    private static final int SIDEBAR_WIDTH = 96;
+    private static final int OUTER_MARGIN = 14;
+    private static final int PANEL_GAP = 24;
+    private static final int PANEL_INSET = 8;
+    private static final int PANEL_TOP = 16;
+    private static final int PANEL_BOTTOM_MARGIN = 18;
+    private static final int SIDEBAR_MIN_WIDTH = 92;
+    private static final int SIDEBAR_PREFERRED_WIDTH = 128;
+    private static final int SIDEBAR_MAX_WIDTH = 148;
+    private static final int CONTENT_MIN_WIDTH = 176;
+    private static final int BUTTON_MIN_WIDTH = 34;
     private static final int ROW_HEIGHT = 20;
     private static final int GAP = 8;
     private static final int CONTROL_HEIGHT = 18;
@@ -70,9 +76,9 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private static final int PLAYBACK_PROGRESS_HEIGHT = 18;
     private static final int PLAYBACK_PROGRESS_GAP = 8;
     private static final int PLAYBACK_BOTTOM_CONTROLS_GAP = 6;
+    private static final int PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH = 320;
     private static final long PLAYBACK_SEEK_THROTTLE_MS = 250L;
     private static final long PLAYBACK_PREVIEW_END_GUARD_MS = 1000L;
-    private static final long DIAGNOSTICS_REFRESH_INTERVAL_MS = 2_000L;
     private static final float MIN_SCREEN_SCALE = 0.0625f;
     private static final float MAX_SCREEN_SCALE = 16f;
     private static final int DANMAKU_OVERLAY_WIDTH = 268;
@@ -159,19 +165,9 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private String screenSignature = "";
     private String metadataSignature = "";
     private String ccSubtitleOverlaySignature = "";
-    private long lastDiagnosticsRequestAt;
-    private boolean diagnosticsRequestInFlight;
-    private VpButtonWidget diagnosticsRefreshButton;
-    private VpButtonWidget diagnosticsMuteButton;
-    private final DiagnosticsReviewSession diagnosticsReview;
 
     public VideoManagementScreen(VideoCreationEditor editor, ClientVideoScreen focusedScreen) {
         this(editor, focusedScreen, focusedScreen == null ? Tab.CREATE_EDIT : Tab.PLAYBACK);
-    }
-
-    public static VideoManagementScreen diagnostics(VideoCreationEditor editor, ClientVideoScreen focusedScreen) {
-        return new VideoManagementScreen(editor, focusedScreen, Tab.DIAGNOSTICS,
-                false, false, false, false, false, false, new DiagnosticsReviewSession());
     }
 
     private VideoManagementScreen(VideoCreationEditor editor, ClientVideoScreen focusedScreen, Tab tab) {
@@ -179,18 +175,17 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private VideoManagementScreen(VideoCreationEditor editor, ClientVideoScreen focusedScreen, Tab tab, boolean danmakuOverlayOpen) {
-        this(editor, focusedScreen, tab, danmakuOverlayOpen, false, false, false, false, false, null);
+        this(editor, focusedScreen, tab, danmakuOverlayOpen, false, false, false, false, false);
     }
 
     private VideoManagementScreen(VideoCreationEditor editor, ClientVideoScreen focusedScreen, Tab tab,
                                   boolean danmakuOverlayOpen, boolean biliLocalQualityOverlayOpen,
                                   boolean biliScreenQualityOverlayOpen, boolean youtubeScreenQualityOverlay,
                                   boolean ccSubtitleOverlayOpen,
-                                  boolean playbackPreviewPinned, DiagnosticsReviewSession diagnosticsReview) {
+                                  boolean playbackPreviewPinned) {
         super(VpTexts.tr("screen.videoplayer.management", "VideoPlayer Management"));
         this.editor = editor;
         this.tab = tab;
-        this.diagnosticsReview = diagnosticsReview;
         this.playbackPreviewPinned = playbackPreviewPinned && tab == Tab.PLAYBACK;
         this.danmakuOverlayOpen = danmakuOverlayOpen && tab == Tab.PLAYBACK;
         this.biliLocalQualityOverlayOpen = biliLocalQualityOverlayOpen && tab == Tab.PLAYBACK;
@@ -217,7 +212,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
                                   int areaScroll, int screenScroll, int contentScroll, boolean confirmDeleteArea, boolean confirmDeleteScreen,
         MetaType customMetaType, boolean preserveDraftDisplay, boolean danmakuOverlayOpen) {
         this(editor, tab, selectedAreaName, selectedScreenName, areaScroll, screenScroll, contentScroll, confirmDeleteArea, confirmDeleteScreen,
-                customMetaType, preserveDraftDisplay, danmakuOverlayOpen, false, false, false, false, false, null);
+                customMetaType, preserveDraftDisplay, danmakuOverlayOpen, false, false, false, false, false);
     }
 
     private VideoManagementScreen(VideoCreationEditor editor, Tab tab, String selectedAreaName, String selectedScreenName,
@@ -226,11 +221,10 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
                                   boolean danmakuOverlayOpen, boolean biliLocalQualityOverlayOpen,
                                   boolean biliScreenQualityOverlayOpen, boolean youtubeScreenQualityOverlay,
                                   boolean ccSubtitleOverlayOpen,
-                                  boolean playbackPreviewPinned, DiagnosticsReviewSession diagnosticsReview) {
+                                  boolean playbackPreviewPinned) {
         super(VpTexts.tr("screen.videoplayer.management", "VideoPlayer Management"));
         this.editor = editor;
         this.tab = tab;
-        this.diagnosticsReview = diagnosticsReview;
         this.playbackPreviewPinned = playbackPreviewPinned && tab == Tab.PLAYBACK;
         this.danmakuOverlayOpen = danmakuOverlayOpen && tab == Tab.PLAYBACK;
         this.biliLocalQualityOverlayOpen = biliLocalQualityOverlayOpen && tab == Tab.PLAYBACK;
@@ -253,11 +247,10 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     protected void init() {
         ensureSelection();
         resetUiGroups();
-        int margin = 14;
-        int sidebarX = margin;
-        int mainX = sidebarX + SIDEBAR_WIDTH + 14;
-        int mainW = Math.max(220, width - mainX - margin);
-        int top = 24;
+        int sidebarX = sidebarX();
+        int mainX = mainX();
+        int mainW = mainW();
+        int top = topY();
         areaScroll = clampScroll(areaScroll, areaNames().size() * ROW_HEIGHT, sidebarAreaViewportHeight());
         screenScroll = clampScroll(screenScroll, screensForSelectedArea().size() * ROW_HEIGHT, sidebarScreenViewportHeight());
         contentScroll = clampScroll(contentScroll, estimateContentHeight(mainW), contentViewportHeight());
@@ -271,7 +264,6 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
             case CREATE_EDIT -> initCreateEdit(mainX, contentTop - contentScroll, mainW);
             case PLAYBACK -> initPlayback(mainX, contentTop - contentScroll, mainW);
             case SCREEN_SETTINGS -> initScreenSettings(mainX, contentTop - contentScroll, mainW);
-            case DIAGNOSTICS -> initDiagnostics(mainX, contentTop - contentScroll, mainW);
         }
         widgetGroup = WidgetGroup.FIXED;
         initReconnectServerButton(mainX, mainW);
@@ -279,7 +271,6 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         screenSignature = screenSignature();
         metadataSignature = metadataSignature();
         ccSubtitleOverlaySignature = ccSubtitleOverlaySignature();
-        updateDiagnosticsReview();
     }
 
     @Override
@@ -290,7 +281,6 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     @Override
     public void tick() {
         super.tick();
-        updateDiagnosticsReview();
         String currentAreaSignature = areaSignature();
         String currentScreenSignature = screenSignature();
         String currentMetadataSignature = metadataSignature();
@@ -306,13 +296,11 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     @Override
     public void onClose() {
         endPlaybackProgressDrag();
-        if (diagnosticsReview != null) diagnosticsReview.close();
         minecraft.gui.setScreen(null);
     }
 
     @Override
     public void removed() {
-        if (diagnosticsReview != null && !diagnosticsReview.consumeHandoff()) diagnosticsReview.close();
         super.removed();
     }
 
@@ -324,30 +312,30 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         extractBackground(context, mouseX, mouseY, delta);
-        int margin = 14;
-        int sidebarX = margin;
-        int mainX = sidebarX + SIDEBAR_WIDTH + 14;
-        int mainW = Math.max(220, width - mainX - margin);
-        int top = 24;
-        int panelBottom = height - 18;
+        int sidebarX = sidebarX();
+        int mainX = mainX();
+        int mainW = mainW();
+        int top = topY();
+        int panelBottom = panelBottom();
+        int sidebarWidth = sidebarWidth();
         int contentTop = contentTop(mainW);
 
-        if (tab == Tab.DIAGNOSTICS) requestDiagnosticsIfDue();
-
-        VpUiRenderer.drawBox(context, sidebarX - 8, 16, SIDEBAR_WIDTH + 16, panelBottom - 16, THEME.panelBackgroundColor(), THEME.panelBorderColor());
-        VpUiRenderer.drawBox(context, mainX - 8, 16, mainW + 16, panelBottom - 16, THEME.panelBackgroundColor(), THEME.panelBorderColor());
-        context.text(font, title, sidebarX, 20, THEME.primaryTextColor(), false);
+        VpUiRenderer.drawBox(context, sidebarX - PANEL_INSET, PANEL_TOP, sidebarWidth + PANEL_INSET * 2,
+                panelBottom - PANEL_TOP, THEME.panelBackgroundColor(), THEME.panelBorderColor());
+        VpUiRenderer.drawBox(context, mainX - PANEL_INSET, PANEL_TOP, mainW + PANEL_INSET * 2,
+                panelBottom - PANEL_TOP, THEME.panelBackgroundColor(), THEME.panelBorderColor());
+        drawLabel(context, trimToWidth(title.getString(), sidebarWidth), sidebarX, 20, THEME.primaryTextColor());
         drawSidebarLabels(context, sidebarX);
 
         renderClippedDrawables(context, areaScrollDrawables, mouseX, mouseY, delta,
-                sidebarX, sidebarAreaViewportTop(), sidebarX + SIDEBAR_WIDTH, sidebarAreaViewportBottom());
+                sidebarX, sidebarAreaViewportTop(), sidebarX + sidebarWidth, sidebarAreaViewportBottom());
         renderClippedDrawables(context, screenScrollDrawables, mouseX, mouseY, delta,
-                sidebarX, sidebarScreenViewportTop(), sidebarX + SIDEBAR_WIDTH, sidebarScreenViewportBottom());
+                sidebarX, sidebarScreenViewportTop(), sidebarX + sidebarWidth, sidebarScreenViewportBottom());
         renderContent(context, mouseX, mouseY, delta, mainX, contentTop - contentScroll, mainW);
 
         renderDrawables(context, fixedDrawables, mouseX, mouseY, delta);
-        drawScrollbar(context, sidebarX + SIDEBAR_WIDTH - 4, sidebarAreaViewportTop(), sidebarAreaViewportBottom(), areaScroll, areaScrollContentHeight);
-        drawScrollbar(context, sidebarX + SIDEBAR_WIDTH - 4, sidebarScreenViewportTop(), sidebarScreenViewportBottom(), screenScroll, screenScrollContentHeight);
+        drawScrollbar(context, sidebarX + sidebarWidth - 4, sidebarAreaViewportTop(), sidebarAreaViewportBottom(), areaScroll, areaScrollContentHeight);
+        drawScrollbar(context, sidebarX + sidebarWidth - 4, sidebarScreenViewportTop(), sidebarScreenViewportBottom(), screenScroll, screenScrollContentHeight);
         if (!hidePlaybackScrollpane(mouseX, mouseY)) {
             drawScrollbar(context, mainX + mainW - 4, contentViewportTop(), contentViewportBottom(), contentScroll, contentScrollContentHeight);
         }
@@ -413,10 +401,11 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         }
 
         int sidebarX = sidebarX();
-        if (inside(mouseX, mouseY, sidebarX, sidebarAreaViewportTop(), sidebarX + SIDEBAR_WIDTH, sidebarAreaViewportBottom())) {
+        int sidebarWidth = sidebarWidth();
+        if (inside(mouseX, mouseY, sidebarX, sidebarAreaViewportTop(), sidebarX + sidebarWidth, sidebarAreaViewportBottom())) {
             return scrollArea(delta);
         }
-        if (inside(mouseX, mouseY, sidebarX, sidebarScreenViewportTop(), sidebarX + SIDEBAR_WIDTH, sidebarScreenViewportBottom())) {
+        if (inside(mouseX, mouseY, sidebarX, sidebarScreenViewportTop(), sidebarX + sidebarWidth, sidebarScreenViewportBottom())) {
             return scrollScreen(delta);
         }
 
@@ -499,19 +488,34 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private int sidebarX() {
-        return 14;
+        return OUTER_MARGIN;
+    }
+
+    private int sidebarWidth() {
+        int availableWidth = Math.max(1, width - OUTER_MARGIN * 2 - PANEL_GAP);
+        int contentFloor = Math.min(CONTENT_MIN_WIDTH, Math.max(1, availableWidth - SIDEBAR_MIN_WIDTH));
+        int maxWidth = Math.max(SIDEBAR_MIN_WIDTH, availableWidth - contentFloor);
+        return Math.clamp(SIDEBAR_PREFERRED_WIDTH, SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, maxWidth));
     }
 
     private int mainX() {
-        return sidebarX() + SIDEBAR_WIDTH + 14;
+        return sidebarX() + sidebarWidth() + PANEL_GAP;
     }
 
     private int mainW() {
-        return Math.max(220, width - mainX() - 14);
+        return Math.max(1, width - mainX() - OUTER_MARGIN);
     }
 
     private int topY() {
         return 24;
+    }
+
+    private int panelBottom() {
+        return Math.max(PANEL_TOP + 1, height - PANEL_BOTTOM_MARGIN);
+    }
+
+    private int contentWidth(int width) {
+        return Math.max(1, width);
     }
 
     private int contentTop(int mainW) {
@@ -543,13 +547,22 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private int playbackProgressY() {
-        int controlsY = reconnectServerButtonY() - CONTROL_HEIGHT - PLAYBACK_BOTTOM_CONTROLS_GAP;
+        int controlsY = reconnectServerButtonY() - playbackBottomControlsHeight() - PLAYBACK_BOTTOM_CONTROLS_GAP;
         int progressY = controlsY - PLAYBACK_PROGRESS_GAP - PLAYBACK_PROGRESS_HEIGHT;
         return Math.max(contentViewportTop() + PLAYBACK_PROGRESS_HEIGHT + PLAYBACK_PROGRESS_GAP, progressY);
     }
 
     private int playbackBottomControlsY() {
         return playbackProgressY() + PLAYBACK_PROGRESS_HEIGHT + PLAYBACK_BOTTOM_CONTROLS_GAP;
+    }
+
+    private int playbackBottomControlsRows() {
+        return mainW() < PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH ? 2 : 1;
+    }
+
+    private int playbackBottomControlsHeight() {
+        int rows = playbackBottomControlsRows();
+        return rows * CONTROL_HEIGHT + Math.max(0, rows - 1) * GAP;
     }
 
     private boolean hidePlaybackScrollpane(double mouseX, double mouseY) {
@@ -566,7 +579,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         int left = mainX();
         int right = left + mainW();
         int top = playbackProgressY();
-        int bottom = playbackBottomControlsY() + CONTROL_HEIGHT;
+        int bottom = playbackBottomControlsY() + playbackBottomControlsHeight();
         return inside(mouseX, mouseY, left, top, right, bottom);
     }
 
@@ -616,7 +629,6 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
             case CREATE_EDIT -> estimateCreateEditHeight(offset);
             case PLAYBACK -> estimatePlaybackHeight(offset);
             case SCREEN_SETTINGS -> estimateScreenSettingsHeight(offset);
-            case DIAGNOSTICS -> offset + 320;
         };
     }
 
@@ -632,29 +644,33 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         ClientVideoScreen screen = selectedPlaybackScreen();
         int queueRows = screen == null ? 1 : Math.max(1, screen.infos.size());
         int queueY = playbackQueueY(0);
-        return Math.max(offset + queueY, offset + queueY + 18 + queueRows * 12);
+        return Math.max(offset + queueY, offset + queueY + 18 + queueRows * 12 + 4);
     }
 
     private int estimateScreenSettingsHeight(int offset) {
         ClientVideoScreen screen = selectedScreen();
         int entries = screen == null ? 0 : screen.metadata.entries().size();
         int displayHeight = SCREEN_SETTINGS_META_Y;
-        int metaHeight = SCREEN_SETTINGS_META_CONTENT_Y + Math.max(138, 156 + Math.max(1, entries) * 12);
+        boolean compactMeta = mainW() < PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH;
+        int metadataLabelOffset = compactMeta ? 180 : 138;
+        int metadataRowOffset = compactMeta ? 198 : 156;
+        int metadataContentBottom = entries == 0
+                ? metadataRowOffset + 12
+                : metadataRowOffset + entries * 12 + 4;
+        int metaHeight = SCREEN_SETTINGS_META_CONTENT_Y + Math.max(metadataLabelOffset, metadataContentBottom);
         return offset + Math.max(displayHeight, metaHeight);
     }
 
     private void addTabs(int x, int y, int width) {
         int gap = 4;
-        int buttonW = Math.max(48, (width - gap * 3) / 4);
+        int buttonW = Math.max(BUTTON_MIN_WIDTH, (width - gap * 2) / 3);
         addTabButton(Tab.CREATE_EDIT, x, y, buttonW);
         addTabButton(Tab.PLAYBACK, x + buttonW + gap, y, buttonW);
         addTabButton(Tab.SCREEN_SETTINGS, x + (buttonW + gap) * 2, y, buttonW);
-        addTabButton(Tab.DIAGNOSTICS, x + (buttonW + gap) * 3, y, buttonW);
     }
 
     private void addTabButton(Tab target, int x, int y, int width) {
         VpButtonWidget button = button(target.label(), x, y, width, () -> {
-            if (diagnosticsReview != null && target != Tab.DIAGNOSTICS) diagnosticsReview.releaseScreen();
             tab = target;
             contentScroll = 0;
             if (target != Tab.PLAYBACK && target != Tab.SCREEN_SETTINGS) closeOverlays();
@@ -678,7 +694,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         int row = sidebarAreaViewportTop() - areaScroll;
         widgetGroup = WidgetGroup.AREA_SCROLL;
         for (String areaName : areas) {
-            VpButtonWidget button = button(areaName, x, row, SIDEBAR_WIDTH, () -> {
+            VpButtonWidget button = button(areaName, x, row, sidebarWidth(), () -> {
                 selectedAreaName = areaName;
                 selectedScreenName = firstScreenName(selectedAreaName);
                 screenScroll = 0;
@@ -696,7 +712,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         row = sidebarScreenViewportTop() - screenScroll;
         widgetGroup = WidgetGroup.SCREEN_SCROLL;
         for (ClientVideoScreen screen : screens) {
-            VpButtonWidget button = button(screen.name, x, row, SIDEBAR_WIDTH, () -> {
+            VpButtonWidget button = button(screen.name, x, row, sidebarWidth(), () -> {
                 selectedScreenName = screen.name;
                 confirmDeleteScreen = false;
                 syncDraftFromSelection(true);
@@ -710,13 +726,13 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         int bottom = height - 70;
         VpButtonWidget deleteScreen = button(confirmDeleteScreen
                 ? VpTexts.tr("button.videoplayer.confirm_delete_screen", "Confirm Delete Screen")
-                : VpTexts.tr("button.videoplayer.delete_screen", "Delete Screen"), x, bottom, SIDEBAR_WIDTH, this::deleteSelectedScreen)
+                : VpTexts.tr("button.videoplayer.delete_screen", "Delete Screen"), x, bottom, sidebarWidth(), this::deleteSelectedScreen)
                 .danger(true)
                 .selected(confirmDeleteScreen);
         deleteScreen.active = selectedScreen() != null && canScreen(VideoPermissionAction.REMOVE_SCREEN, selectedScreen());
         VpButtonWidget deleteArea = button(confirmDeleteArea
                 ? VpTexts.tr("button.videoplayer.confirm_delete_area", "Confirm Delete Area")
-                : VpTexts.tr("button.videoplayer.delete_area", "Delete Area"), x, bottom + 24, SIDEBAR_WIDTH, this::deleteSelectedArea)
+                : VpTexts.tr("button.videoplayer.delete_area", "Delete Area"), x, bottom + 24, sidebarWidth(), this::deleteSelectedArea)
                 .danger(true)
                 .selected(confirmDeleteArea);
         deleteArea.active = selectedArea() != null && canArea(VideoPermissionAction.REMOVE_AREA, selectedArea());
@@ -725,8 +741,8 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private void initCreateEdit(int x, int y, int width) {
         clearSphereFields();
         int row = y;
-        int contentW = Math.max(180, width);
-        int operationW = Math.max(86, (contentW - GAP * 2) / 3);
+        int contentW = contentWidth(width);
+        int operationW = actionButtonWidth(contentW, 3);
         button(operationLabel(VideoCreationEditor.Operation.CREATE_AREA), x, row, operationW, () -> {
             editor.draft().operation = VideoCreationEditor.Operation.CREATE_AREA;
             editor.draft().name = editor.suggestedAreaName();
@@ -872,7 +888,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
             }).selected(draft.sphereSkybox);
             row += PARAM_ROW_GAP;
 
-            int centerW = Math.max(36, (contentW - GAP * 3) / 4);
+            int centerW = Math.max(32, (contentW - GAP * 3) / 4);
             sphereCenterXField = textField(x, row, centerW, draft.sphereCenter == null ? "" : format(draft.sphereCenter.x), 16);
             sphereCenterYField = textField(x + centerW + GAP, row, centerW, draft.sphereCenter == null ? "" : format(draft.sphereCenter.y), 16);
             sphereCenterZField = textField(x + (centerW + GAP) * 2, row, centerW, draft.sphereCenter == null ? "" : format(draft.sphereCenter.z), 16);
@@ -915,24 +931,28 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
 
     private void initPlayback(int x, int y, int width) {
         int row = y;
-        int contentW = Math.max(180, width);
+        int contentW = contentWidth(width);
         ClientVideoScreen selected = selectedScreen();
-        int playButtonW = contentW < 260 ? 58 : 72;
-        int idleListButtonW = contentW < 260 ? 72 : 84;
-        int urlW = Math.max(70, contentW - playButtonW - idleListButtonW - GAP * 2);
+        boolean compactInput = contentW < PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH;
+        int playButtonW = compactInput ? actionButtonWidth(contentW, 2) : 72;
+        int idleListButtonW = compactInput ? playButtonW : 84;
+        int urlW = compactInput ? contentW : Math.max(70, contentW - playButtonW - idleListButtonW - GAP * 2);
         urlField = textField(x, row, urlW, "", VideoScreen.MAX_PLAY_URL_BYTES, VideoScreen::validPlayUrlInput);
-        VpButtonWidget play = button(VpTexts.tr("button.videoplayer.play", "Play"), x + urlW + GAP, row, playButtonW, button -> {
+        int actionY = compactInput ? row + CONTROL_HEIGHT + GAP : row;
+        int playX = compactInput ? x : x + urlW + GAP;
+        VpButtonWidget play = button(VpTexts.tr("button.videoplayer.play", "Play"), playX, actionY, playButtonW, button -> {
             ClientVideoScreen screen = selectedScreen();
             if (screen == null || urlField.getValue().isBlank()) return;
             ClientPacketHandler.request(screen.getScreen(), urlField.getValue().trim(), permissionFeedback(button));
         });
         play.active = selected != null && canScreen(VideoPermissionAction.PLAY, selected.getScreen());
-        VpButtonWidget idleList = button(VpTexts.tr("button.videoplayer.idle_list", "Idle List"), x + urlW + GAP + playButtonW + GAP, row, idleListButtonW, () -> {
+        int idleX = compactInput ? x + playButtonW + GAP : x + urlW + GAP + playButtonW + GAP;
+        VpButtonWidget idleList = button(VpTexts.tr("button.videoplayer.idle_list", "Idle List"), idleX, actionY, idleListButtonW, () -> {
             ClientVideoScreen screen = selectedPlaybackScreen();
             if (screen != null && minecraft != null) minecraft.gui.setScreen(new IdlePlayListScreen(this, screen));
         });
         idleList.active = selected != null && canScreen(VideoPermissionAction.SET_IDLE_PLAY, selectedPlaybackScreen());
-        row += BUTTON_ROW_GAP;
+        row += BUTTON_ROW_GAP * (compactInput ? 2 : 1);
         int modeW = actionButtonWidth(contentW, 2);
         VpButtonWidget stereo = button(VpTexts.tr("label.videoplayer.video_mode", "Video: %s", selected == null || !selected.stereo3d ? "2D" : "3D"), x, row, modeW, this::togglePlaybackStereo)
                 .selected(selected != null && selected.stereo3d);
@@ -987,7 +1007,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private void addPlaybackProgressSlider(int x, int width) {
         WidgetGroup previous = widgetGroup;
         widgetGroup = WidgetGroup.FIXED;
-        playbackProgressSlider = progressSlider(x, playbackProgressY(), Math.max(120, width),
+        playbackProgressSlider = progressSlider(x, playbackProgressY(), contentWidth(width),
                 this::playbackProgressState,
                 this::previewPlaybackProgress,
                 this::commitPlaybackProgress,
@@ -1000,22 +1020,40 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         WidgetGroup previous = widgetGroup;
         widgetGroup = WidgetGroup.FIXED;
         int row = playbackBottomControlsY();
-        int contentW = Math.max(180, width);
+        int contentW = contentWidth(width);
         int pinW = CONTROL_HEIGHT;
-        int qualityW = Math.max(86, Math.min(150, (contentW - pinW - GAP) / 4));
-        int qualityX = x + contentW - qualityW;
-        int pinX = x + contentW - pinW;
-        qualityX = pinX - GAP - qualityW;
-        int leftW = Math.max(0, qualityX - x - GAP);
-        int ccW = Math.max(44, Math.min(112, leftW / 3));
-        int danmakuToggleW = Math.max(34, Math.min(150, leftW - ccW - CONTROL_HEIGHT - GAP * 2));
-        int leftControlsW = danmakuToggleW + CONTROL_HEIGHT + ccW + GAP * 2;
-        if (leftControlsW > leftW) {
-            int overflow = leftControlsW - leftW;
-            int ccShrink = Math.min(overflow, Math.max(0, ccW - 34));
-            ccW -= ccShrink;
-            overflow -= ccShrink;
-            danmakuToggleW = Math.max(34, danmakuToggleW - overflow);
+        boolean compact = contentW < PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH;
+        int qualityY = row;
+        int pinY = row;
+        int qualityW;
+        int qualityX;
+        int pinX;
+        int ccW;
+        int danmakuToggleW;
+        if (compact) {
+            int compactRowW = contentW;
+            ccW = Math.max(44, Math.min(112, compactRowW / 3));
+            danmakuToggleW = Math.max(34, compactRowW - ccW - pinW - GAP * 2);
+            qualityY = row + CONTROL_HEIGHT + GAP;
+            qualityW = Math.max(34, contentW - pinW - GAP);
+            qualityX = x;
+            pinX = x + contentW - pinW;
+            pinY = qualityY;
+        } else {
+            qualityW = Math.max(86, Math.min(150, (contentW - pinW - GAP) / 4));
+            pinX = x + contentW - pinW;
+            qualityX = pinX - GAP - qualityW;
+            int leftW = Math.max(0, qualityX - x - GAP);
+            ccW = Math.max(44, Math.min(112, leftW / 3));
+            danmakuToggleW = Math.max(34, Math.min(150, leftW - ccW - pinW - GAP * 2));
+            int leftControlsW = danmakuToggleW + pinW + ccW + GAP * 2;
+            if (leftControlsW > leftW) {
+                int overflow = leftControlsW - leftW;
+                int ccShrink = Math.min(overflow, Math.max(0, ccW - 34));
+                ccW -= ccShrink;
+                overflow -= ccShrink;
+                danmakuToggleW = Math.max(34, danmakuToggleW - overflow);
+            }
         }
         VpButtonWidget danmaku = button(VpTexts.tr("label.videoplayer.danmaku_value", "Danmaku: %s", onOff(ClientDanmakuController.isGlobalEnabled()).getString()), x, row, danmakuToggleW, () -> {
             ClientDanmakuController.toggleGlobal();
@@ -1052,7 +1090,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         } else if (ccSubtitleOverlayOpen) {
             ccSubtitleOverlayOpen = false;
         }
-        VpButtonWidget quality = button(localBiliQualityButtonText(), qualityX, row, qualityW, () -> {
+        VpButtonWidget quality = button(localBiliQualityButtonText(), qualityX, qualityY, qualityW, () -> {
             boolean open = !biliLocalQualityOverlayOpen;
             biliLocalQualityOverlayOpen = open;
             if (open) biliQualityOverlayScroll = 0;
@@ -1064,11 +1102,11 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         }).selected(biliLocalQualityOverlayOpen);
         quality.active = currentBiliInfo(playbackScreen) != null || currentYouTubeInfo(playbackScreen) != null;
         if (biliLocalQualityOverlayOpen && quality.active) {
-            initBiliLocalQualityOverlay(quality.getRight(), row - 144, x, x + contentW);
+            initBiliLocalQualityOverlay(quality.getRight(), qualityY - 144, x, x + contentW);
         } else if (biliLocalQualityOverlayOpen) {
             biliLocalQualityOverlayOpen = false;
         }
-        VpButtonWidget pin = squareButton("钉", pinX, row, () -> {
+        VpButtonWidget pin = squareButton("P", pinX, pinY, () -> {
             playbackPreviewPinned = !playbackPreviewPinned;
             rebuildWidgets();
         }).selected(playbackPreviewPinned);
@@ -1084,29 +1122,13 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
 
     private void initReconnectServerButton(int x, int width) {
         VpButtonWidget reconnect = button(VpTexts.tr("button.videoplayer.reconnect_server", "Reconnect Server"), x,
-                reconnectServerButtonY(), Math.max(180, width), VideoPlayerClient::reconnectServer);
+                reconnectServerButtonY(), contentWidth(width), VideoPlayerClient::reconnectServer);
         reconnect.active = minecraft != null && minecraft.player != null && minecraft.getConnection() != null;
-    }
-
-    private void initDiagnostics(int x, int y, int width) {
-        ClientVideoScreen screen = selectedScreen();
-        int buttonW = actionButtonWidth(Math.max(180, width), 2);
-        diagnosticsRefreshButton = button(VpTexts.tr("button.videoplayer.refresh_diagnostics", "Refresh"), x, y,
-                buttonW, () -> requestDiagnostics(screen));
-        diagnosticsMuteButton = button(diagnosticsMuteText(), x + buttonW + GAP, y, buttonW, () -> {
-            if (diagnosticsReview != null) {
-                diagnosticsReview.toggleMute();
-                diagnosticsMuteButton.setMessage(diagnosticsMuteText());
-                diagnosticsMuteButton.selected(diagnosticsReview.muted());
-            }
-        }).selected(diagnosticsReview != null && diagnosticsReview.muted());
-        diagnosticsMuteButton.active = diagnosticsReview != null && selectedPlaybackScreen() != null;
-        updateDiagnosticsRefreshButton(screen);
     }
 
     private void initDisplay(int x, int y, int width) {
         ClientVideoScreen screen = selectedScreen();
-        int contentW = Math.max(180, width);
+        int contentW = contentWidth(width);
         int row = y;
         int displayModeW = actionButtonWidth(contentW, 2);
         VpButtonWidget stretch = button(VpTexts.tr("button.videoplayer.stretch", "Stretch"), x, row, displayModeW, button -> {
@@ -1178,7 +1200,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
 
     private void initMeta(int x, int y, int width) {
         ClientVideoScreen screen = selectedScreen();
-        int contentW = Math.max(180, width);
+        int contentW = contentWidth(width);
         int row = y;
         int toggleW = actionButtonWidth(contentW, 3);
         VpButtonWidget mute = button(VpTexts.tr("label.videoplayer.mute_value", "Mute: %s", boolLabel(screen, "mute", false).getString()), x, row, toggleW, button -> toggleMeta(button, "mute", false))
@@ -1197,20 +1219,24 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         defaultVolume.active = screen != null && canScreen(VideoPermissionAction.SET_METADATA, screen);
 
         row += 36;
-        int keyW = Math.max(100, Math.min(220, (contentW - GAP) / 2));
-        int typeW = Math.max(86, Math.min(120, contentW - keyW - GAP));
+        boolean compact = contentW < PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH;
+        int keyW = compact ? contentW : Math.max(100, Math.min(220, (contentW - GAP) / 2));
+        int typeW = compact ? contentW : Math.max(86, Math.min(120, contentW - keyW - GAP));
         customKeyField = textField(x, row, keyW, "", 64);
-        VpButtonWidget type = button(VpTexts.tr("label.videoplayer.type_value", "Type: %s", customMetaType.label()), x + keyW + GAP, row, typeW, this::cycleCustomMetaType);
+        VpButtonWidget type = button(VpTexts.tr("label.videoplayer.type_value", "Type: %s", customMetaType.label()),
+                compact ? x : x + keyW + GAP, compact ? row + CONTROL_HEIGHT + GAP : row, typeW, this::cycleCustomMetaType);
         type.active = screen != null;
 
-        row += 30;
-        int setW = 72;
-        int removeW = 72;
-        int valueW = Math.max(100, contentW - setW - removeW - GAP * 2);
-        customValueField = textField(x, row, valueW, defaultValueFor(customMetaType), MetaValue.MAX_STRING_BYTES);
-        VpButtonWidget set = button(VpTexts.tr("button.videoplayer.set", "Set"), x + valueW + GAP, row, setW, button -> setCustomMeta(button, false));
+        int valueY = compact ? row + (CONTROL_HEIGHT + GAP) * 2 : row + 30;
+        int setY = compact ? valueY + CONTROL_HEIGHT + GAP : valueY;
+        int setW = compact ? actionButtonWidth(contentW, 2) : 72;
+        int removeW = compact ? setW : 72;
+        int valueW = compact ? contentW : Math.max(100, contentW - setW - removeW - GAP * 2);
+        customValueField = textField(x, valueY, valueW, defaultValueFor(customMetaType), MetaValue.MAX_STRING_BYTES);
+        VpButtonWidget set = button(VpTexts.tr("button.videoplayer.set", "Set"), x, setY, setW, button -> setCustomMeta(button, false));
         set.active = screen != null && canScreen(VideoPermissionAction.SET_METADATA, screen);
-        VpButtonWidget remove = button(VpTexts.tr("button.videoplayer.remove", "Remove"), x + valueW + GAP + setW + GAP, row, removeW, button -> setCustomMeta(button, true)).danger(true);
+        VpButtonWidget remove = button(VpTexts.tr("button.videoplayer.remove", "Remove"), compact ? x + setW + GAP : x + valueW + GAP + setW + GAP,
+                setY, removeW, button -> setCustomMeta(button, true)).danger(true);
         remove.active = screen != null && canScreen(VideoPermissionAction.SET_METADATA, screen);
     }
 
@@ -1221,10 +1247,9 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
 
     private void drawTabContent(GuiGraphicsExtractor context, int x, int y, int width, int mouseX, int mouseY) {
         switch (tab) {
-            case CREATE_EDIT -> drawCreateEdit(context, x, y);
-            case PLAYBACK -> drawPlayback(context, x, y, mouseX, mouseY);
+            case CREATE_EDIT -> drawCreateEdit(context, x, y, width);
+            case PLAYBACK -> drawPlayback(context, x, y, width, mouseX, mouseY);
             case SCREEN_SETTINGS -> drawScreenSettings(context, x, y, width);
-            case DIAGNOSTICS -> drawDiagnostics(context, x, y, width);
         }
     }
 
@@ -1399,9 +1424,9 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         VpUiRenderer.drawBox(context, x, thumbY, 4, thumbHeight, thumbColor, thumbColor);
     }
 
-    private void drawCreateEdit(GuiGraphicsExtractor context, int x, int y) {
+    private void drawCreateEdit(GuiGraphicsExtractor context, int x, int y, int width) {
         VideoCreationEditor.Draft draft = editor.draft();
-        int contentW = Math.max(180, width - x - 14);
+        int contentW = contentWidth(width);
         int row = y + 44;
         if (draft.operation == VideoCreationEditor.Operation.CREATE_AREA) {
             drawLabel(context, VpTexts.tr("label.videoplayer.name", "Name"), x, row - LABEL_OFFSET, THEME.secondaryTextColor());
@@ -1432,7 +1457,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
                 drawLabel(context, VpTexts.tr("label.videoplayer.skybox", "Skybox"), x + (smallW + GAP) * 2, row - LABEL_OFFSET, THEME.secondaryTextColor());
                 row += PARAM_ROW_GAP;
 
-                int centerW = Math.max(36, (contentW - GAP * 3) / 4);
+                int centerW = Math.max(32, (contentW - GAP * 3) / 4);
                 drawLabel(context, "X", x, row - LABEL_OFFSET, THEME.secondaryTextColor());
                 drawLabel(context, "Y", x + centerW + GAP, row - LABEL_OFFSET, THEME.secondaryTextColor());
                 drawLabel(context, "Z", x + (centerW + GAP) * 2, row - LABEL_OFFSET, THEME.secondaryTextColor());
@@ -1455,7 +1480,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         trackContentBottom(statusY + 10);
     }
 
-    private void drawPlayback(GuiGraphicsExtractor context, int x, int y, int mouseX, int mouseY) {
+    private void drawPlayback(GuiGraphicsExtractor context, int x, int y, int width, int mouseX, int mouseY) {
         if (showPlaybackProgressPreview(mouseX, mouseY)) {
             drawPlaybackProgressPreview(context, x);
             trackContentBottom(contentViewportBottom());
@@ -1473,7 +1498,8 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         int row = queueY + 18;
         int index = 1;
         for (VideoInfo info : screen.infos) {
-            drawLabel(context, index + ". " + info.name() + " / " + info.playerName(), x, row, THEME.secondaryTextColor());
+            String queueEntry = index + ". " + info.name() + " / " + info.playerName();
+            drawLabel(context, trimToWidth(queueEntry, contentWidth(width)), x, row, THEME.secondaryTextColor());
             row += 12;
             index++;
         }
@@ -1481,13 +1507,21 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private int playbackQueueY(int y) {
-        return y + BUTTON_ROW_GAP * 3 + CONTROL_HEIGHT + 14;
+        return y + BUTTON_ROW_GAP * (3 + playbackInputRows() - 1) + CONTROL_HEIGHT + 14;
+    }
+
+    private int playbackInputRows() {
+        return mainW() < PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH ? 2 : 1;
     }
 
     private VpProgressSliderWidget.ProgressState playbackProgressState() {
         ClientVideoScreen screen = selectedPlaybackScreen();
         if (screen == null || screen.player == null) {
             return VpProgressSliderWidget.ProgressState.disabled();
+        }
+        VideoInfo info = screen.currentPlaybackInfo();
+        if (info != null && !info.seekable() && info.durationMs() == 0L) {
+            return VpProgressSliderWidget.ProgressState.liveStream();
         }
         long total = screen.player.getTotalProgress();
         long progress = screen.player.getProgress();
@@ -1500,7 +1534,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private boolean canSeekPlayback(ClientVideoScreen screen) {
         if (screen == null || screen.player == null) return false;
         if (!ClientPermissionCache.allowedForScreen(VideoPermissionAction.SEEK, screen)) return false;
-        VideoInfo info = screen.currentDisplayInfo();
+        VideoInfo info = screen.currentPlaybackInfo();
         return info != null && info.seekable() && screen.player.canSetProgress() && screen.player.getTotalProgress() > 0;
     }
 
@@ -1608,7 +1642,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
 
     private void drawScreenSettings(GuiGraphicsExtractor context, int x, int y, int width) {
         VideoConnectionDiagnostics.Snapshot connection = VideoPlayerClient.connectionSnapshot();
-        int contentW = Math.max(180, width);
+        int contentW = contentWidth(width);
         Component address = VpTexts.tr("label.videoplayer.server_address", "Server: %s", connectionAddress(connection));
         Component status = connectionStatus(connection);
         drawLabel(context, VpTexts.tr("label.videoplayer.server_connection", "Server Connection"), x, y, THEME.primaryTextColor());
@@ -1618,245 +1652,9 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
                 y + SCREEN_SETTINGS_CONNECTION_STATUS_Y, connectionStatusColor(connection.state()));
         drawLabel(context, VpTexts.tr("label.videoplayer.display", "Display"), x,
                 y + SCREEN_SETTINGS_DISPLAY_LABEL_Y, THEME.primaryTextColor());
-        drawDisplay(context, x, y + SCREEN_SETTINGS_DISPLAY_Y);
+        drawDisplay(context, x, y + SCREEN_SETTINGS_DISPLAY_Y, width);
         drawLabel(context, "Meta", x, y + SCREEN_SETTINGS_META_Y, THEME.primaryTextColor());
         drawMeta(context, x, y + SCREEN_SETTINGS_META_CONTENT_Y, width);
-    }
-
-    private void drawDiagnostics(GuiGraphicsExtractor context, int x, int y, int width) {
-        int contentW = Math.max(180, width);
-        int row = y + 30;
-        ClientVideoScreen screen = selectedScreen();
-        drawLabel(context, VpTexts.tr("label.videoplayer.diagnostics", "Diagnostics"), x, row, THEME.primaryTextColor());
-        row += 16;
-        row = drawAudioLevelGraph(context, x, row, contentW);
-        row += 10;
-        if (screen == null) {
-            drawLabel(context, VpTexts.tr("message.videoplayer.diagnostics_no_screen", "Select a screen to inspect playback"),
-                    x, row, THEME.secondaryTextColor());
-            trackContentBottom(row + 12);
-            return;
-        }
-        PlaybackDiagnostics diagnostics = ClientPacketHandler.diagnostics(screen);
-        if (diagnostics == null) {
-            drawLabel(context, VpTexts.tr("message.videoplayer.diagnostics_waiting", "Waiting for server diagnostics"),
-                    x, row, THEME.secondaryTextColor());
-            trackContentBottom(row + 12);
-            return;
-        }
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_backend", "Backend: %s", diagnosticsBackendState(diagnostics.backendState())),
-                THEME.secondaryTextColor());
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_connection", "Connection: %s",
-                        connectionStatus(VideoPlayerClient.connectionSnapshot()).getString()), THEME.secondaryTextColor());
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_state", "State: %s", diagnosticsPlaybackState(diagnostics)),
-                diagnostics.playing() || diagnostics.resolving() ? THEME.executionColor() : THEME.secondaryTextColor());
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_current", "Current: %s", displayDiagnosticsValue(diagnostics.currentTitle())),
-                THEME.secondaryTextColor());
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_queue", "Queue: %s | Next: %s", diagnostics.queueSize(),
-                        displayDiagnosticsValue(diagnostics.queuedTitle())), THEME.secondaryTextColor());
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_generation", "Generation: %s | Progress: %s", diagnostics.generation(),
-                        formatDiagnosticsDuration(diagnostics.progressMs())), THEME.secondaryTextColor());
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_retry", "Retry: %s", diagnosticsRetryState(diagnostics)),
-                diagnostics.retryAttempt() > 0 ? THEME.accentColor() : THEME.secondaryTextColor());
-        row = drawDiagnosticsLine(context, x, row, contentW,
-                VpTexts.tr("label.videoplayer.diagnostics_client_resolution", "Client metadata: %s", diagnosticsClientResolutionState(diagnostics)),
-                diagnostics.awaitingClientResolution() ? THEME.accentColor() : THEME.secondaryTextColor());
-        String failure = diagnosticsFailure(diagnostics);
-        if (!failure.isBlank()) {
-            row = drawDiagnosticsLine(context, x, row, contentW,
-                    VpTexts.tr("label.videoplayer.diagnostics_failure", "Last failure: %s", failure),
-                    THEME.errorColor());
-        }
-        trackContentBottom(row + 4);
-    }
-
-    private int drawDiagnosticsLine(GuiGraphicsExtractor context, int x, int y, int width, Component text, int color) {
-        drawLabel(context, trimToWidth(text.getString(), width), x, y, color);
-        return y + 14;
-    }
-
-    private int drawAudioLevelGraph(GuiGraphicsExtractor context, int x, int y, int width) {
-        AudioLevelSnapshot level = diagnosticsReview == null
-                ? AudioLevelSnapshot.unsupported()
-                : diagnosticsReview.currentLevel();
-        drawLabel(context, VpTexts.tr("label.videoplayer.audio_level", "Video Audio Level"), x, y, THEME.primaryTextColor());
-        y += 14;
-        if (level.status() != AudioLevelSnapshot.Status.AVAILABLE) {
-            String state = switch (level.status()) {
-                case UNSUPPORTED -> VpTexts.tr("status.videoplayer.audio_level_unsupported", "Real audio level is unavailable for this backend").getString();
-                case NO_AUDIO -> VpTexts.tr("status.videoplayer.audio_level_no_audio", "Current video has no audio track").getString();
-                case WAITING -> VpTexts.tr("status.videoplayer.audio_level_waiting", "Waiting for audio level data").getString();
-                case AVAILABLE -> "";
-            };
-            drawLabel(context, trimToWidth(state, width), x, y, THEME.secondaryTextColor());
-            return y + 18;
-        }
-
-        String values = VpTexts.tr("label.videoplayer.audio_level_values", "RMS: %s dBFS | Peak: %s dBFS",
-                formatAudioDb(level.rmsDb()), formatAudioDb(level.peakDb())).getString();
-        drawLabel(context, trimToWidth(values, width), x, y, THEME.secondaryTextColor());
-        y += 14;
-
-        List<AudioLevelSnapshot> history = diagnosticsReview == null ? List.of() : diagnosticsReview.history();
-        float heldPeak = level.peakDb();
-        for (AudioLevelSnapshot sample : history) heldPeak = Math.max(heldPeak, sample.peakDb());
-
-        int barHeight = 10;
-        VpUiRenderer.drawBox(context, x, y, width, barHeight, VpUiRenderer.darken(THEME.nodeBodyColor(), 0.08f), THEME.panelBorderColor());
-        int rmsWidth = Math.round(width * audioLevelRatio(level.rmsDb()));
-        if (rmsWidth > 0) context.fill(x + 1, y + 1, x + Math.max(1, rmsWidth - 1), y + barHeight - 1, THEME.executionColor());
-        int peakX = x + Math.clamp(Math.round((width - 1) * audioLevelRatio(level.peakDb())), 0, width - 1);
-        context.fill(peakX, y, Math.min(x + width, peakX + 2), y + barHeight, THEME.accentColor());
-        int heldPeakX = x + Math.clamp(Math.round((width - 1) * audioLevelRatio(heldPeak)), 0, width - 1);
-        context.fill(heldPeakX, y, Math.min(x + width, heldPeakX + 1), y + barHeight, THEME.errorColor());
-        y += barHeight + 6;
-
-        int graphHeight = 42;
-        VpUiRenderer.drawBox(context, x, y, width, graphHeight, VpUiRenderer.darken(THEME.nodeBodyColor(), 0.08f), THEME.panelBorderColor());
-        if (!history.isEmpty()) {
-            int count = history.size();
-            for (int i = 0; i < count; i++) {
-                AudioLevelSnapshot sample = history.get(i);
-                int pointX = x + 1 + Math.round((width - 3) * (i / (float) Math.max(1, count - 1)));
-                int pointY = y + graphHeight - 2 - Math.round((graphHeight - 4) * audioLevelRatio(sample.rmsDb()));
-                context.fill(pointX, pointY, Math.min(x + width - 1, pointX + 2), Math.min(y + graphHeight - 1, pointY + 2), THEME.executionColor());
-            }
-        }
-        return y + graphHeight;
-    }
-
-    private float audioLevelRatio(float db) {
-        return Math.clamp((db - AudioLevelSnapshot.MIN_DB) / (AudioLevelSnapshot.MAX_DB - AudioLevelSnapshot.MIN_DB), 0f, 1f);
-    }
-
-    private String formatAudioDb(float value) {
-        return String.format(Locale.ROOT, "%.1f", value);
-    }
-
-    private String diagnosticsPlaybackState(PlaybackDiagnostics diagnostics) {
-        if (diagnostics.resolving()) return VpTexts.tr("status.videoplayer.diagnostics.resolving", "Resolving").getString();
-        if (diagnostics.playing() && diagnostics.idle()) return VpTexts.tr("status.videoplayer.diagnostics.idle", "Playing idle media").getString();
-        if (diagnostics.playing()) return VpTexts.tr("status.videoplayer.diagnostics.playing", "Playing").getString();
-        return VpTexts.tr("status.videoplayer.diagnostics.stopped", "Stopped").getString();
-    }
-
-    private String diagnosticsRetryState(PlaybackDiagnostics diagnostics) {
-        if (diagnostics.retryAttempt() <= 0) return VpTexts.tr("label.videoplayer.diagnostics_none", "None").getString();
-        long seconds = Math.max(0L, (diagnostics.nextRetryAtMs() - System.currentTimeMillis() + 999L) / 1_000L);
-        return VpTexts.tr("label.videoplayer.diagnostics_retry_pending", "%s/%s in %ss",
-                diagnostics.retryAttempt(), 3, seconds).getString();
-    }
-
-    private String diagnosticsClientResolutionState(PlaybackDiagnostics diagnostics) {
-        if (!diagnostics.awaitingClientResolution()) {
-            return VpTexts.tr("label.videoplayer.diagnostics_not_required", "Not required").getString();
-        }
-        return diagnostics.reporterAssigned()
-                ? VpTexts.tr("label.videoplayer.diagnostics_reporter_assigned", "Reporter assigned").getString()
-                : VpTexts.tr("label.videoplayer.diagnostics_reporter_waiting", "Waiting for a reporter").getString();
-    }
-
-    private String diagnosticsBackendState(String state) {
-        if (state == null || state.isBlank()) return displayDiagnosticsValue(state);
-        return switch (state) {
-            case "INITIALIZING" -> VpTexts.tr("status.videoplayer.diagnostics.backend_initializing", "Initializing").getString();
-            case "INSTALLING" -> VpTexts.tr("status.videoplayer.diagnostics.backend_installing", "Installing").getString();
-            case "LOADING" -> VpTexts.tr("status.videoplayer.diagnostics.backend_loading", "Loading").getString();
-            case "READY" -> VpTexts.tr("status.videoplayer.diagnostics.backend_ready", "Ready").getString();
-            case "UNAVAILABLE" -> VpTexts.tr("status.videoplayer.diagnostics.backend_unavailable", "Unavailable").getString();
-            case "STOPPED" -> VpTexts.tr("status.videoplayer.diagnostics.backend_stopped", "Stopped").getString();
-            case "SERVER" -> VpTexts.tr("status.videoplayer.diagnostics.backend_server", "Server").getString();
-            default -> state;
-        };
-    }
-
-    private String diagnosticsFailure(PlaybackDiagnostics diagnostics) {
-        PlaybackFailureReason reason = diagnostics.failureReason();
-        if (reason == null || reason == PlaybackFailureReason.NONE) return diagnostics.failureMessage();
-        return switch (reason) {
-            case RESOLUTION -> VpTexts.tr("status.videoplayer.diagnostics.failure_resolution", "Unable to resolve the media source").getString();
-            case SOURCE_REJECTED -> VpTexts.tr("status.videoplayer.diagnostics.failure_source_rejected", "The resolved media source is not allowed").getString();
-            case LISTENER_START -> VpTexts.tr("status.videoplayer.diagnostics.failure_listener_start", "Unable to start the playback backend").getString();
-            case PLAYBACK_ERROR -> VpTexts.tr("status.videoplayer.diagnostics.failure_playback_error", "The playback backend reported an error").getString();
-            case PLAYBACK_TIMEOUT -> VpTexts.tr("status.videoplayer.diagnostics.failure_playback_timeout", "The playback backend timed out while loading media").getString();
-            case CLIENT_RESOLUTION -> VpTexts.tr("status.videoplayer.diagnostics.failure_client_resolution", "A client could not resolve playback metadata").getString();
-            case NONE -> diagnostics.failureMessage();
-        };
-    }
-
-    private String displayDiagnosticsValue(String value) {
-        return value == null || value.isBlank()
-                ? VpTexts.tr("label.videoplayer.diagnostics_none", "None").getString()
-                : value;
-    }
-
-    private String formatDiagnosticsDuration(long millis) {
-        if (millis < 0L) return VpTexts.tr("label.videoplayer.diagnostics_unknown", "Unknown").getString();
-        long seconds = millis / 1_000L;
-        long hours = seconds / 3_600L;
-        long minutes = (seconds % 3_600L) / 60L;
-        long remainder = seconds % 60L;
-        if (hours > 0L) return String.format(Locale.ROOT, "%d:%02d:%02d", hours, minutes, remainder);
-        return String.format(Locale.ROOT, "%d:%02d", minutes, remainder);
-    }
-
-    private void requestDiagnosticsIfDue() {
-        ClientVideoScreen screen = selectedScreen();
-        updateDiagnosticsRefreshButton(screen);
-        if (!diagnosticsAreaLoaded(screen) || diagnosticsRequestInFlight
-                || !canScreen(VideoPermissionAction.OPEN_MENU, screen)) return;
-        long now = System.currentTimeMillis();
-        if (now - lastDiagnosticsRequestAt < DIAGNOSTICS_REFRESH_INTERVAL_MS) return;
-        requestDiagnostics(screen);
-    }
-
-    private void updateDiagnosticsReview() {
-        if (diagnosticsReview == null) return;
-        if (tab == Tab.DIAGNOSTICS) {
-            diagnosticsReview.select(selectedPlaybackScreen());
-            diagnosticsReview.tick();
-        } else {
-            diagnosticsReview.releaseScreen();
-        }
-        if (diagnosticsMuteButton != null) {
-            diagnosticsMuteButton.setMessage(diagnosticsMuteText());
-            diagnosticsMuteButton.selected(diagnosticsReview.muted());
-            diagnosticsMuteButton.active = tab == Tab.DIAGNOSTICS && selectedPlaybackScreen() != null;
-        }
-    }
-
-    private Component diagnosticsMuteText() {
-        boolean muted = diagnosticsReview != null && diagnosticsReview.muted();
-        return VpTexts.tr("label.videoplayer.review_mute", "Review Mute: %s", onOff(muted).getString());
-    }
-
-    private void requestDiagnostics(ClientVideoScreen screen) {
-        if (!diagnosticsAreaLoaded(screen) || diagnosticsRequestInFlight
-                || !canScreen(VideoPermissionAction.OPEN_MENU, screen)) return;
-        diagnosticsRequestInFlight = true;
-        if (ClientPacketHandler.requestDiagnostics(screen, result -> diagnosticsRequestInFlight = false)) {
-            lastDiagnosticsRequestAt = System.currentTimeMillis();
-        } else {
-            diagnosticsRequestInFlight = false;
-        }
-    }
-
-    private boolean diagnosticsAreaLoaded(ClientVideoScreen screen) {
-        return screen != null && screen.area instanceof ClientVideoArea area && area.loaded;
-    }
-
-    private void updateDiagnosticsRefreshButton(ClientVideoScreen screen) {
-        if (diagnosticsRefreshButton != null) {
-            diagnosticsRefreshButton.active = diagnosticsAreaLoaded(screen) && !diagnosticsRequestInFlight
-                    && canScreen(VideoPermissionAction.OPEN_MENU, screen);
-        }
     }
 
     private String connectionAddress(VideoConnectionDiagnostics.Snapshot connection) {
@@ -1897,8 +1695,8 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         };
     }
 
-    private void drawDisplay(GuiGraphicsExtractor context, int x, int y) {
-        int contentW = Math.max(180, width - x - 14);
+    private void drawDisplay(GuiGraphicsExtractor context, int x, int y, int width) {
+        int contentW = contentWidth(width);
         int scaleSliderW = actionButtonWidth(contentW, 2);
         int idleImageRow = y + FORM_ROW_GAP;
         int danmakuRow = idleImageRow + FORM_ROW_GAP;
@@ -1917,15 +1715,20 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private void drawMeta(GuiGraphicsExtractor context, int x, int y, int width) {
-        int contentW = Math.max(180, width);
-        int keyW = Math.max(100, Math.min(220, (contentW - GAP) / 2));
+        int contentW = contentWidth(width);
+        boolean compact = contentW < PLAYBACK_COMPACT_CONTROLS_MAX_WIDTH;
+        int keyW = compact ? contentW : Math.max(100, Math.min(220, (contentW - GAP) / 2));
+        int typeLabelY = compact ? y + 80 : y + 56;
+        int valueLabelY = compact ? y + 110 : y + 86;
+        int metadataLabelY = compact ? y + 180 : y + 138;
+        int metadataRowY = compact ? y + 198 : y + 156;
         drawLabel(context, "Key", x, y + 56, THEME.secondaryTextColor());
-        drawLabel(context, "Type", x + keyW + GAP, y + 56, THEME.secondaryTextColor());
-        drawLabel(context, "Value", x, y + 86, THEME.secondaryTextColor());
+        drawLabel(context, "Type", compact ? x : x + keyW + GAP, typeLabelY, THEME.secondaryTextColor());
+        drawLabel(context, "Value", x, valueLabelY, THEME.secondaryTextColor());
         ClientVideoScreen screen = selectedScreen();
         if (screen == null) return;
-        drawLabel(context, "Metadata", x, y + 138, THEME.secondaryTextColor());
-        int row = y + 156;
+        drawLabel(context, "Metadata", x, metadataLabelY, THEME.secondaryTextColor());
+        int row = metadataRowY;
         List<Map.Entry<String, MetaValue>> entries = screen.metadata.entries().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .toList();
@@ -1937,7 +1740,8 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
         for (Map.Entry<String, MetaValue> entry : entries) {
             MetaValue value = entry.getValue();
             String type = value.type == null ? "unknown" : value.type.label();
-            drawLabel(context, entry.getKey() + " [" + type + "] = " + value.toDisplayString(), x, row, THEME.secondaryTextColor());
+            String metadataEntry = entry.getKey() + " [" + type + "] = " + value.toDisplayString();
+            drawLabel(context, trimToWidth(metadataEntry, contentW), x, row, THEME.secondaryTextColor());
             row += 12;
         }
         trackContentBottom(row + 4);
@@ -1967,7 +1771,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private EditBox textField(int x, int y, int width, String text, int maxLength, Predicate<String> predicate) {
-        VpTextFieldWidget field = new VpTextFieldWidget(font, x, y, Math.max(40, width), CONTROL_HEIGHT, Component.empty(), THEME);
+        VpTextFieldWidget field = new VpTextFieldWidget(font, x, y, Math.max(32, width), CONTROL_HEIGHT, Component.empty(), THEME);
         field.setMaxLength(maxLength);
         field.setFilter(predicate);
         field.setValue(text == null ? "" : text);
@@ -2043,7 +1847,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private void initDanmakuOverlay(int anchorRight, int anchorY, int minX, int maxX) {
         normalizeDanmakuOverlayConfig();
         boolean showDensity = showDanmakuDensityControls();
-        int availableW = Math.max(180, maxX - minX);
+        int availableW = contentWidth(maxX - minX);
         danmakuOverlayW = Math.min(DANMAKU_OVERLAY_WIDTH, availableW);
         danmakuOverlayH = DANMAKU_OVERLAY_BASE_HEIGHT + (showDensity ? DANMAKU_OVERLAY_DENSITY_EXTRA_HEIGHT : 0);
         int maxPanelX = Math.max(minX, maxX - danmakuOverlayW);
@@ -2213,7 +2017,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
 
     private void initCcSubtitleOverlay(int anchorRight, int anchorY, int minX, int maxX,
                                        List<SubtitleChoice> choices, String selected, ClientSubtitleController subtitles) {
-        int availableW = Math.max(180, maxX - minX);
+        int availableW = contentWidth(maxX - minX);
         danmakuOverlayW = Math.max(BILI_QUALITY_OVERLAY_MIN_WIDTH, availableW / 4);
         int contentHeight = choices.size() * CONTROL_HEIGHT + Math.max(0, choices.size() - 1) * BILI_QUALITY_OVERLAY_BUTTON_GAP;
         int maxViewportHeight = BILI_QUALITY_OVERLAY_VISIBLE_ROWS * CONTROL_HEIGHT
@@ -2253,7 +2057,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
             closeOverlays();
             return;
         }
-        int availableW = Math.max(180, maxX - minX);
+        int availableW = contentWidth(maxX - minX);
         danmakuOverlayW = Math.max(BILI_QUALITY_OVERLAY_MIN_WIDTH, availableW / 4);
         int contentHeight = options.size() * CONTROL_HEIGHT + Math.max(0, options.size() - 1) * BILI_QUALITY_OVERLAY_BUTTON_GAP;
         int maxViewportHeight = BILI_QUALITY_OVERLAY_VISIBLE_ROWS * CONTROL_HEIGHT
@@ -2566,7 +2370,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
                                                   java.util.function.LongConsumer commit,
                                                   Runnable dragStart,
                                                   Runnable dragEnd) {
-        VpProgressSliderWidget slider = new VpProgressSliderWidget(x, y, Math.max(80, width), PLAYBACK_PROGRESS_HEIGHT, source, preview, commit, dragStart, dragEnd, THEME);
+        VpProgressSliderWidget slider = new VpProgressSliderWidget(x, y, contentWidth(width), PLAYBACK_PROGRESS_HEIGHT, source, preview, commit, dragStart, dragEnd, THEME);
         addRenderableWidget(slider);
         registerDrawable(slider, y, PLAYBACK_PROGRESS_HEIGHT);
         return slider;
@@ -2650,7 +2454,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
 
     private int clipRight(WidgetGroup group) {
         return switch (group) {
-            case AREA_SCROLL, SCREEN_SCROLL -> sidebarX() + SIDEBAR_WIDTH;
+            case AREA_SCROLL, SCREEN_SCROLL -> sidebarX() + sidebarWidth();
             case CONTENT_SCROLL -> mainX() + mainW();
             case FIXED -> width;
         };
@@ -2672,7 +2476,8 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private int actionButtonWidth(int width, int count) {
-        return Math.max(64, (width - GAP * (count - 1)) / count);
+        if (count <= 0) return contentWidth(width);
+        return Math.max(BUTTON_MIN_WIDTH, (width - GAP * (count - 1)) / count);
     }
 
     private void clearSphereFields() {
@@ -3176,12 +2981,11 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     }
 
     private void reopen(ClientVideoScreen focusedScreen, boolean preserveDraftDisplay) {
-        if (diagnosticsReview != null) diagnosticsReview.beginHandoff();
         if (focusedScreen != null) {
             minecraft.gui.setScreen(new VideoManagementScreen(editor, focusedScreen, tab,
                     danmakuOverlayOpen, biliLocalQualityOverlayOpen, biliScreenQualityOverlayOpen,
                     youtubeScreenQualityOverlay, ccSubtitleOverlayOpen,
-                    playbackPreviewPinned, diagnosticsReview));
+                    playbackPreviewPinned));
             return;
         }
         minecraft.gui.setScreen(new VideoManagementScreen(
@@ -3201,8 +3005,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
                 biliScreenQualityOverlayOpen,
                 youtubeScreenQualityOverlay,
                 ccSubtitleOverlayOpen,
-                playbackPreviewPinned,
-                diagnosticsReview
+                playbackPreviewPinned
         ));
     }
 
@@ -3296,8 +3099,7 @@ public class VideoManagementScreen extends Screen implements ServerStateScreen {
     private enum Tab {
         CREATE_EDIT("tab.videoplayer.create_edit", "Create/Edit"),
         PLAYBACK("tab.videoplayer.playback", "Playback"),
-        SCREEN_SETTINGS("tab.videoplayer.screen_settings", "Screen Settings"),
-        DIAGNOSTICS("tab.videoplayer.diagnostics", "Diagnostics");
+        SCREEN_SETTINGS("tab.videoplayer.screen_settings", "Screen Settings");
 
         final String key;
         final String fallback;

@@ -6,6 +6,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -24,7 +29,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     writes.add(snapshot.dimension() + ":" + snapshot.serialized());
                     return true;
                 },
@@ -55,7 +60,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     writes.add(snapshot.serialized());
                     if (snapshot.version() == 1L) {
                         queueRef.get().enqueue(snapshot("overworld", 2, "second"));
@@ -85,7 +90,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     if (snapshot.version() == 1L) throw new IllegalStateException("disk unavailable");
                     writes.add(snapshot.serialized());
                     return true;
@@ -112,7 +117,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     writes.add(snapshot.serialized());
                     return true;
                 },
@@ -130,6 +135,80 @@ class WorldSaveQueueTest {
     }
 
     @Test
+    void inlineDrainPersistsWithoutLaunchingASchedulerTask() {
+        AtomicInteger launches = new AtomicInteger();
+        List<String> writes = new ArrayList<>();
+        WorldSaveQueue queue = new WorldSaveQueue(
+                task -> {
+                    launches.incrementAndGet();
+                    return FoliaScheduler.TaskHandle.NONE;
+                },
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
+                    writes.add(snapshot.serialized());
+                    return true;
+                },
+                (snapshot, error) -> {
+                    throw new AssertionError(error);
+                }
+        );
+
+        WorldSaveQueue.DrainResult result = queue.drainInline(snapshot("overworld", 1, "final"));
+
+        assertTrue(result.successful());
+        assertEquals(0, launches.get());
+        assertEquals(List.of("final"), writes);
+        assertTrue(queue.flush(1));
+    }
+
+    @Test
+    void inlineDrainSerializesWithAnActiveQueueWorker() throws Exception {
+        AtomicInteger launches = new AtomicInteger();
+        CountDownLatch firstWriteStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstWrite = new CountDownLatch(1);
+        List<String> writes = new CopyOnWriteArrayList<>();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            WorldSaveQueue queue = new WorldSaveQueue(
+                    task -> {
+                        launches.incrementAndGet();
+                        var future = executor.submit(task);
+                        return () -> future.cancel(true);
+                    },
+                    (WorldSaveQueue.BooleanWriter) snapshot -> {
+                        if (snapshot.version() == 1L) {
+                            firstWriteStarted.countDown();
+                            if (!releaseFirstWrite.await(2L, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("first write did not resume");
+                            }
+                        }
+                        writes.add(snapshot.serialized());
+                        return true;
+                    },
+                    (snapshot, error) -> {
+                        throw new AssertionError(error);
+                    }
+            );
+
+            queue.enqueue(snapshot("overworld", 1, "first"));
+            assertTrue(firstWriteStarted.await(2L, TimeUnit.SECONDS));
+
+            CompletableFuture<WorldSaveQueue.DrainResult> inline = CompletableFuture.supplyAsync(
+                    () -> queue.drainInline(snapshot("overworld", 2, "final"))
+            );
+            assertFalse(inline.isDone());
+            releaseFirstWrite.countDown();
+
+            assertTrue(inline.get(2L, TimeUnit.SECONDS).successful());
+            assertEquals(1, launches.get());
+            assertEquals(List.of("first", "final"), writes);
+            assertTrue(queue.flush(1));
+        } finally {
+            releaseFirstWrite.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void awaitIdleCompletesWithTheLatestWrittenSnapshot() {
         List<Runnable> scheduled = new ArrayList<>();
         WorldSaveQueue queue = new WorldSaveQueue(
@@ -137,7 +216,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> true,
+                (WorldSaveQueue.BooleanWriter) snapshot -> true,
                 (snapshot, error) -> {
                     throw new AssertionError(error);
                 }
@@ -163,7 +242,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     if (snapshot.version() == 1L) throw new IllegalStateException("disk unavailable");
                     return true;
                 },
@@ -196,7 +275,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> "payload".equals(snapshot.serialized()),
+                (WorldSaveQueue.BooleanWriter) snapshot -> "payload".equals(snapshot.serialized()),
                 (snapshot, error) -> {
                     throw new AssertionError(error);
                 }
@@ -232,7 +311,7 @@ class WorldSaveQueueTest {
                     scheduled.add(task);
                     return FoliaScheduler.TaskHandle.NONE;
                 },
-                snapshot -> {
+                (WorldSaveQueue.BooleanWriter) snapshot -> {
                     throw new IllegalStateException("disk unavailable");
                 },
                 (snapshot, error) -> {

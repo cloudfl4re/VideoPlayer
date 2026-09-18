@@ -79,6 +79,17 @@ final class ResidencePermissionHook implements ResidencePermissionBridge.Delegat
         if (player == null || !player.isOnline()) return AreaPermissionDecision.DENY;
         if (player.isOp() || player.hasPermission(VideoPermissions.ADMIN)) return AreaPermissionDecision.ALLOW;
         boolean defaultAllowed = DEFAULT_ALLOWED.contains(action);
+        if (context != null && context.screenName() != null && context.hasScreenBounds()) {
+            VideoPermissionContext.Position min = context.screenMin();
+            VideoPermissionContext.Position max = context.screenMax();
+            return resolveBounds(
+                    player,
+                    action,
+                    new Vector3f((float) min.x(), (float) min.y(), (float) min.z()),
+                    new Vector3f((float) max.x(), (float) max.y(), (float) max.z()),
+                    defaultAllowed
+            );
+        }
         if (context != null && context.anchor() != null) {
             return resolveAt(player, action, location(player, context.anchor()), defaultAllowed);
         }
@@ -114,6 +125,45 @@ final class ResidencePermissionHook implements ResidencePermissionBridge.Delegat
         return resolveBounds(player, action, first, second) != AreaPermissionDecision.DENY;
     }
 
+    @Override
+    public ResidencePermissionBridge.Coverage coverage(VideoPermissionPlayer permissionPlayer, VideoPermissionContext context) {
+        if (permissionPlayer == null || permissionPlayer.uuid() == null || context == null) {
+            return ResidencePermissionBridge.Coverage.UNKNOWN;
+        }
+        Player player = playerLookup.apply(permissionPlayer.uuid());
+        if (player == null || !player.isOnline()) return ResidencePermissionBridge.Coverage.UNKNOWN;
+        if (context.screenName() != null && context.hasScreenBounds()) {
+            VideoPermissionContext.Position min = context.screenMin();
+            VideoPermissionContext.Position max = context.screenMax();
+            return coverageBounds(
+                    player,
+                    new Vector3f((float) min.x(), (float) min.y(), (float) min.z()),
+                    new Vector3f((float) max.x(), (float) max.y(), (float) max.z())
+            );
+        }
+        if (context.anchor() != null) {
+            Claim residence = residenceLookup.apply(location(player, context.anchor()));
+            return residence == null
+                    ? ResidencePermissionBridge.Coverage.WILDERNESS
+                    : ResidencePermissionBridge.Coverage.PROTECTED;
+        }
+        if (context.hasBounds()) {
+            VideoPermissionContext.Position min = context.areaMin();
+            VideoPermissionContext.Position max = context.areaMax();
+            return coverageBounds(
+                    player,
+                    new Vector3f((float) min.x(), (float) min.y(), (float) min.z()),
+                    new Vector3f((float) max.x(), (float) max.y(), (float) max.z())
+            );
+        }
+        return ResidencePermissionBridge.Coverage.UNKNOWN;
+    }
+
+    @Override
+    public ResidencePermissionBridge.Coverage coverageBounds(Player player, Vector3f first, Vector3f second) {
+        return coverageBounds(player, first, second, false);
+    }
+
     private AreaPermissionDecision resolveBounds(Player player, VideoPermissionAction action, Vector3f first, Vector3f second, boolean defaultAllowed) {
         BlockBox selection = BlockBox.selection(first, second);
         if (selection == null) return AreaPermissionDecision.DENY;
@@ -135,6 +185,20 @@ final class ResidencePermissionHook implements ResidencePermissionBridge.Delegat
         Claim residence = deepest.iterator().next();
         Boolean result = actionPermission(residence, player, action);
         return decision(result == null ? defaultAllowed : result);
+    }
+
+    private ResidencePermissionBridge.Coverage coverageBounds(Player player, Vector3f first, Vector3f second, boolean unused) {
+        if (player == null || !player.isOnline()) return ResidencePermissionBridge.Coverage.UNKNOWN;
+        BlockBox selection = BlockBox.selection(first, second);
+        if (selection == null) return ResidencePermissionBridge.Coverage.UNKNOWN;
+        Collection<Claim> found = claimLookup.apply(player.getWorld());
+        if (found == null) throw new IllegalStateException("Residence claim lookup returned null");
+        for (Claim residence : found) {
+            if (residence != null && !intersections(residence, selection, player.getWorld()).isEmpty()) {
+                return ResidencePermissionBridge.Coverage.PROTECTED;
+            }
+        }
+        return ResidencePermissionBridge.Coverage.WILDERNESS;
     }
 
     private static void collectDeepest(

@@ -12,6 +12,7 @@ import com.github.squi2rel.vp.provider.VideoInfo;
 import com.github.squi2rel.vp.provider.VideoProviders;
 import com.github.squi2rel.vp.provider.VideoUrlNormalizer;
 import com.github.squi2rel.vp.provider.bilibili.BiliQuality;
+import com.github.squi2rel.vp.provider.paper.HttpFlvPlaybackPolicy;
 import com.github.squi2rel.vp.provider.youtube.YouTubeQuality;
 import com.github.squi2rel.vp.permission.VideoPermissionAction;
 import com.github.squi2rel.vp.permission.VideoPermissionContext;
@@ -207,7 +208,8 @@ public class ServerPacketHandler {
                     return;
                 }
                 if (!requirePermission(player, reply, VideoPermissionAction.SYNC, VideoPermissionContext.screen(screen))) return;
-                sendTo(player, VideoPackets.sync(screen, screen.getProgress()));
+                long progress = screen.getProgress();
+                if (progress >= 0L) sendTo(player, VideoPackets.sync(screen, progress));
                 reply.ok();
             });
             case SEEK -> handleRequest(player, buf, reply -> {
@@ -541,25 +543,6 @@ public class ServerPacketHandler {
                 if (!requirePermission(player, reply, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
                 reply.ok();
             });
-            case DIAGNOSTICS_REQUEST -> handleRequest(player, buf, reply -> {
-                String areaName = VideoPackets.readName(buf);
-                String screenName = VideoPackets.readName(buf);
-                reply.decoded();
-                VideoArea area = getArea(player, areaName);
-                if (area == null) {
-                    reply.error(VpTranslation.of("error.videoplayer.area_not_found_or_not_inside", "Video area was not found, or you are not inside it"));
-                    return;
-                }
-                VideoScreen screen = area.getScreen(screenName);
-                if (screen == null) {
-                    reply.error(VpTranslation.of("error.videoplayer.screen_not_found", "Screen not found"));
-                    return;
-                }
-                if (!requirePermission(player, reply, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
-                DataHolder.sendTo(player, VideoPackets.diagnostics(screen,
-                        screen.diagnostics(PaperNativeRuntime.currentState().name())));
-                reply.ok();
-            });
             case SET_SCREEN_METADATA -> handleRequest(player, buf, reply -> handleMetadata(player, buf, reply));
             case SET_SCALE -> handleRequest(player, buf, reply -> {
                 String areaName = VideoPackets.readName(buf);
@@ -810,10 +793,11 @@ public class ServerPacketHandler {
                 return;
             }
             try {
-                if (info != null && VideoListeners.requiresNativeStreamListener(info) && !PaperNativeRuntime.isReady()) {
+                VideoInfo normalized = HttpFlvPlaybackPolicy.normalize(info);
+                if (normalized != null && VideoListeners.requiresNativeStreamListener(normalized) && !PaperNativeRuntime.isReady()) {
                     throw new NativeRuntimeNotReady(PaperNativeRuntime.currentState());
                 }
-                guarded.complete(info);
+                guarded.complete(normalized);
             } catch (Throwable failure) {
                 guarded.completeExceptionally(failure);
             }

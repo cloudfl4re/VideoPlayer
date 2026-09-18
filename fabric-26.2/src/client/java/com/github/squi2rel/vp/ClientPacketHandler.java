@@ -25,7 +25,6 @@ import com.github.squi2rel.vp.video.ClientVideoScreen;
 import com.github.squi2rel.vp.video.IVideoPlayer;
 import com.github.squi2rel.vp.video.IdlePlayEntry;
 import com.github.squi2rel.vp.video.MetaValue;
-import com.github.squi2rel.vp.video.PlaybackDiagnostics;
 import com.github.squi2rel.vp.video.ScreenMetadata;
 import com.github.squi2rel.vp.video.VideoArea;
 import com.github.squi2rel.vp.video.VideoListeners;
@@ -59,7 +58,6 @@ public class ClientPacketHandler {
     private static int nextRequestId = 1;
     private static final Map<Integer, PendingRequest> pendingRequests = new HashMap<>();
     private static final Map<ReporterGrantKey, PendingReporterGrant> pendingReporterGrants = new HashMap<>();
-    private static final Map<DiagnosticsKey, TimedDiagnostics> playbackDiagnostics = new HashMap<>();
     private static String serverProtocolToken = "";
 
     public static void handle(ByteBuf buf) {
@@ -87,14 +85,15 @@ public class ClientPacketHandler {
                 long generation = buf.readLong();
                 long progress = buf.readLong();
                 ClientVideoScreen screen = screenOrNull(areaName, screenName);
-                if (screen != null && screen.acceptServerPlaybackGeneration(generation)) screen.setProgress(progress);
+                if (screen != null && screen.acceptServerPlaybackGeneration(generation) && progress >= 0L) {
+                    screen.setProgress(progress);
+                }
             }
             case CREATE_AREA -> areas.put(VideoPackets.readName(buf), ClientVideoArea.read(buf));
             case REMOVE_AREA -> {
                 String areaName = VideoPackets.readName(buf);
                 ClientVideoArea area = areas.remove(areaName);
                 ClientPermissionCache.removeArea(areaName);
-                removeDiagnosticsArea(areaName);
                 if (area != null) {
                     area.remove();
                 }
@@ -108,7 +107,6 @@ public class ClientPacketHandler {
                     area.remove(screenName);
                 }
                 ClientPermissionCache.removeScreen(areaName, screenName);
-                playbackDiagnostics.remove(new DiagnosticsKey(normalize(areaName), normalize(screenName)));
             }
             case LOAD_AREA -> handleLoadArea(buf, receivedAt);
             case UNLOAD_AREA -> {
@@ -216,7 +214,6 @@ public class ClientPacketHandler {
             case CLIENT_PLAYBACK_RESOLVED -> {
             }
             case CLIENT_PLAYBACK_REPORTER -> handleClientPlaybackReporter(buf);
-            case DIAGNOSTICS -> handleDiagnostics(buf);
             case PLAYBACK_NOTICE -> handlePlaybackNotice(buf);
             default -> LOGGER.warn("Unknown packet type: {}", type);
         }
@@ -247,14 +244,6 @@ public class ClientPacketHandler {
         if (pending.callback() != null) {
             pending.callback().accept(new RequestResult(requestId, status, message));
         }
-    }
-
-    private static void handleDiagnostics(ByteBuf buf) {
-        String areaName = VideoPackets.readName(buf);
-        String screenName = VideoPackets.readName(buf);
-        PlaybackDiagnostics diagnostics = VideoPackets.readDiagnostics(buf);
-        playbackDiagnostics.put(new DiagnosticsKey(normalize(areaName), normalize(screenName)),
-                new TimedDiagnostics(diagnostics, System.currentTimeMillis()));
     }
 
     private static void handlePlaybackNotice(ByteBuf buf) {
@@ -662,19 +651,8 @@ public class ClientPacketHandler {
         pendingReporterGrants.entrySet().removeIf(entry -> now - entry.getValue().createdAt() > REQUEST_TTL_MS);
     }
 
-    private static void cleanupPlaybackDiagnostics() {
-        long now = System.currentTimeMillis();
-        playbackDiagnostics.entrySet().removeIf(entry -> now - entry.getValue().receivedAt() > REQUEST_TTL_MS);
-    }
-
-    private static void removeDiagnosticsArea(String areaName) {
-        String normalized = normalize(areaName);
-        playbackDiagnostics.keySet().removeIf(key -> key.areaName().equals(normalized));
-    }
-
     public static void resetPendingRequests() {
         pendingReporterGrants.clear();
-        playbackDiagnostics.clear();
         serverProtocolToken = "";
         if (pendingRequests.isEmpty()) return;
         ArrayList<Map.Entry<Integer, PendingRequest>> pending = new ArrayList<>(pendingRequests.entrySet());
@@ -691,7 +669,6 @@ public class ClientPacketHandler {
     public static void tickPendingRequests() {
         cleanupPendingRequests();
         cleanupPendingReporterGrants();
-        cleanupPlaybackDiagnostics();
     }
 
     private static String normalize(String value) {
@@ -911,30 +888,6 @@ public class ClientPacketHandler {
         send(VideoPackets.toByteArray(buf));
     }
 
-    public static boolean requestDiagnostics(VideoScreen screen) {
-        return requestDiagnostics(screen, null);
-    }
-
-    public static boolean requestDiagnostics(VideoScreen screen, Consumer<RequestResult> callback) {
-        if (screen == null || screen.area == null) return false;
-        ByteBuf buf = controlled(VideoPacketType.DIAGNOSTICS_REQUEST, VideoPermissionAction.OPEN_MENU,
-                screen.area.name, screen.name, callback);
-        if (buf == null) return false;
-        writeString(buf, screen.area.name);
-        writeString(buf, screen.name);
-        send(VideoPackets.toByteArray(buf));
-        return true;
-    }
-
-    public static PlaybackDiagnostics diagnostics(VideoScreen screen) {
-        if (screen == null || screen.area == null) return null;
-        cleanupPlaybackDiagnostics();
-        TimedDiagnostics stored = playbackDiagnostics.get(new DiagnosticsKey(
-                normalize(screen.area.name), normalize(screen.name)
-        ));
-        return stored == null ? null : stored.snapshot();
-    }
-
     public static void setMetadata(VideoScreen screen, String key, MetaValue value) {
         setMetadata(screen, key, value, null);
     }
@@ -1026,12 +979,6 @@ public class ClientPacketHandler {
     }
 
     private record PendingReporterGrant(long token, long createdAt) {
-    }
-
-    private record DiagnosticsKey(String areaName, String screenName) {
-    }
-
-    private record TimedDiagnostics(PlaybackDiagnostics snapshot, long receivedAt) {
     }
 
     private static ClientVideoArea areaOrNull(String areaName) {

@@ -122,6 +122,8 @@ public final class DataHolder {
 
     public static void stop() {
         long deadline = System.nanoTime() + STOP_PERSISTENCE_TIMEOUT_MILLIS * 1_000_000L;
+        ArrayList<WorldSaveQueue.Snapshot> finalWorldSnapshots = new ArrayList<>();
+        HashSet<String> finalCaptureFailures = new HashSet<>();
         synchronized (LOCK) {
             running = false;
             for (FoliaScheduler.TaskHandle task : playerTasks.values()) {
@@ -131,13 +133,30 @@ public final class DataHolder {
             cancelReloadHandshakesLocked();
             cancelWorldSaveDebouncesLocked();
             cancelWorldSaveRetriesLocked();
+            worldLoadRequests.clear();
             for (String dim : new ArrayList<>(areas.keySet())) {
-                submitFinalWorldSaveLocked(dim);
+                try {
+                    WorldSaveQueue.Snapshot snapshot = captureWorldSaveLocked(dim, true, false);
+                    if (snapshot != null) finalWorldSnapshots.add(snapshot);
+                } catch (RuntimeException error) {
+                    finalCaptureFailures.add(dim);
+                    VideoPlayerMain.LOGGER.error("Failed to capture final VideoPlayer world save for {}", dim, error);
+                }
             }
         }
-        boolean worldsPersisted = worldSaveQueue.flush(remainingMillis(deadline));
+        boolean worldsPersisted = finalCaptureFailures.isEmpty();
+        for (WorldSaveQueue.Snapshot snapshot : finalWorldSnapshots) {
+            if (remainingMillis(deadline) == 0L) {
+                worldsPersisted = false;
+                break;
+            }
+            if (!worldSaveQueue.drainInline(snapshot).successful()) worldsPersisted = false;
+        }
+        boolean worldQueueDrained = worldSaveQueue.flush(remainingMillis(deadline));
+        worldsPersisted &= worldQueueDrained;
         boolean legacyPersisted = legacyConfigSaveQueue.flush(remainingMillis(deadline));
         HashSet<String> dirty = new HashSet<>(worldSaveQueue.failedDimensions());
+        dirty.addAll(finalCaptureFailures);
         synchronized (LOCK) {
             for (Map.Entry<String, WorldPersistenceState> entry : worldPersistence.entrySet()) {
                 if (entry.getValue().dirtySnapshot != null) dirty.add(entry.getKey());
@@ -146,7 +165,7 @@ public final class DataHolder {
         boolean legacyFailed = !legacyConfigSaveQueue.failedDimensions().isEmpty();
         if (!worldsPersisted || !legacyPersisted || !dirty.isEmpty() || legacyFailed) {
             VideoPlayerMain.LOGGER.warn(
-                    "VideoPlayer shutdown persistence incomplete; world queue drained: {}, legacy queue drained: {}, unsaved worlds: {}, legacy config failed: {}",
+                    "VideoPlayer shutdown persistence incomplete; worlds persisted: {}, legacy queue drained: {}, unsaved worlds: {}, legacy config failed: {}",
                     worldsPersisted, legacyPersisted, dirty, legacyFailed
             );
         }
@@ -254,6 +273,13 @@ public final class DataHolder {
     private static void scheduleWorldRead(VideoPlayerPaperPlugin owner, long epoch, long requestId,
                                           WorldDescriptor descriptor, WorldSaveQueue.DrainResult drain,
                                           Throwable barrierError) {
+        synchronized (LOCK) {
+            Long activeRequest = worldLoadRequests.get(descriptor.dimension());
+            if (!running || plugin != owner || lifecycleEpoch != epoch || !owner.isEnabled()
+                    || activeRequest == null || activeRequest != requestId) {
+                return;
+            }
+        }
         try {
             FoliaScheduler.runAsync(() -> {
                 WorldLoadResult result;
@@ -491,10 +517,15 @@ public final class DataHolder {
     }
 
     private static void submitWorldSaveLocked(String dim, boolean finalSave, boolean retryAttempt) {
-        if (invalidWorldConfigs.contains(dim)) return;
+        WorldSaveQueue.Snapshot snapshot = captureWorldSaveLocked(dim, finalSave, retryAttempt);
+        if (snapshot != null) worldSaveQueue.enqueue(snapshot);
+    }
+
+    private static WorldSaveQueue.Snapshot captureWorldSaveLocked(String dim, boolean finalSave, boolean retryAttempt) {
+        if (invalidWorldConfigs.contains(dim)) return null;
         Path path = worldFiles.get(dim);
         HashMap<String, VideoArea> map = areas.get(dim);
-        if (path == null || map == null) return;
+        if (path == null || map == null) return null;
         long saveGeneration = ++nextSaveGeneration;
         WorldConfigSnapshot captured = WorldConfigSnapshot.capture(config, map.values(), saveGeneration);
         WorldPersistenceState persistence = worldPersistence.computeIfAbsent(
@@ -513,7 +544,7 @@ public final class DataHolder {
                         () -> captured.serialize(gson)
                 );
         persistence.dirtySnapshot = snapshot;
-        worldSaveQueue.enqueue(snapshot);
+        return snapshot;
     }
 
     private static void cancelWorldSaveDebounceLocked(String dim) {
@@ -549,18 +580,18 @@ public final class DataHolder {
         }
     }
 
-    private static boolean writeQueuedWorldSnapshot(WorldSaveQueue.Snapshot snapshot) {
+    private static WorldSaveQueue.WriteOutcome writeQueuedWorldSnapshot(WorldSaveQueue.Snapshot snapshot) {
         synchronized (LOCK) {
-            if (snapshot.lifecycleEpoch() != lifecycleEpoch && !snapshot.finalSave()) return false;
-            if (!running && !snapshot.finalSave()) return false;
+            if (snapshot.lifecycleEpoch() != lifecycleEpoch && !snapshot.finalSave()) return WorldSaveQueue.WriteOutcome.SKIPPED;
+            if (!running && !snapshot.finalSave()) return WorldSaveQueue.WriteOutcome.SKIPPED;
             WorldPersistenceState persistence = worldPersistence.get(snapshot.dimension());
-            if (!snapshot.finalSave() && !matches(persistence, snapshot)) return false;
+            if (!snapshot.finalSave() && !matches(persistence, snapshot)) return WorldSaveQueue.WriteOutcome.SKIPPED;
             if (snapshot.finalSave() && running && persistence != null
                     && persistence.id == snapshot.persistenceId() && persistence.latestVersion > snapshot.version()) {
-                return false;
+                return WorldSaveQueue.WriteOutcome.SKIPPED;
             }
         }
-        if (!writeWorldSnapshot(snapshot)) return false;
+        if (!writeWorldSnapshot(snapshot)) return WorldSaveQueue.WriteOutcome.SKIPPED;
         synchronized (LOCK) {
             WorldPersistenceState persistence = worldPersistence.get(snapshot.dimension());
             if (matches(persistence, snapshot) && persistence.latestVersion == snapshot.version()) {
@@ -570,7 +601,7 @@ public final class DataHolder {
                 persistence.latestSaveGeneration = snapshot.saveGeneration();
             }
         }
-        return true;
+        return WorldSaveQueue.WriteOutcome.WRITTEN;
     }
 
     private static void queuedWorldSaveFailed(WorldSaveQueue.Snapshot snapshot, Throwable error) {
@@ -1456,27 +1487,27 @@ public final class DataHolder {
         ));
     }
 
-    private static boolean writeLegacyConfigSnapshot(WorldSaveQueue.Snapshot snapshot) throws IOException {
+    private static WorldSaveQueue.WriteOutcome writeLegacyConfigSnapshot(WorldSaveQueue.Snapshot snapshot) throws IOException {
         return withWorldFileLock(snapshot.path(), FILE_LOCK_TIMEOUT_MILLIS,
                 () -> writeLegacyConfigSnapshotLocked(snapshot));
     }
 
-    private static boolean writeLegacyConfigSnapshotLocked(WorldSaveQueue.Snapshot snapshot) throws IOException {
+    private static WorldSaveQueue.WriteOutcome writeLegacyConfigSnapshotLocked(WorldSaveQueue.Snapshot snapshot) throws IOException {
         Path backup = null;
         boolean createBackup;
         synchronized (LOCK) {
-            if (snapshot.lifecycleEpoch() != lifecycleEpoch) return false;
+            if (snapshot.lifecycleEpoch() != lifecycleEpoch) return WorldSaveQueue.WriteOutcome.SKIPPED;
             createBackup = !legacyConfigBackupCreated;
         }
         if (createBackup) backup = backup(snapshot.path(), ".1.6.5.bak");
         synchronized (LOCK) {
-            if (snapshot.lifecycleEpoch() != lifecycleEpoch) return false;
+            if (snapshot.lifecycleEpoch() != lifecycleEpoch) return WorldSaveQueue.WriteOutcome.SKIPPED;
             if (createBackup) legacyConfigBackupCreated = true;
         }
         try {
             writeString(snapshot.path(), snapshot.serialized());
             VideoPlayerMain.LOGGER.info("Updated legacy VideoPlayer config areas; backup: {}", backup);
-            return true;
+            return WorldSaveQueue.WriteOutcome.WRITTEN;
         } catch (Throwable error) {
             if (error instanceof IOException io) throw io;
             if (error instanceof RuntimeException runtime) throw runtime;

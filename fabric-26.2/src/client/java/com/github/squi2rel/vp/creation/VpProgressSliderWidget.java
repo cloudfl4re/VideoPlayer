@@ -111,6 +111,10 @@ class VpProgressSliderWidget extends AbstractSliderButton {
             setMessage(VpTexts.tr("label.videoplayer.not_adjustable", "Not adjustable"));
             return;
         }
+        if (state.live) {
+            setMessage(Component.literal("LIVE"));
+            return;
+        }
         if (!state.seekable) {
             setMessage(Component.literal(formatDuration(state.total, state.total)));
             return;
@@ -166,6 +170,10 @@ class VpProgressSliderWidget extends AbstractSliderButton {
             return;
         }
 
+        if (state.live) {
+            drawText(context, textRenderer, "LIVE", getX() + 4, textColor);
+            return;
+        }
         String totalText = trimText(textRenderer, formatDuration(state.total, state.total), getWidth() - 8);
         int totalX = getX() + getWidth() - 4 - textRenderer.width(totalText);
         drawText(context, textRenderer, totalText, totalX, textColor);
@@ -204,21 +212,25 @@ class VpProgressSliderWidget extends AbstractSliderButton {
         return "%d:%02d".formatted(minutes, seconds);
     }
 
-    record ProgressState(boolean available, boolean seekable, long progress, long total) {
+    record ProgressState(boolean available, boolean seekable, boolean live, long progress, long total) {
         static ProgressState disabled() {
-            return new ProgressState(false, false, 0, 0);
+            return new ProgressState(false, false, false, 0, 0);
+        }
+
+        static ProgressState liveStream() {
+            return new ProgressState(true, false, true, 0, 0);
         }
 
         static ProgressState of(long progress, long total) {
             long safeTotal = Math.max(0, total);
             if (safeTotal <= 0) return disabled();
-            return new ProgressState(true, true, Math.clamp(progress, 0, safeTotal), safeTotal);
+            return new ProgressState(true, true, false, Math.clamp(progress, 0, safeTotal), safeTotal);
         }
 
         static ProgressState readonly(long total) {
             long safeTotal = Math.max(0, total);
             if (safeTotal <= 0) return disabled();
-            return new ProgressState(true, false, safeTotal, safeTotal);
+            return new ProgressState(true, false, false, safeTotal, safeTotal);
         }
     }
 }

@@ -13,10 +13,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class VideoProtocolTest {
     @Test
     void createsAndMatchesTheCurrentWireToken() {
-        assertEquals("2.0.3|vp5", VideoProtocol.token("2.0.3"));
-        assertTrue(VideoProtocol.compatible("2.0.3", "2.0.3|vp5"));
-        assertTrue(VideoProtocol.compatible("2.0.3", " 2.0.3|vp5"));
-        assertTrue(VideoProtocol.compatible("2.0.3", "2.0.3|vp5 "));
+        assertEquals("2.0.4|vp5", VideoProtocol.token("2.0.4"));
+        assertTrue(VideoProtocol.compatible("2.0.4", "2.0.4|vp5"));
+        assertTrue(VideoProtocol.compatible("2.0.4", " 2.0.4|vp5"));
+        assertTrue(VideoProtocol.compatible("2.0.4", "2.0.4|vp5 "));
     }
 
     @Test
@@ -46,8 +46,14 @@ class VideoProtocolTest {
                 new CompatibilityCase("2.0.1", "2.0.3|vp5", true),
                 new CompatibilityCase("2.0.3", "2.0.2|vp5", true),
                 new CompatibilityCase("2.0.2", "2.0.3|vp5", true),
-                new CompatibilityCase("2.0.3", "2.0.4|vp5", false),
-                new CompatibilityCase("2.0.4", "2.0.3|vp5", false),
+                new CompatibilityCase("2.0.3", "2.0.4|vp5", true),
+                new CompatibilityCase("2.0.4", "2.0.2|vp5", true),
+                new CompatibilityCase("2.0.4", "2.0.3|vp5", true),
+                new CompatibilityCase("2.0.4", "2.0.4|vp5", true),
+                new CompatibilityCase("2.0.4", "2.0.2|vp4", true),
+                new CompatibilityCase("2.0.4", "2.0.5|vp5", false),
+                new CompatibilityCase("2.0.4", "2.0.2|vp3", false),
+                new CompatibilityCase("2.0.4", "2.0.3|vp6", false),
                 new CompatibilityCase("2.0.1", "2.0.10|vp5", false),
                 new CompatibilityCase("2.0.1", "2.0.1|vp1", false),
                 new CompatibilityCase("2.0.1", "2.0.1|vp5-extra", false),
@@ -74,6 +80,16 @@ class VideoProtocolTest {
         assertEquals("2.0.1|vp5", VideoProtocol.responseToken("2.0.1", "2.0.1"));
         assertEquals("2.0.1|vp2", VideoProtocol.responseToken("2.0.2", "2.0.1|vp2"));
         assertEquals("2.0.2|vp5", VideoProtocol.responseToken("2.0.2", "2.0.1|custom-build"));
+    }
+
+    @Test
+    void preservesOldClientTokensIn204ServerResponses() {
+        for (String release : List.of("2.0.2", "2.0.3")) {
+            String clientToken = VideoProtocol.handshakeToken(release);
+            assertTrue(VideoProtocol.compatible("2.0.4", clientToken));
+            assertEquals(clientToken, VideoProtocol.responseToken("2.0.4", clientToken));
+            assertEquals(release + "|vp5", VideoProtocol.responseToken("2.0.4", release + "|vp5"));
+        }
     }
 
     @Test

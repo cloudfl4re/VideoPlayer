@@ -9,6 +9,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MediaAddressPolicyTest {
     @Test
+    void acceptsRemoteSrtStreamAddresses() throws Exception {
+        assertTrue(MediaAddressPolicy.isSyntacticallyAllowed("srt://stream.example:9000?mode=caller"));
+        assertTrue(MediaAddressPolicy.isAllowed("srt://stream.example:9000?mode=caller", ignored -> new InetAddress[]{
+                InetAddress.getByName("93.184.216.34")
+        }));
+    }
+
+    @Test
+    void blocksSrtLoopbackAddresses() throws Exception {
+        assertFalse(MediaAddressPolicy.isAllowed("srt://127.0.0.1:9000", ignored -> new InetAddress[]{
+                InetAddress.getByName("127.0.0.1")
+        }));
+    }
+
+    @Test
     void blocksIpv4MappedLoopbackAddresses() throws Exception {
         InetAddress mapped = InetAddress.getByName("::ffff:127.0.0.1");
 

@@ -237,11 +237,12 @@ public class ClientVideoScreen extends VideoScreen {
                 player.init();
             }
             if (player instanceof MetaListener m) m.onMetaChanged();
-            if (toSeek >= 0) {
+            if (info.seekable() && toSeek >= 0) {
                 startTime = System.currentTimeMillis() - toSeek;
                 player.setTargetTime(toSeek);
                 toSeek = -1;
             } else {
+                toSeek = -1;
                 player.setTargetTime(-1);
                 startTime = System.currentTimeMillis();
             }
@@ -420,6 +421,8 @@ public class ClientVideoScreen extends VideoScreen {
     }
 
     public void setProgress(long progress) {
+        VideoInfo info = currentPlaybackInfo();
+        if (progress < 0L || (info != null && !info.seekable())) return;
         startTime = System.currentTimeMillis() - progress;
         danmaku.seek(progress);
         if (player == null) {
@@ -431,6 +434,8 @@ public class ClientVideoScreen extends VideoScreen {
     }
 
     public void autoSync(long roundTrip, long syncProgress) {
+        VideoInfo info = currentPlaybackInfo();
+        if (info == null || !info.seekable()) return;
         int clientDelay = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, roundTrip));
         if (srtt < 0) {
             srtt = clientDelay;

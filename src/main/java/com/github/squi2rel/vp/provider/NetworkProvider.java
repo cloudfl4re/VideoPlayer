@@ -115,6 +115,8 @@ public class NetworkProvider implements IVideoProvider {
             name = "HLS Stream";
         } else if (path.startsWith("rtsp://") || path.startsWith("rtsps://") || path.startsWith("rtspt://")) {
             name = "RTSP Stream";
+        } else if (path.startsWith("srt://")) {
+            name = "SRT Stream";
         } else if (path.startsWith("http")) {
             name = "HTTP Stream";
         } else if (path.startsWith("rtp://")) {

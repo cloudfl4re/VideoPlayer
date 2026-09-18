@@ -69,6 +69,7 @@ public class StartupGuideScreen extends Screen {
     private VpButtonWidget audioChannelMode;
     private VpButtonWidget done;
     private VpButtonWidget skip;
+    private VpButtonWidget biliLogin;
     private VpTextFieldWidget proxyField;
     private VpTextFieldWidget ytdlPathField;
 
@@ -143,8 +144,13 @@ public class StartupGuideScreen extends Screen {
         vlcCopyLink = button(VpTexts.tr("button.videoplayer.copy_link", "Copy Link"), buttonX + (buttonW + GAP) * 3, contentTop + vlcStartY(), buttonW, () -> copySourceLink(VideoBackends.VLC));
 
         int footerY = panelTop + panelHeight - 28;
-        skip = button(VpTexts.tr("button.videoplayer.skip", "Skip"), panelLeft + 24, footerY, 92, this::finish);
-        done = button(VpTexts.tr("button.videoplayer.done", "Done"), panelLeft + panelWidth - 116, footerY, 92, this::finish);
+        int footerButtonWidth = footerButtonWidth();
+        int footerLeft = panelLeft + 24;
+        skip = button(VpTexts.tr("button.videoplayer.skip", "Skip"), footerLeft, footerY, footerButtonWidth, this::finish);
+        biliLogin = button(VpTexts.tr("button.videoplayer.bili_qr_login", "Bili QR"),
+                footerLeft + footerButtonWidth + GAP, footerY, footerButtonWidth, VideoPlayerClient::openBiliLoginScreen);
+        done = button(VpTexts.tr("button.videoplayer.done", "Done"),
+                footerLeft + (footerButtonWidth + GAP) * 2, footerY, footerButtonWidth, this::finish);
 
         addRenderableWidget(proxyField);
         addRenderableWidget(ytdlPathField);
@@ -161,6 +167,7 @@ public class StartupGuideScreen extends Screen {
         addRenderableWidget(vlcDownload);
         addRenderableWidget(vlcCopyLink);
         addRenderableWidget(skip);
+        addRenderableWidget(biliLogin);
         addRenderableWidget(done);
 
         setMpvVisible(!VideoPlayerMain.android);
@@ -224,6 +231,7 @@ public class StartupGuideScreen extends Screen {
         }
 
         renderWidget(skip, context, mouseX, mouseY, delta);
+        renderWidget(biliLogin, context, mouseX, mouseY, delta);
         renderWidget(done, context, mouseX, mouseY, delta);
     }
 
@@ -233,6 +241,10 @@ public class StartupGuideScreen extends Screen {
 
     private VpButtonWidget button(Component label, int x, int y, int width, Runnable action) {
         return new VpButtonWidget(x, y, width, CONTROL_HEIGHT, label, ignored -> action.run(), THEME);
+    }
+
+    private int footerButtonWidth() {
+        return Math.max(40, (panelWidth - 48 - GAP * 2) / 3);
     }
 
     private void computeLayout() {
@@ -263,7 +275,8 @@ public class StartupGuideScreen extends Screen {
     }
 
     private void layoutWidgets() {
-        if (proxyField == null || ytdlPathField == null || audioChannelMode == null || ytdlpPlatform == null || mpvPlatform == null || skip == null || done == null) {
+        if (proxyField == null || ytdlPathField == null || audioChannelMode == null || ytdlpPlatform == null || mpvPlatform == null
+                || skip == null || biliLogin == null || done == null) {
             return;
         }
 
@@ -296,10 +309,17 @@ public class StartupGuideScreen extends Screen {
         layoutBackendButtons(vlcPlatform, vlcSelect, vlcDownload, vlcCopyLink, buttonX, y + vlcStartY(), buttonW);
 
         int footerY = panelTop + panelHeight - 28;
-        skip.setX(panelLeft + 24);
+        int footerButtonWidth = footerButtonWidth();
+        int footerLeft = panelLeft + 24;
+        skip.setX(footerLeft);
         skip.setY(footerY);
-        done.setX(panelLeft + panelWidth - 116);
+        skip.setWidth(footerButtonWidth);
+        biliLogin.setX(footerLeft + footerButtonWidth + GAP);
+        biliLogin.setY(footerY);
+        biliLogin.setWidth(footerButtonWidth);
+        done.setX(footerLeft + (footerButtonWidth + GAP) * 2);
         done.setY(footerY);
+        done.setWidth(footerButtonWidth);
     }
 
     private void layoutBackendButtons(VpButtonWidget platform, VpButtonWidget select, VpButtonWidget download, VpButtonWidget copyLink,

@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.Set;
 
 public final class MediaAddressPolicy {
-    private static final Set<String> ALLOWED_SCHEMES = Set.of("http", "https", "rtsp", "rtsps", "rtspt", "rtp", "mms");
+    private static final Set<String> ALLOWED_SCHEMES = Set.of("http", "https", "rtsp", "rtsps", "rtspt", "rtp", "srt", "mms");
 
     private MediaAddressPolicy() {
     }
@@ -25,6 +25,36 @@ public final class MediaAddressPolicy {
                     && uri.getUserInfo() == null
                     && host != null
                     && !host.isBlank();
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    public static boolean isHttpFlv(String raw) {
+        if (raw == null || raw.isBlank()) return false;
+        try {
+            URI uri = URI.create(raw.trim());
+            String scheme = uri.getScheme();
+            if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                return false;
+            }
+            String host = uri.getHost();
+            String path = uri.getPath();
+            return host != null && !host.isBlank()
+                    && path != null
+                    && path.toLowerCase(Locale.ROOT).endsWith(".flv");
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    public static boolean isSrt(String raw) {
+        if (raw == null || raw.isBlank()) return false;
+        try {
+            URI uri = URI.create(raw.trim());
+            return "srt".equalsIgnoreCase(uri.getScheme())
+                    && uri.getHost() != null
+                    && !uri.getHost().isBlank();
         } catch (IllegalArgumentException ignored) {
             return false;
         }

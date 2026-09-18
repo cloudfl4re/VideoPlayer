@@ -167,7 +167,8 @@ public class ServerPacketHandler {
                     return;
                 }
                 if (!requirePermission(player, requestId, VideoPermissionAction.SYNC, VideoPermissionContext.screen(screen))) return;
-                sendTo(player, VideoPackets.sync(screen, screen.getProgress()));
+                long progress = screen.getProgress();
+                if (progress >= 0L) sendTo(player, VideoPackets.sync(screen, progress));
                 requestOk(player, requestId);
             }
             case SEEK -> {
@@ -428,16 +429,6 @@ public class ServerPacketHandler {
                 VideoScreen screen = requireScreen(player, requestId, area, VideoPackets.readName(buf));
                 if (screen == null) return;
                 if (!requirePermission(player, requestId, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
-                requestOk(player, requestId);
-            }
-            case DIAGNOSTICS_REQUEST -> {
-                int requestId = buf.readInt();
-                VideoArea area = requireArea(player, requestId, VideoPackets.readName(buf));
-                if (area == null) return;
-                VideoScreen screen = requireScreen(player, requestId, area, VideoPackets.readName(buf));
-                if (screen == null) return;
-                if (!requirePermission(player, requestId, VideoPermissionAction.OPEN_MENU, VideoPermissionContext.screen(screen))) return;
-                sendTo(player, VideoPackets.diagnostics(screen, screen.diagnostics("SERVER")));
                 requestOk(player, requestId);
             }
             case SET_SCREEN_METADATA -> {

@@ -12,6 +12,7 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
 class VpButtonWidget extends AbstractWidget {
+    private static final String ELLIPSIS = "...";
     private final VpUiTheme theme;
     private final Consumer<VpButtonWidget> onPress;
     private boolean selected;
@@ -100,7 +101,9 @@ class VpButtonWidget extends AbstractWidget {
         int right = getRight() - 4;
         int innerWidth = Math.max(1, right - left);
         String label = displayMessage().getString();
-        String visibleLabel = textRenderer.width(label) > innerWidth ? textRenderer.plainSubstrByWidth(label, innerWidth) : label;
+        String visibleLabel = textRenderer.width(label) > innerWidth
+                ? textRenderer.plainSubstrByWidth(label, Math.max(0, innerWidth - textRenderer.width(ELLIPSIS))) + ELLIPSIS
+                : label;
         Component visibleText = Component.literal(visibleLabel);
         int textWidth = textRenderer.width(visibleLabel);
         int textX = left + Math.max(0, (innerWidth - textWidth) / 2);

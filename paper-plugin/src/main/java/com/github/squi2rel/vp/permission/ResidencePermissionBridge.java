@@ -29,6 +29,12 @@ public final class ResidencePermissionBridge {
         FAILED_DENY
     }
 
+    enum Coverage {
+        UNKNOWN,
+        WILDERNESS,
+        PROTECTED
+    }
+
     private static final Delegate ABSENT = new Delegate() {
         @Override
         public AreaPermissionDecision resolve(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
@@ -43,16 +49,19 @@ public final class ResidencePermissionBridge {
     private static final Delegate FAILED = new Delegate() {
         @Override
         public AreaPermissionDecision resolve(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context) {
-            return onlineAdministrator(player) ? AreaPermissionDecision.ALLOW : AreaPermissionDecision.DENY;
+            if (onlineAdministrator(player)) return AreaPermissionDecision.ALLOW;
+            return failedDecision(classify(lastKnownDelegate, player, context));
         }
 
         @Override
         public AreaPermissionDecision resolveBounds(Player player, VideoPermissionAction action, Vector3f first, Vector3f second) {
-            return onlineAdministrator(player) ? AreaPermissionDecision.ALLOW : AreaPermissionDecision.DENY;
+            if (onlineAdministrator(player)) return AreaPermissionDecision.ALLOW;
+            return failedDecision(classifyBounds(lastKnownDelegate, player, first, second));
         }
     };
 
     private static volatile Binding binding = new Binding(State.ABSENT_ALLOW, ABSENT);
+    private static volatile Delegate lastKnownDelegate = ABSENT;
     private static long nextRetryAt;
     private static boolean retryScheduled;
     private static boolean permissionCacheRefreshScheduled;
@@ -111,6 +120,7 @@ public final class ResidencePermissionBridge {
             permissionCacheRefreshScheduled = false;
             nextRetryAt = 0L;
             binding = new Binding(State.ABSENT_ALLOW, ABSENT);
+            lastKnownDelegate = ABSENT;
             owner = null;
             lifecycleListener = null;
             residenceFlagListener = null;
@@ -223,6 +233,11 @@ public final class ResidencePermissionBridge {
             if (!activeLocked(expectedEpoch)) return;
             previousState = binding.state();
             binding = next;
+            if (next.state() == State.ACTIVE) {
+                lastKnownDelegate = next.delegate();
+            } else if (next.state() == State.ABSENT_ALLOW) {
+                lastKnownDelegate = ABSENT;
+            }
             if (next.state() == State.FAILED_DENY) {
                 if (nextRetryAt == 0L) nextRetryAt = System.currentTimeMillis() + RETRY_DELAY_MILLIS;
             } else {
@@ -500,10 +515,42 @@ public final class ResidencePermissionBridge {
         }
     }
 
+    private static AreaPermissionDecision failedDecision(Coverage coverage) {
+        return coverage == Coverage.PROTECTED
+                ? AreaPermissionDecision.DENY
+                : AreaPermissionDecision.NOT_APPLICABLE;
+    }
+
+    private static Coverage classify(Delegate delegate, VideoPermissionPlayer player, VideoPermissionContext context) {
+        if (delegate == null || delegate == FAILED) return Coverage.UNKNOWN;
+        try {
+            return delegate.coverage(player, context);
+        } catch (Throwable ignored) {
+            return Coverage.UNKNOWN;
+        }
+    }
+
+    private static Coverage classifyBounds(Delegate delegate, Player player, Vector3f first, Vector3f second) {
+        if (delegate == null || delegate == FAILED) return Coverage.UNKNOWN;
+        try {
+            return delegate.coverageBounds(player, first, second);
+        } catch (Throwable ignored) {
+            return Coverage.UNKNOWN;
+        }
+    }
+
     interface Delegate {
         AreaPermissionDecision resolve(VideoPermissionPlayer player, VideoPermissionAction action, VideoPermissionContext context);
 
         AreaPermissionDecision resolveBounds(Player player, VideoPermissionAction action, Vector3f first, Vector3f second);
+
+        default Coverage coverage(VideoPermissionPlayer player, VideoPermissionContext context) {
+            return Coverage.UNKNOWN;
+        }
+
+        default Coverage coverageBounds(Player player, Vector3f first, Vector3f second) {
+            return Coverage.UNKNOWN;
+        }
     }
 
     private record Binding(State state, Delegate delegate) {

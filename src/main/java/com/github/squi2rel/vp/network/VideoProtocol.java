@@ -81,7 +81,8 @@ public final class VideoProtocol {
     }
 
     private static boolean optionalUpdateRelease(String release) {
-        return "2.0.1".equals(release) || "2.0.2".equals(release) || "2.0.3".equals(release);
+        return "2.0.1".equals(release) || "2.0.2".equals(release)
+                || "2.0.3".equals(release) || "2.0.4".equals(release);
     }
 
     private static String releaseVersion(String token) {

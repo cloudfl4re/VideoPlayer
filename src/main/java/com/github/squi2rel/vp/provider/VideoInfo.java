@@ -18,6 +18,10 @@ public record VideoInfo(String playerName, String name, String path, String rawP
         name = ByteBufUtils.truncateUtf8(safe(name), MAX_NAME_BYTES);
         path = safe(path);
         rawPath = safe(rawPath);
+        if (MediaAddressPolicy.isHttpFlv(path) || MediaAddressPolicy.isSrt(path)) {
+            seekable = false;
+            durationMs = 0L;
+        }
         if (params == null) params = new String[0];
         if (params.length > MAX_PARAMS) throw new IllegalArgumentException("Video parameter count exceeds " + MAX_PARAMS);
         params = params.clone();

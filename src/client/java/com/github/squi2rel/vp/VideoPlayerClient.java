@@ -286,8 +286,6 @@ public class VideoPlayerClient implements ClientModInitializer {
                         .executes(VideoPlayerClient::showAudioChannelMode))
                 .then(ClientCommandManager.literal("boot")
                         .executes(VideoPlayerClient::openStartupGuide))
-                .then(ClientCommandManager.literal("diagnostics")
-                        .executes(VideoPlayerClient::openDiagnostics))
                 .then(biliAuthCommand("biliAuth"))
                 .then(youtubeAuthCommand("youtubeAuth"))
                 .then(youtubeAuthCommand("youtube-auth"))
@@ -680,8 +678,12 @@ public class VideoPlayerClient implements ClientModInitializer {
                         }));
     }
 
-    private static int openBiliLogin(CommandContext<FabricClientCommandSource> s) {
+    public static void openBiliLoginScreen() {
         pendingBiliLoginScreen = true;
+    }
+
+    private static int openBiliLogin(CommandContext<FabricClientCommandSource> s) {
+        openBiliLoginScreen();
         return 1;
     }
 
@@ -806,12 +808,14 @@ public class VideoPlayerClient implements ClientModInitializer {
             }
             ClientVideoScreen screen = currentLooking.getScreen();
             VideoInfo info = screen.currentDisplayInfo();
+            VideoInfo playbackInfo = screen.currentPlaybackInfo();
             if (info != null && screen.player != null) {
                 String name = info.name();
                 long progress = System.currentTimeMillis() - screen.getStartTime();
                 long totalProgress = screen.player.getTotalProgress();
+                boolean live = playbackInfo != null && !playbackInfo.seekable() && playbackInfo.durationMs() == 0L;
                 String time;
-                if (totalProgress > 0) {
+                if (!live && totalProgress > 0) {
                     boolean showHour = progress >= 3600000 || totalProgress >= 3600000;
                     time = formatDuration(progress, showHour) + "/" + formatDuration(totalProgress, showHour);
                     bossBar.setProgress((float) progress / totalProgress);
@@ -965,26 +969,6 @@ public class VideoPlayerClient implements ClientModInitializer {
                 ScreenRenderer.clearExternalTextures();
             }
         });
-    }
-
-    private static int openDiagnostics(CommandContext<FabricClientCommandSource> context) {
-        if (!connected && !config.alwaysConnected) {
-            context.getSource().sendFeedback(VpTexts.tr("error.videoplayer.not_connected", "Not connected to server").withStyle(ChatFormatting.RED));
-            return 0;
-        }
-        ClientVideoScreen selected = currentLooking != null ? currentLooking : currentScreen;
-        if (selected == null && !screens.isEmpty()) selected = screens.getFirst();
-        ClientVideoScreen target = selected;
-        if (target == null) {
-            client.setScreen(VideoManagementScreen.diagnostics(VideoCreationEditor.instance(), null));
-            return 1;
-        }
-        ClientPacketHandler.openMenu(target, result -> {
-            if (!ClientPacketHandler.failed(result) && client.screen == null) {
-                client.setScreen(VideoManagementScreen.diagnostics(VideoCreationEditor.instance(), target));
-            }
-        });
-        return 1;
     }
 
     public static void resetServerState() {
